@@ -82,11 +82,30 @@ def self_test(report_path: str) -> int:
     return 0 if ok else 1
 
 
+def remove_data() -> int:
+    """``SortZen.exe --remove-data``: forget saved API keys and delete settings, remembered results and
+    move logs. The uninstaller runs it when users choose to remove their settings. Sorted files are never
+    touched."""
+    import shutil
+
+    from ..ai.services import SERVICES
+    from ..config import default_paths
+    from ..repositories.api_keys import ApiKeyStore
+
+    keys = ApiKeyStore()
+    for service in SERVICES:
+        keys.clear(service)
+    shutil.rmtree(default_paths().storage, ignore_errors=True)
+    return 0
+
+
 def main(argv=None) -> int:
     argv = list(argv if argv is not None else sys.argv)
     for arg in argv[1:]:
         if arg.startswith("--self-test"):
             return self_test(arg.partition("=")[2] or "sortzen_self_test.json")
+        if arg == "--remove-data":
+            return remove_data()
     if sys.platform.startswith("win"):
         try:  # own taskbar icon instead of Python's
             import ctypes

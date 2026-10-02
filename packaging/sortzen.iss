@@ -2,7 +2,8 @@
 ;   iscc /DAppVersion=0.1.0 packaging\sortzen.iss
 ; Installs for the current user (no administrator rights needed), adds a Start menu
 ; shortcut (and a desktop one if chosen) and an uninstaller. Uninstalling removes the
-; program and keeps the user's settings, answers and choices in %LOCALAPPDATA%\SortZen.
+; program and asks whether to also remove the settings, answers, remembered results, move
+; logs (%LOCALAPPDATA%\SortZen) and saved API keys. Sorted files are never touched.
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -43,3 +44,22 @@ Name: "{autodesktop}\SortZen"; Filename: "{app}\SortZen.exe"; IconFilename: "{ap
 
 [Run]
 Filename: "{app}\SortZen.exe"; Description: "Start SortZen"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ResultCode: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    if (not UninstallSilent) and (MsgBox('Also remove your SortZen settings?' + #13#10#13#10 +
+              'This removes your folders list, answers, chosen destinations, remembered results, ' +
+              'saved API keys and the move logs that Undo uses. Your files stay exactly where they are.' + #13#10#13#10 +
+              'Choose No to keep them for a later install.',
+              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
+    begin
+      Exec(ExpandConstant('{app}\SortZen.exe'), '--remove-data', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      DelTree(ExpandConstant('{localappdata}\SortZen'), True, True, True);
+    end;
+  end;
+end;

@@ -331,6 +331,28 @@ and when):
 - The program is not code-signed: Windows shows "Windows protected your PC" on first
   install ("More info → Run anyway").
 - An in-app updater installs new versions without that warning appearing again.
+- Uninstalling asks whether to also remove the settings, answers, chosen destinations,
+  remembered results, saved API keys and the move logs Undo uses (No is the default).
+  Sorted files are never touched. A silent uninstall keeps them.
+
+## Settings, profiles and help
+- **Settings** (Edit › Settings…, Ctrl+,), saved when OK is pressed and undoable:
+  - General: the autonomy level, "Ask me about everything", "Be gentle with my computer".
+  - AI: the service, its model and its key (§9).
+  - Privacy: name only or the beginning of the file, picture previews, name-only folders
+    and words, house rules, the spending cap per 1,000 files, the amount spent this month,
+    and "Forget remembered AI answers" (§10).
+  - Advanced: "Stop reading left-out folders once SortZen has learned enough from them"
+    (on by default) and "Read file contents on Google Drive" (off by default).
+- **Profiles** (File › Save profile… / Load profile…, `.szprofile`): the added folders,
+  left-out items, answers, chosen destinations, autonomy, options, AI and privacy settings
+  and house rules. Speeds and spending stay with the PC. Saved API keys are included only
+  when users say yes. Loading a profile replaces the current settings (Undo puts them
+  back); folders it names that this PC doesn't have can be pointed at their new place or
+  left out, and every path inside the profile follows them.
+- **Help**: "Open the activity log" (what SortZen did and any problems) and "Copy
+  diagnostic info" (version, system, counts and settings, with no file or folder names
+  and no keys).
 
 ## 14. Alpha versions
 - **0.1, plan only**: scanning, the overview, questions and the full plan with every

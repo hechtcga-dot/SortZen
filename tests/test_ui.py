@@ -231,6 +231,49 @@ class MainWindowTest(unittest.TestCase):
             self.assertTrue(wait_until(self.app, lambda: self.window.plan is not first and not self.service.jobs.busy))
         self.assertIn("suggested a folder", told.call_args.args[2])
 
+    def test_settings_window_profile_and_diagnostics(self):
+        from sortzen.ui.settings_window import SettingsWindow
+
+        root = shared_test_folders()
+        window = SettingsWindow(self.window, self.service, "Privacy")
+        self.assertEqual(window.tabs.tabText(window.tabs.currentIndex()), "Privacy")
+        window.level.setValue(75)
+        window.options["gentle"].setChecked(True)
+        window.privacy_lists.words.setText("tax, payslip")
+        window.accept()
+        self.assertEqual(self.service.autonomy(), 75)
+        self.assertTrue(self.service.option("gentle"))
+        self.assertEqual(self.service.ai_value("ai_name_only_words"), ["tax", "payslip"])
+
+        self.service.add_destination(str(root / "Sorted"))
+        target = str(Path(self.dir.name) / "me.szprofile")
+        self.service.save_profile(target)
+        self.service.remove_folder(str(root / "Sorted"))
+        self.service.set_autonomy(90)
+        self.window.load_profile(target)
+        self.assertEqual(self.service.destination_folders(), [str(root / "Sorted")])
+        self.assertEqual(self.service.autonomy(), 75)
+        self.assertEqual(self.window.undo_action.text(), "Undo load profile")
+        self.window.undo()
+        self.assertEqual(self.service.destination_folders(), [])
+
+        self.window.copy_diagnostics()
+        self.assertIn("SortZen", self.app.clipboard().text())
+
+    def test_remove_data_for_uninstall(self):
+        from unittest import mock
+
+        from sortzen.ui.app import main
+
+        storage = Path(self.dir.name) / "to remove"
+        (storage / "runs").mkdir(parents=True)
+        cleared = []
+        with mock.patch.dict(os.environ, {"SORTZEN_DATA_DIR": str(storage)}), \
+                mock.patch("sortzen.repositories.api_keys.ApiKeyStore.clear", lambda self, s: cleared.append(s)):
+            self.assertEqual(main(["SortZen.exe", "--remove-data"]), 0)
+        self.assertFalse(storage.exists())
+        self.assertIn("gemini", cleared)
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview

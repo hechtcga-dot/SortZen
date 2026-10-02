@@ -356,3 +356,71 @@ class CopiesTest(unittest.TestCase):
         self.service.undo_move(result.log)
         self.assertTrue((self.downloads / "2024 T4.pdf").exists())
         self.assertFalse(any(queue.rglob("*.*")))
+
+
+class ProfileTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        for name in ("Downloads", "Sorted/Work", "Elsewhere/Sorted/Work"):
+            (base / name).mkdir(parents=True)
+        self.base = base
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(base / "Downloads"))
+        self.service.add_destination(str(base / "Sorted"))
+        self.service.correct([str(base / "Downloads" / "a.pdf")], str(base / "Sorted" / "Work"))
+        self.service.set_autonomy(80)
+        self.service.save_api_key("secret-key", "gemini")
+        self.service.settings.set("speeds", {"read": 1.0, "remembered": 2.0, "plan": 3.0})
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def other_pc(self):
+        return AppService(AppPaths(self.base / "data2"), ApiKeyStore(FakeKeyring()))
+
+    def test_round_trip_without_keys_and_with_a_moved_folder(self):
+        target = str(self.base / "me.szprofile")
+        self.service.save_profile(target)
+        text = Path(target).read_text(encoding="utf-8")
+        self.assertNotIn("secret-key", text)
+        self.assertNotIn("speeds", text)
+        other = self.other_pc()
+        loaded = other.read_profile(target)
+        shutil_target = self.base / "Elsewhere" / "Sorted"
+        before = other.load_profile(loaded, {str(self.base / "Sorted"): str(shutil_target)})
+        self.assertEqual(other.destination_folders(), [str(shutil_target)])
+        self.assertEqual(other.corrections(), {str(self.base / "Downloads" / "a.pdf"): str(shutil_target / "Work")})
+        self.assertEqual(other.autonomy(), 80)
+        self.assertFalse(other.has_api_key("gemini"))
+        other.restore_settings(before)
+        self.assertEqual(other.destination_folders(), [])
+
+    def test_keys_only_when_asked_missing_and_dropped_folders(self):
+        target = str(self.base / "with keys.szprofile")
+        self.service.save_profile(target, include_keys=True)
+        other = self.other_pc()
+        loaded = other.read_profile(target)
+        (self.base / "Sorted" / "Work").rmdir()
+        (self.base / "Sorted").rmdir()
+        self.assertEqual(other.missing_folders(loaded), [str(self.base / "Sorted")])
+        other.load_profile(loaded, dropped=[str(self.base / "Sorted")])
+        self.assertEqual(other.destination_folders(), [])
+        self.assertEqual(other.api_key("gemini"), "secret-key")
+
+    def test_not_a_profile(self):
+        bad = self.base / "notes.szprofile"
+        bad.write_text('{"hello": 1}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.service.read_profile(str(bad))
+
+    def test_diagnostics_have_no_paths(self):
+        self.service.log_path().parent.mkdir(parents=True, exist_ok=True)
+        self.service.log_path().write_text(f"2026-10-02 ERROR move stopped: can't read {self.base}/Downloads/x.pdf\n",
+                                           encoding="utf-8")
+        info = self.service.diagnostics()
+        self.assertIn("SortZen", info)
+        self.assertIn("1 to sort", info)
+        self.assertNotIn(str(self.base), info)
+        self.assertNotIn("secret-key", info)

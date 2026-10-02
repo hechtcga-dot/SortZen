@@ -99,3 +99,55 @@ class DestinationDialog(QDialog):
         if item is not None and not item.isHidden():
             self.chosen = item.data(Qt.ItemDataRole.UserRole)
             super().accept()
+
+
+class MissingFoldersDialog(QDialog):
+    """A loaded profile names folders this PC doesn't have: point each at its new place, or leave it out."""
+
+    def __init__(self, parent, missing: list[str]):
+        super().__init__(parent)
+        self.setWindowTitle("Some folders aren't on this PC")
+        self.resize(620, 360)
+        self.moved: dict[str, str] = {}
+        self.missing = list(missing)
+        col = QVBoxLayout(self)
+        col.addWidget(_hint("These folders from the profile can't be found here. Choose where each one is on this "
+                            "PC, or leave it out: its answers and choices then simply aren't used."))
+        self.list = QListWidget()
+        col.addWidget(self.list, 1)
+        choose = QPushButton("Choose where it is now…")
+        choose.clicked.connect(self._choose)
+        self.list.itemDoubleClicked.connect(lambda _: self._choose())
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.addButton(choose, QDialogButtonBox.ButtonRole.ActionRole)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        col.addWidget(box)
+        self._fill()
+
+    def _fill(self) -> None:
+        self.list.clear()
+        for folder in self.missing:
+            new = self.moved.get(folder)
+            item = QListWidgetItem(f"{folder}  →  {new}" if new else f"{folder}  (left out)")
+            item.setData(Qt.ItemDataRole.UserRole, folder)
+            self.list.addItem(item)
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def set_new_place(self, folder: str, new: str) -> None:
+        self.moved[folder] = os.path.abspath(new)
+        self._fill()
+
+    def _choose(self) -> None:
+        item = self.list.currentItem()
+        if item is None:
+            return
+        folder = item.data(Qt.ItemDataRole.UserRole)
+        new = QFileDialog.getExistingDirectory(self, f"Where is “{os.path.basename(folder)}” on this PC?")
+        if new:
+            self.set_new_place(folder, new)
+
+    @property
+    def dropped(self) -> list[str]:
+        return [f for f in self.missing if f not in self.moved]

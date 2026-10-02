@@ -1,6 +1,7 @@
 """The workspace window: folder tree on the left; Start, Questions and Plan tabs on the right."""
 from __future__ import annotations
 
+import logging
 import os
 
 from PySide6.QtCore import Qt, QUrl
@@ -19,12 +20,13 @@ from . import theme
 from .bridge import EventBridge
 from .ai_dialog import AskAIDialog
 from .copies_page import CopiesPage
-from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
+from .dialogs import MODE_TEXT, DestinationDialog, MissingFoldersDialog, ModeDialog
 from .folders_page import FoldersPage
 from .icons import app_icon
 from .move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
+from .settings_window import SettingsWindow
 from .sortable import human_size
 from .questions_page import QuestionsPage
 
@@ -39,6 +41,7 @@ STEPS = (
              "back."),
 )
 FOLDER = Qt.ItemDataRole.UserRole
+log = logging.getLogger("sortzen")
 
 
 class MainWindow(QMainWindow):
@@ -214,6 +217,8 @@ class MainWindow(QMainWindow):
                                     "Save the plan as an Excel workbook")
         self.undo_action = action("Undo", self.undo, QKeySequence.StandardKey.Undo, "Undo the last change")
         self.runs_action = action("Undo a move…", self.show_runs, tip="Put back the files from an earlier move")
+        self.settings_action = action("Settings…", self.show_settings, "Ctrl+,",
+                                      "Autonomy, AI service, privacy and advanced options")
         self.export_action.setEnabled(False)
         self.undo_action.setEnabled(False)
 
@@ -230,10 +235,17 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.export_action)
         file_menu.addSeparator()
+        file_menu.addAction(action("Save profile…", self.save_profile,
+                                   tip="Save your folders, choices, answers and settings to a file"))
+        file_menu.addAction(action("Load profile…", self.load_profile,
+                                   tip="Use the folders, choices, answers and settings saved in a profile"))
+        file_menu.addSeparator()
         file_menu.addAction(QAction("E&xit", self, shortcut=QKeySequence.StandardKey.Quit, triggered=self.close))
         edit_menu = self.menuBar().addMenu("&Edit")
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.runs_action)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self.settings_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.plan_action)
         self.ai_action = action("Ask AI about unsure files…", self.ask_ai,
@@ -249,6 +261,10 @@ class MainWindow(QMainWindow):
         self.tree_action.toggled.connect(lambda on: self.splitter.widget(0).setVisible(on))
         view_menu.addAction(self.tree_action)
         help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction(action("Open the activity log", self.open_log, tip="What SortZen did, and any problems"))
+        help_menu.addAction(action("Copy diagnostic info", self.copy_diagnostics,
+                                   tip="Copy details for reporting a problem (no file or folder names)"))
+        help_menu.addSeparator()
         help_menu.addAction(QAction(f"About {APP_NAME}", self, triggered=self.show_about))
 
     def show_about(self) -> None:
@@ -256,6 +272,77 @@ class MainWindow(QMainWindow):
                           f"<b>{APP_NAME} {APP_VERSION}</b> (alpha)<br>{APP_TAGLINE}<br><br>"
                           "Sorts messy folders into the right place. Local first; AI is optional. "
                           "Nothing moves until you confirm, and every move can be undone.")
+
+    # ---------------------------------------------------------------- settings, profiles, help
+    def show_settings(self, tab: str = "General") -> None:
+        before = self.service.settings_snapshot()
+        if SettingsWindow(self, self.service, tab).exec():
+            self._push_undo("Settings", lambda: self.service.restore_settings(before))
+            self._settings_changed()
+
+    def _settings_changed(self) -> None:
+        if self.plan is not None:
+            self.plan_page.sync_settings()
+
+    def save_profile(self) -> None:
+        target, _ = QFileDialog.getSaveFileName(self, "Save a profile", "SortZen profile.szprofile",
+                                                "SortZen profile (*.szprofile)")
+        if not target:
+            return
+        keys = False
+        if any(self.service.has_api_key(k) for k in ("gemini", "claude", "openai", "openrouter")):
+            keys = QMessageBox.question(
+                self, "Save a profile", "Include your saved API keys?\n\nAnyone with the file could use them and "
+                "spend on your account. Choose No to enter them again after loading.",
+                defaultButton=QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
+        try:
+            self.service.save_profile(target, keys)
+        except OSError as exc:
+            QMessageBox.warning(self, APP_NAME, f"The profile couldn't be saved: {exc}")
+            return
+        self.statusBar().showMessage(f"Profile saved to {target}", 6000)
+
+    def load_profile(self, path: str | None = None, moved=None, dropped=None) -> None:
+        if self._moving():
+            return
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Load a profile", "", "SortZen profile (*.szprofile)")
+            if not path:
+                return
+        try:
+            loaded = self.service.read_profile(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        missing = self.service.missing_folders(loaded)
+        if missing and moved is None:
+            dialog = MissingFoldersDialog(self, missing)
+            if not dialog.exec():
+                return
+            moved, dropped = dialog.moved, dialog.dropped
+        before = self.service.load_profile(loaded, moved or {}, dropped or [])
+        self._push_undo("Load profile", lambda: self.service.restore_settings(before))
+        self._forget_plan()
+        self.refresh_folders()
+        self.statusBar().showMessage("Profile loaded. Make a plan to use it.", 8000)
+
+    def _forget_plan(self) -> None:
+        """The plan belongs to the folders it was made for; drop it when they change wholesale."""
+        self.plan = None
+        for page in (self.plan_page, self.questions_page, self.copies_page):
+            if self.tabs.indexOf(page) >= 0:
+                self.tabs.removeTab(self.tabs.indexOf(page))
+        self.export_action.setEnabled(False)
+        self.ai_action.setEnabled(False)
+        self.copies_action.setEnabled(False)
+
+    def open_log(self) -> None:
+        path = self.service.log_path()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path if path.exists() else path.parent)))
+
+    def copy_diagnostics(self) -> None:
+        QApplication.clipboard().setText(self.service.diagnostics())
+        self.statusBar().showMessage("Diagnostic info copied. It has no file or folder names in it.", 6000)
 
     # ---------------------------------------------------------------- folders
     def count_folders(self) -> None:
@@ -595,6 +682,7 @@ class MainWindow(QMainWindow):
             return
         self.refresh_folders()
         self.folders_page.refresh_ticks()
+        self._settings_changed()
         self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     def _moving(self) -> bool:
@@ -628,6 +716,11 @@ class MainWindow(QMainWindow):
             self._job_ended(event)
 
     def _job_ended(self, event) -> None:
+        job = self.service.jobs.current
+        if isinstance(event, JobFailed):
+            log.error("%s stopped: %s\n%s", event.name, event.message, job.traceback if job else "")
+        else:
+            log.info("%s finished", event.name)
         if isinstance(event, JobFinished):
             self._close_progress()
             self.statusBar().showMessage("Ready")

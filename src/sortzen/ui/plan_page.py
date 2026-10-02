@@ -417,6 +417,17 @@ class PlanPage(QWidget):
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     # ---------------------------------------------------------------- level
+    def sync_settings(self) -> None:
+        """Show autonomy and "ask about everything" as saved (after Settings or a profile changed them)."""
+        for widget in (self.level, self.ask_all):
+            widget.blockSignals(True)
+        self.level.setValue(self.service.autonomy())
+        self.ask_all.setChecked(self.service.ask_everything())
+        self.level.setEnabled(not self.service.ask_everything())
+        for widget in (self.level, self.ask_all):
+            widget.blockSignals(False)
+        self.refresh()
+
     def _level_changed(self, value: int) -> None:
         self.service.set_autonomy(value)
         self.refresh()

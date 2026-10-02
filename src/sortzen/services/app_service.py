@@ -1,7 +1,9 @@
 """Program-wide service: folders, settings, AI service choice, API keys, making the plan, background jobs."""
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 from typing import Callable
 
@@ -24,7 +26,7 @@ from ..scanning.file_types import GOOGLE_LINKS, QUEUE_FOLDER, is_queue_folder
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
-from . import moving, plan_view
+from . import moving, plan_view, profile
 
 AUTONOMY_DEFAULT = 90
 DEFAULTS = {                    # settings with on/off values, and their defaults
@@ -647,12 +649,100 @@ class AppService:
         inside = [(r, role) for r, role in roots if _inside(key, path_key(r))]
         return max(inside, key=lambda x: len(x[0])) if inside else None
 
+    # ---------------------------------------------------------------- profiles
+    def save_profile(self, path: str, include_keys: bool = False) -> None:
+        """Save folders, choices, answers and settings to a profile file (API keys only when asked)."""
+        keys = {k: self.api_key(k) for k, info in SERVICES.items() if info.needs_key and self.api_key(k)} \
+            if include_keys else None
+        profile.write(path, profile.make(self.settings.data, keys))
+
+    def read_profile(self, path: str) -> dict:
+        return profile.read(path)
+
+    @staticmethod
+    def missing_folders(loaded: dict) -> list[str]:
+        """The profile's added folders that don't exist on this PC."""
+        return [f for f in profile.folders(loaded) if not os.path.isdir(f)]
+
+    def load_profile(self, loaded: dict, moved: dict[str, str] | None = None, dropped: list[str] = ()) -> dict:
+        """Use a profile's settings in place of the current ones. Returns the current ones, for Undo.
+
+        ``moved`` maps folders that are somewhere else on this PC to their new place; ``dropped``
+        folders are left out of the loaded profile.
+        """
+        before = self.settings_snapshot()
+        settings = profile.without(loaded["settings"], list(dropped))
+        if moved:
+            settings = profile.remap(settings, moved)
+        for key in profile.MACHINE_ONLY:
+            if key in self.settings.data:
+                settings[key] = self.settings.data[key]
+        self.settings.data = settings
+        self.settings.save()
+        for service_key, key in (loaded.get("keys") or {}).items():
+            if service_key in SERVICES and key:
+                self.save_api_key(key, service_key)
+        return before
+
+    def settings_snapshot(self) -> dict:
+        return json.loads(json.dumps(self.settings.data))
+
+    def restore_settings(self, snapshot: dict) -> None:
+        self.settings.data = json.loads(json.dumps(snapshot))
+        self.settings.save()
+
+    # ---------------------------------------------------------------- help
+    def log_path(self):
+        return self.paths.logs_dir / "sortzen.log"
+
+    def diagnostics(self) -> str:
+        """Details for reporting a problem, with no file or folder names in them."""
+        import platform
+
+        try:
+            from PySide6 import __version__ as qt_version
+        except ImportError:
+            qt_version = "not installed"
+        from .. import __version__
+
+        sources = self.source_folders()
+        modes = ", ".join(sorted({f["mode"] for f in sources})) or "none"
+        lines = [f"SortZen {__version__}", f"Windows/system: {platform.platform()}",
+                 f"Python {platform.python_version()}, PySide6 {qt_version}",
+                 f"Folders: {len(sources)} to sort ({modes}), {len(self.destination_folders())} destinations, "
+                 f"{len(self.left_out())} left out",
+                 f"Remembered: {len(self.answers())} answers, {len(self.corrections())} chosen destinations, "
+                 f"{len(self.move_runs())} moves logged",
+                 f"Autonomy {self.autonomy()}%, ask about everything: {self.ask_everything()}",
+                 "Options: " + ", ".join(f"{k}={self.option(k)}" for k in DEFAULTS),
+                 f"AI: {'on' if self.ai_value('ai_enabled') else 'off'}, {SERVICES[self.ai_service()].name}, "
+                 f"model {self.model()}, key saved: {self.has_api_key()}, privacy: {self.ai_value('ai_privacy')}, "
+                 f"previews: {self.ai_value('ai_previews')}, spent this month: ${self.ai_spent():.4f}",
+                 f"Speeds (files per second): {self.speeds()}"]
+        errors = []
+        try:
+            for line in self.log_path().read_text(encoding="utf-8", errors="replace").splitlines():
+                if " ERROR " in line or " WARNING " in line:
+                    errors.append(_no_paths(line))
+        except OSError:
+            pass
+        lines.append("Recent problems:" if errors else "Recent problems: none")
+        lines += ["  " + e for e in errors[-10:]]
+        return "\n".join(lines)
+
     # ---------------------------------------------------------------- background jobs
     def run_job(self, name: str, work: Callable, on_event: Callable):
         return self.jobs.start(name, work, on_event)
 
     def stop_job(self) -> None:
         self.jobs.cancel()
+
+
+_PATHS = re.compile(r"([A-Za-z]:[\\/]|\\\\|/(home|Users|tmp|mnt|media|root)/)[^\"'\n]*?(?=[\"'\n,)]|$|\s{2})")
+
+
+def _no_paths(text: str) -> str:
+    return _PATHS.sub("<path>", text)
 
 
 def _inside(key: str, root: str) -> bool:

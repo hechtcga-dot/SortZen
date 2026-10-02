@@ -32,13 +32,15 @@ src/sortzen/
                        file_index.py (SQLite: remembered scan results), ai_answers.py
                        (SQLite: remembered AI answers)
   services/            AppService: the only API the window uses (folders, autonomy, answers,
-                       corrections, make_plan, move, undo); plan_view.py (Ready/Review/
+                       corrections, make_plan, move, undo, AI step, profiles,
+                       diagnostics); profile.py (.szprofile files); plan_view.py (Ready/Review/
                        Staying rows, problems, display paths, Excel export); moving.py
                        (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
                        questions_page.py, progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
+                       settings_window.py,
                        sortable.py (click-to-sort columns), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt
@@ -60,6 +62,7 @@ python packaging/launcher.py                        # run the program
 python tests/fixtures/make_test_folders.py OUT      # build the test folders in OUT
 python -m tests.engine_score                        # grade the engine against the answer key
 python packaging/launcher.py --self-test=out.json   # start, check bundled pieces, exit
+python packaging/launcher.py --remove-data          # forget keys, delete settings (uninstaller)
 ```
 `tests/test_wording.py` enforces the writing rules below.
 
