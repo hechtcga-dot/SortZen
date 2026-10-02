@@ -63,8 +63,8 @@ class ReadersTest(unittest.TestCase):
 
     def test_text_encodings(self):
         for encoding in ("utf-8", "utf-16", "cp1252"):
-            (self.folder / "n.txt").write_text("café list\nmilk", encoding=encoding)
-            self.assertEqual(self.read("n.txt", "text")[1], "café list\nmilk", encoding)
+            (self.folder / "n.txt").write_text("café list\r\nmilk\rend", encoding=encoding, newline="")
+            self.assertEqual(self.read("n.txt", "text")[1], "café list\nmilk\nend", encoding)
 
     def test_photo_details(self):
         import random

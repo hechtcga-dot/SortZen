@@ -39,7 +39,7 @@ def _inside(key: str, roots) -> bool:
 class Scanner:
     def __init__(self, index: FileIndex, protected: list[str] | None = None):
         self.index = index
-        self.protected = protected_roots() if protected is None else protected
+        self.protected = protected_roots() if protected is None else [path_key(p) for p in protected]
 
     def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None) -> ScanSummary:
         root = Path(os.path.abspath(str(root)))

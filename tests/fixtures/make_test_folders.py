@@ -22,6 +22,7 @@ import zipfile
 from pathlib import Path
 
 WORK_COMPANY = "Example Co."
+FIXED_DATE = (2026, 1, 1, 0, 0, 0)          # zip entry dates, so every build is identical
 WORK_TOPICS = [
     "quarterly sales review", "warehouse schedule", "client onboarding", "safety audit", "budget forecast",
     "shipping rates", "team meeting notes", "vendor contract", "inventory count", "project timeline",
@@ -146,7 +147,7 @@ def write_pptx(path: Path, title: str, author: str, slides: list[list[str]]) -> 
 def _write_zip(path: Path, files: dict[str, str]) -> None:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         for name, content in files.items():
-            archive.writestr(zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0)), content)
+            archive.writestr(zipfile.ZipInfo(name, FIXED_DATE), content)
 
 
 def write_pdf(path: Path, lines: list[str], title: str = "") -> None:
@@ -297,7 +298,7 @@ class Builder:
             name = self.unique(f"{stem}_{rng.randint(1, 99)}.zip")
             with zipfile.ZipFile(folder / name, "w") as archive:
                 for i in range(rng.randint(2, 6)):
-                    archive.writestr(f"{stem}/item_{i}.dat", rng.randbytes(64))
+                    archive.writestr(zipfile.ZipInfo(f"{stem}/item_{i}.dat", FIXED_DATE), rng.randbytes(64))
         elif kind == "unclear":
             choice = rng.randrange(4)
             if choice == 0:

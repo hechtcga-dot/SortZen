@@ -58,6 +58,7 @@ def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str
 
 
 def _cap(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n\s*\n+", "\n", text).strip()
     return text[:MAX_TEXT_CHARS]
