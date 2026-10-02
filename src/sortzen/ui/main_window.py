@@ -19,9 +19,9 @@ STEPS = (
     ("Add folders", "Choose the messy folders to sort and the folders files may go to. "
                     "SortZen reads nothing outside them."),
     ("Scan", "SortZen reads the files on this PC and learns from the folders you've already sorted."),
-    ("Review", "Every file gets a suggested destination with a reason. Change any of them; "
-               "files SortZen is unsure about wait in Needs you."),
-    ("Move", "Nothing moves until you confirm. Every run can be undone."),
+    ("Check the plan", "Every file and folder gets a destination and a percentage showing how sure "
+                       "SortZen is, with the reasons. Anything below your chosen level waits in Review."),
+    ("Move", "Nothing moves until you confirm the plan. Every run can be undone."),
 )
 
 

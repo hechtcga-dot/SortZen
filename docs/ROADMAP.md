@@ -9,10 +9,10 @@ step.
 |---|-------|--------|
 | 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | **Done** |
 | 1 | Synthetic test folders; scanner and file readers with remembered results | **Done** |
-| 2 | Sorting engine: rules, learning from sorted folders, confidence and reason | To do |
+| 2 | Sorting engine: rules, learning from sorted folders, sureness percentage and how it was worked out; subfolders in source folders (keep together, sort the inside, Review) | To do |
 | 3 | AI step: service drop-down, key storage, privacy settings, two passes, batches, cost estimate and cap | To do |
-| 4 | Mover: move plan, name clashes, cross-drive copy and check, run log, Undo | To do |
-| 5 | Screens: first setup (folders, privacy, AI), scan, review with Needs you, apply, Undo, corrections, rule suggestions | To do |
+| 4 | Mover: move plan, whole-folder moves, removing emptied folders, name clashes, cross-drive copy and check, run log, Undo | To do |
+| 5 | Screens: first setup (folders, privacy, AI, autonomy level), scan, plan with Ready and Review, percentage breakdowns, apply, Undo, corrections, rule suggestions | To do |
 | 6 | Alpha build: program folder and per-user installer from the Windows build workflow | To do |
 | 7 | Alpha test (below) | To do |
 
@@ -29,7 +29,11 @@ step.
   recipes, receipts);
 - already-sorted destination folders (Documents/Word/Work, Documents/Word/Personal,
   Pictures/…) for first-run learning;
-- the expected destination of every file (the answer key).
+- subfolders inside Downloads: a messy "older downloads" folder of unrelated files, which
+  holds its own project folder, and a "Project 1" folder of related files with its own
+  subfolders;
+- the expected destination of every file and the expected outcome of every subfolder (the
+  answer key).
 
 Engine tests compare SortZen's choices with the answer key and report a score.
 
@@ -41,5 +45,9 @@ Engine tests compare SortZen's choices with the answer key and report a score.
   is close to the actual cost.
 - The three privacy levels (name only, random words, beginning of file) are compared for
   accuracy and cost, to choose the default.
+- Percentages are honest: of the files marked 90% sure, about 9 in 10 are right, and the
+  same holds at other levels.
+- Every subfolder in the test Downloads gets the expected outcome (keep together or sort
+  the inside), and a kept-together folder arrives with its structure unchanged.
 - A correction changes the next suggestion for similar files.
 - A repeat scan of 1,000 unchanged files takes a few seconds.

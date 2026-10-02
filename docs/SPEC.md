@@ -49,8 +49,26 @@ decision; when the code and this file disagree, this file wins until it is chang
 - First run offers the standard Windows folders as a starting template, located through
   Windows so that folders moved to OneDrive are found correctly.
 - Folders can be added or removed at any time. Nothing outside them is read.
-- Source folders are sorted one level deep: subfolders inside a source folder (e.g. an
-  unzipped download) are counted and left where they are.
+- **Subfolders inside a source folder** each get one of three outcomes, with a percentage
+  and reasons like files (§7):
+  - **Keep together**: the folder moves as one item with everything inside, structure
+    unchanged, to a destination chosen like a file's (e.g. a folder of "Project 1" files
+    that mention Example Co. → Documents/Work/Project 1).
+  - **Sort the inside**: the folder is treated as another messy folder and each file in it
+    is sorted on its own. Its own subfolders get the same check, so a project folder inside
+    a messy folder still stays together. Once emptied, the folder is deleted (Undo
+    restores it).
+  - **Review**: the signs are mixed, so users decide.
+- Signs a folder belongs together: many files share words with the folder name or with
+  each other (in names or contents); its own orderly subfolders; program or project files;
+  a matching .zip next to it (an unzipped download); one topic or a short span of dates.
+- Signs a folder is messy: a generic name ("older downloads", "New folder", "misc",
+  "stuff", "temp"); many unrelated file types and topics; dates spread over months or
+  years.
+- The AI is only asked about a folder when these signs are unclear, and then sees the
+  folder name and about 20 file names.
+- On the review screen any folder can be switched between keep together and sort the
+  inside; the choice is learned like a file correction.
 - A destination folder inside another destination is scanned once, as part of the outer
   one; a source folder inside a destination is never treated as a destination.
 - Always skipped, and counted in the scan summary: hidden and system files, Windows
@@ -84,10 +102,33 @@ For each file, in this order, stopping at the first confident answer:
 2. **Learned examples** (§8): already-sorted files that look like this one, by file type,
    words in the name and words inside the file.
 3. **AI** (§9), for what is left, when AI is turned on.
-4. **Needs you**: anything still uncertain.
+4. **Review**: anything still uncertain.
 
-Every suggestion shows a **confidence** and a **reason**, e.g. "Word/Work: 14 similar
-files are sorted there; mentions Example Co."
+### Sureness percentage
+- Every suggestion for a file or folder carries a **percentage**: how sure SortZen is that
+  the destination is right.
+- Each percentage can be opened to show **how it was worked out**: every piece of evidence
+  for and against, and the runner-up destination. For example:
+
+  > **92% sure → Documents/Word/Work**
+  > + Mentions "Example Co.", like 14 of the 15 files in Work
+  > + Word document, like all files in Work
+  > + Name is like "Safety Audit 2025-03.docx", moved to Work
+  > − 1 similar file is in Word/Personal (runner-up: 6%)
+
+- A rule written or approved by users counts as 100%.
+- The AI's answer is one piece of evidence; the percentage always comes from SortZen's own
+  scoring, never from the AI's word alone.
+- Percentages are checked against the test folders' answer key: of the files marked 90%,
+  about 9 in 10 must be right (ROADMAP alpha test).
+
+### Autonomy level
+- A setting, **"Move without asking when at least ___% sure"**, 50–100%, default 90%. A
+  switch, "Ask me about everything", turns it off.
+- Suggestions at or above the level go to **Ready**, ticked; below it, to **Review**, unticked
+  until users choose a destination.
+- Ready files still appear in the full plan, and nothing moves until users confirm the
+  whole plan once.
 
 ## 8. Learning
 SortZen learns only from choices made inside SortZen. It does not watch Explorer.
@@ -135,14 +176,18 @@ available in Settings:
 - With Ollama, nothing leaves the PC; the setup screen says so.
 
 ## 11. Review and move
-- Files are moved, not copied, after a **review screen**: files grouped by destination with
-  confidence and reason, a **Needs you** pile, and destinations changeable by drop-down or
-  drag. Moving starts only after confirmation.
+- Files and folders are moved, not copied, after a **review screen** showing the full plan:
+  - **Ready**: at or above the autonomy level, grouped by destination, ticked.
+  - **Review**: below it, unsure folders included, unticked.
+  - Every row shows its percentage and how it was worked out; a kept-together folder is
+    one row ("Project 1, 214 files").
+  - Destinations change by drop-down or drag; anything can be ticked or unticked.
+  - Moving starts only when users confirm the plan.
 - Files are never overwritten: a name clash becomes `name (2).ext`.
 - On the same drive, a normal move. To another drive: copy, check the copy matches, then
   delete the original.
-- Every run is logged. **Undo** puts back the whole run or chosen files.
-- Empty subfolders left behind in a source folder are not removed.
+- Every run is logged. **Undo** puts back the whole run, chosen files, or a whole folder.
+- Subfolders emptied by "sort the inside" are deleted; Undo recreates them.
 
 ## 12. Renaming
 - A separate button and screen, offered after sorting is done, and skippable.
