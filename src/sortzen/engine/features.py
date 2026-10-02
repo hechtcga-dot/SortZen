@@ -45,6 +45,8 @@ def split_word(word: str) -> list[str]:
 
 
 def _singular(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
     if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
         return word[:-1]
     return word

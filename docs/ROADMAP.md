@@ -59,12 +59,12 @@ the score and the mistakes.
 
 | Measure (2a, file by file) | Score | Test requires |
 |---|---|---|
-| Top suggestion right | 96.6% | 93% |
+| Top suggestion right | 97.2% | 93% |
 | Ready (90%+) suggestions right | 100% (312 files) | 97% |
 | Files placed without asking | 80% | 70% |
 | Review-only files kept for Review | 100% | 95% |
 | Wrong moves out of organised folders | 0 | at most 2 |
-| Misplaced files found | 3 of 3 | all but one |
+| Misplaced files found | 2 of 3 (the third shows as staying, with the alternative as a reason) | all but one |
 
 ## Alpha 0.1 test: pass criteria (plan only, real folders)
 - Nothing on disk changes.

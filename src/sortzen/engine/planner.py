@@ -35,6 +35,7 @@ LONE_FILE_PERCENT = 80      # a file alone in its organised folder stays
 ONE_MATCH_PERCENT = 75      # most sureness when the only similar file in a larger folder looks out of place
 MISPLACED_PERCENT = 90      # a sorted file this sure to belong elsewhere counts less as an example
 MISPLACED_WEIGHT = 0.25
+MOVE_OUT_PERCENT = 50       # below this, a file in an organised folder is shown as staying
 KIND_LABELS = {"word": "Word document", "pdf": "PDF", "spreadsheet": "Spreadsheet", "presentation": "Presentation",
                "form": "Form", "text": "Text file", "image": "Picture", "video": "Video", "audio": "Music file",
                "archive": "Zip file", "installer": "Program installer", "shortcut": "Shortcut", "web page": "Web page"}
@@ -188,6 +189,11 @@ class Planner:
             reasons.append(Reason(False, "Only the file type matches"))
         elif one_match:
             reasons.append(Reason(False, f"Only one similar file there, among {others_there}"))
+        if tidy_home and best != current and percent < MOVE_OUT_PERCENT:
+            stay = round(100 * scores.get(current, 0.0) ** SHARPNESS / total * coverage)
+            return Suggestion(record.path, current, current, stay,
+                              [Reason(True, "Fits the folder it is already in"),
+                               Reason(False, f"Might belong in {self.label(best)} ({percent}%)")])
         return Suggestion(record.path, current, best, percent, reasons, runner_up)
 
     def _name_matches(self, clues: Clues) -> dict[str, list[str]]:
@@ -207,6 +213,8 @@ class Planner:
         if best == self.folder[i]:
             reasons.append(Reason(True, "Fits the folder it is already in"))
         close = sorted(close, reverse=True)
+        if best == self.folder[i]:
+            close = [(sim, j) for sim, j in close if j not in getattr(self, "out_of_place", ())]
         if close:
             j = close[0][1]
             more = len(close) - 1
