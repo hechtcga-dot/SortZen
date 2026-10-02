@@ -13,7 +13,7 @@ from tests.fixtures import answer_key, shared_test_folders
 
 
 def record(path, text="", kind="word", ext=".docx", details=None, size=100):
-    return FileRecord(path=os.path.abspath(path), root="", role="", name=os.path.basename(path), ext=ext, kind=kind,
+    return FileRecord(path=os.path.normpath(os.path.abspath(path)), root="", role="", name=os.path.basename(path), ext=ext, kind=kind,
                       size=size, modified_ns=0, fingerprint="x", details=details or {}, text=text)
 
 
@@ -55,7 +55,7 @@ class PlannerTest(unittest.TestCase):
     def test_file_goes_to_the_folder_it_resembles_with_reasons(self):
         plan = self.plan(self.examples() + [record(f"{self.down}/Lemon cake recipe.docx", "lemon cake flour sugar oven")])
         s = plan.files[0]
-        self.assertEqual(s.destination, f"{self.docs}/Recipes")
+        self.assertEqual(s.destination, os.path.join(self.docs, "Recipes"))
         self.assertGreaterEqual(s.percent, 90)
         texts = [r.text for r in s.reasons]
         self.assertTrue(any(t.startswith("Like “") for t in texts))
@@ -96,7 +96,7 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(by_name["Seed list.txt"].action, "stay")
         self.assertEqual(by_name["Bread.docx"].action, "stay")
         moved = by_name["T4 summary 2024.pdf"]
-        self.assertEqual((moved.action, moved.destination), ("move", f"{drive}/Payroll"))
+        self.assertEqual((moved.action, moved.destination), ("move", os.path.join(drive, "Payroll")))
 
 
 class EngineScoreTest(unittest.TestCase):
