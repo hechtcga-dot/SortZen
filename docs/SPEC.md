@@ -357,6 +357,9 @@ and when):
 ## 14. Alpha versions
 - **0.1, plan only**: scanning, the overview, questions and the full plan with every
   percentage and its reasons. Nothing is moved; corrections are still learned.
+- **0.2**: everything in 0.1, plus moving files and folders after confirmation with Undo
+  (§11), the Copies tab (§11), the AI step (§9, §10), Settings, profiles and help, plans
+  several times faster, and:
   - Folders are added from the toolbar, the File menu, the folder tree (right-click) or the
     Start tab, which also offers the standard Windows folders as destinations.
   - While a plan is made, a window shows a small animation, one progress bar across all
@@ -398,9 +401,6 @@ and when):
   - "Change destination…" and "Leave it where it is" (buttons and right-click, for one or
     several files) are remembered at once; "Update plan" lets SortZen learn from them for
     similar files. Every change can be undone (Ctrl+Z).
-- **0.2**: everything in 0.1, plus speed work, the Folders tab, duplicates review, the AI
-  step, the Settings window, profiles, and moving files and folders after the plan is
-  confirmed, with Undo.
 - Not in the alpha: renaming (§12), the in-app updater (§13), rule suggestions (SortZen
   offering "Make this a rule?" after repeated corrections), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose

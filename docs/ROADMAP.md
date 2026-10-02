@@ -29,7 +29,7 @@ moves files after the plan is confirmed.
 | 10 | Duplicates review: exact copies, suggested copy to keep, dated "Queued for deletion" folders, Undo | **Done** |
 | 11 | AI step: service drop-down and key, privacy settings (name only, beginning of file), name-only folders and words, scrubbing, image previews, two passes, batches, cost estimate and cap, house rules | **Done** |
 | 12 | Settings window (General, AI, Privacy, Advanced), save and load a profile, Help: activity log and diagnostic info, uninstall option to remove settings | **Done** |
-| 13 | **Alpha 0.2 build** | To do |
+| 13 | **Alpha 0.2 build**: program folder and per-user installer from the Windows build workflow | **Done** |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).
