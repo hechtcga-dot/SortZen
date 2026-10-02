@@ -13,7 +13,7 @@ Files move from alpha 0.2.
 |---|-------|--------|
 | 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | **Done** |
 | 1 | Synthetic test folders; scanner and file readers with remembered results | **Done** |
-| 2a | Sorting engine, file by file: folder profiles, suggestions with a percentage and how it was worked out, runner-up, misplaced files in organised folders | To do |
+| 2a | Sorting engine, file by file: folder profiles, suggestions with a percentage and how it was worked out, runner-up, misplaced files in organised folders | **Done** |
 | 2b | Sorting engine, the overview: subfolder outcomes (stays, keep together, sort the inside, Review), topics and their homes, one-level new folders, questions | To do |
 | 3 | Plan screen (read-only): add folders (sort into other folders or tidy this folder), scan, questions, plan with Ready and Review, percentage breakdowns, corrections, export the plan to Excel | To do |
 | 4 | **Alpha 0.1 build**: program folder and per-user installer from the Windows build workflow; plan only | To do |
@@ -54,7 +54,17 @@ Engine tests compare SortZen's choices with the answer key and report a score.
 answer key: how many files get the right top suggestion, whether percentages are honest
 (of the files marked 90% sure, about 9 in 10 are right), whether Review-only files stay
 below the autonomy level, subfolder outcomes, topics, and misplaced files. The score is
-recorded so later changes can't quietly lower it.
+recorded so later changes can't quietly lower it. `python -m tests.engine_score` prints
+the score and the mistakes.
+
+| Measure (2a, file by file) | Score | Test requires |
+|---|---|---|
+| Top suggestion right | 96.6% | 93% |
+| Ready (90%+) suggestions right | 100% (312 files) | 97% |
+| Files placed without asking | 80% | 70% |
+| Review-only files kept for Review | 100% | 95% |
+| Wrong moves out of organised folders | 0 | at most 2 |
+| Misplaced files found | 3 of 3 | all but one |
 
 ## Alpha 0.1 test: pass criteria (plan only, real folders)
 - Nothing on disk changes.

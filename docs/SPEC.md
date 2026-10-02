@@ -165,7 +165,21 @@ For each file, in this order, stopping at the first confident answer:
   > + Name is like "Safety Audit 2025-03.docx", moved to Work
   > − 1 similar file is in Word/Personal (runner-up: 6%)
 
-- A rule written or approved by users counts as 100%.
+- How it is worked out: each folder's profile is the files already in it. SortZen finds
+  the sorted files most like this one (shared words in the name and contents, file type,
+  details such as a camera), scores each folder from its closest few files, and adds a
+  little when the folder's own name matches. The percentage is how clearly the best
+  folder beats the others, lowered when even the best match is weak.
+- Limits that keep percentages honest:
+  - Only the file type matches: at most 50%.
+  - The only similar file in a larger folder looks out of place there: at most 75%.
+  - The folder's year differs from the file's ("2022 Audit" for a 2023 file): the folder
+    counts for much less, and the reason says so.
+  - Files that look out of place count less as examples for their folder.
+- In a folder being tidied, an organised folder holds on to its files a little, and a
+  file alone in its folder stays.
+- A rule written or approved by users counts as 100%; SortZen's own scoring tops out at
+  99%.
 - The AI's answer is one piece of evidence; the percentage always comes from SortZen's own
   scoring, never from the AI's word alone.
 - Percentages are checked against the test folders' answer key: of the files marked 90%,

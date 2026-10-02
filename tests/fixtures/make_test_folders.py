@@ -700,7 +700,8 @@ def _my_drive(b: Builder) -> None:
     for _ in range(4):
         b.random_file(unsorted, "invoice", dest["Accounts Payable"])
     b.sheet(f"{unsorted}/Grant rec 2021.xlsx", [["Grant", "Balance"], ["Literacy", "120"]], expect=dest["Grant Reconciliation"])
-    b.doc(f"{unsorted}/Onboarding checklist v2.docx", "Onboarding\nNew staff checklist", expect=None)
+    b.doc(f"{unsorted}/Onboarding checklist v2.docx", "Onboarding\nNew staff checklist",
+          expect=f"{md}/{PREVIOUS.split()[0]}'s Drive - Sorted/HR")
 
     b.outcome(f"{md}/To e-mail", "review")                    # a holding folder kept on purpose, or clutter
     b.doc(f"{md}/To e-mail/Letter to auditors.docx", f"{DIVISION}\nLetter to auditors", expect=None)

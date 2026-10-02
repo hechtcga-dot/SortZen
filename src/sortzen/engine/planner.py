@@ -1,0 +1,251 @@
+"""File-by-file suggestions: each file goes to the folder whose files it most resembles.
+
+Every folder that may receive files has a profile: the files already in it. For each file
+to sort, SortZen finds the most similar files among those (by the clues in features.py),
+scores each folder from its closest few files, adds a little when the folder's own name
+matches the file, and lowers folders whose year clashes with the file's. The percentage
+is how clearly the best folder beats the others, reduced when even the best match is
+weak. The reasons shown with each suggestion come from the same numbers.
+"""
+from __future__ import annotations
+
+import os
+from collections import defaultdict
+from dataclasses import dataclass
+
+from ..repositories.file_index import path_key
+from ..scanning.file_types import GOOGLE_LINKS
+from ..scanning.records import FileRecord
+from .features import Clues, clues_for, finish_vectors, rarity, words, years
+from .plan import Plan, Reason, Suggestion
+
+SORT_OUT = "sort into other folders"
+TIDY = "tidy this folder"
+
+NEIGHBOURS = 30             # most similar sorted files considered for each file
+TOP_PER_FOLDER = (1.0, 0.6, 0.4)    # weights of a folder's three closest files
+SHARPNESS = 3.0             # how strongly the best folder's lead turns into sureness
+CLEAR_MATCH = 0.35          # a closest file at least this similar gives full sureness
+NAME_BONUS = 0.12           # per matching rare word in the folder's own name
+YEAR_CLASH = 0.4            # score kept when the folder's year differs from the file's
+MAX_PERCENT = 99            # 100% is kept for rules users approved
+TYPE_ONLY_PERCENT = 50      # most sureness when only the file type matches
+STAY_BONUS = 0.2            # an organised folder's hold on its own files
+LONE_FILE_PERCENT = 80      # a file alone in its organised folder stays
+ONE_MATCH_PERCENT = 75      # most sureness when the only similar file in a larger folder looks out of place
+MISPLACED_PERCENT = 90      # a sorted file this sure to belong elsewhere counts less as an example
+MISPLACED_WEIGHT = 0.25
+KIND_LABELS = {"word": "Word document", "pdf": "PDF", "spreadsheet": "Spreadsheet", "presentation": "Presentation",
+               "form": "Form", "text": "Text file", "image": "Picture", "video": "Video", "audio": "Music file",
+               "archive": "Zip file", "installer": "Program installer", "shortcut": "Shortcut", "web page": "Web page"}
+
+
+@dataclass(frozen=True)
+class Source:
+    root: str
+    mode: str = SORT_OUT
+
+
+def _inside(path: str, folder: str) -> bool:
+    key, root = path_key(path), path_key(folder)
+    return key == root or key.startswith(root.rstrip(os.sep) + os.sep)
+
+
+class _Index:
+    """Finds the most similar sorted files to a file, by shared clues."""
+
+    def __init__(self, vectors: list[dict[str, float]]):
+        self.postings: dict[str, list[tuple[int, float]]] = defaultdict(list)
+        for pos, vector in enumerate(vectors):
+            for key, value in vector.items():
+                self.postings[key].append((pos, value))
+
+    def search(self, vector: dict[str, float], exclude: int | None = None) -> list[tuple[int, float]]:
+        scores: dict[int, float] = defaultdict(float)
+        for key, value in vector.items():
+            for pos, other in self.postings.get(key, ()):
+                scores[pos] += value * other
+        scores.pop(exclude, None)
+        return sorted(scores.items(), key=lambda kv: -kv[1])[:NEIGHBOURS]
+
+
+class Planner:
+    def __init__(self, records: list[FileRecord], sources: list[Source], destinations: list[str],
+                 not_destinations: list[str] = ()):
+        self.records = list(records)
+        self.sources = [Source(os.path.abspath(s.root), s.mode) for s in sources]
+        self.destinations = [os.path.abspath(d) for d in destinations]
+        self.not_destinations = [os.path.abspath(d) for d in not_destinations]   # messy or undecided folders
+
+    # ---------------------------------------------------------------- set-up
+    def _source_of(self, path: str) -> Source | None:
+        return next((s for s in self.sources if _inside(path, s.root)), None)
+
+    def _root_of(self, folder: str) -> str:
+        for root in [s.root for s in self.sources] + self.destinations:
+            if _inside(folder, root):
+                return root
+        return folder
+
+    def _is_candidate(self, folder: str) -> bool:
+        if any(_inside(folder, d) for d in self.not_destinations):
+            return False
+        if any(_inside(folder, d) for d in self.destinations):
+            return True
+        source = self._source_of(folder)
+        return bool(source and source.mode == TIDY and path_key(folder) != path_key(source.root))
+
+    def label(self, folder: str) -> str:
+        return os.path.relpath(folder, os.path.dirname(self._root_of(folder))).replace(os.sep, "/")
+
+    # ---------------------------------------------------------------- the plan
+    def plan(self) -> Plan:
+        self.clues: list[Clues] = [clues_for(r) for r in self.records]
+        self.idf = rarity(self.clues)
+        finish_vectors(self.clues, self.idf)
+        self.folder = [os.path.dirname(r.path) for r in self.records]
+        candidate = {f: self._is_candidate(f) for f in set(self.folder)}
+        self.examples = [i for i, f in enumerate(self.folder) if candidate[f]]
+        self.example_pos = {i: pos for pos, i in enumerate(self.examples)}
+        self.by_folder: dict[str, list[int]] = defaultdict(list)
+        for i in self.examples:
+            self.by_folder[self.folder[i]].append(i)
+        self.index = _Index([self.clues[i].vector for i in self.examples])
+        # First pass: sorted files that look misplaced count less as examples for their folder.
+        self.weight = {i: 1.0 for i in self.examples}
+        self.out_of_place: set[int] = set()
+        first = {i: self._suggest(i) for i in self.examples}
+        for i, suggestion in first.items():
+            if suggestion.action == "move" and suggestion.percent >= 50:
+                self.out_of_place.add(i)
+                if suggestion.percent >= MISPLACED_PERCENT:
+                    self.weight[i] = MISPLACED_WEIGHT
+        plan = Plan()
+        for i, record in enumerate(self.records):
+            if self._source_of(record.path):
+                plan.files.append(self._suggest(i))
+        plan.files.sort(key=lambda s: s.path.lower())
+        return plan
+
+    def _suggest(self, i: int) -> Suggestion:
+        record, clues = self.records[i], self.clues[i]
+        current = self.folder[i]
+        if clues.default_name and clues.no_contents:
+            return Suggestion(record.path, current, None, 0, [Reason(False, "Default name and no readable contents")],
+                              note="looks empty")
+        source = self._source_of(record.path)
+        tidy_home = bool(source and source.mode == TIDY and current in self.by_folder)
+        if tidy_home and self.by_folder[current] == [i]:
+            return Suggestion(record.path, current, current, LONE_FILE_PERCENT,
+                              [Reason(True, "The only file in its folder")])
+        neighbours = self.index.search(clues.vector, exclude=self.example_pos.get(i))
+        sims: dict[str, list[tuple[float, int]]] = defaultdict(list)
+        for pos, sim in neighbours:
+            j = self.examples[pos]
+            sims[self.folder[j]].append((sim * self.weight.get(j, 1.0), j))
+        scores = {f: sum(w * s for w, (s, _) in zip(TOP_PER_FOLDER, sorted(v, reverse=True))) for f, v in sims.items()}
+        name_matches = self._name_matches(clues)
+        for folder, matched in name_matches.items():
+            scores[folder] = scores.get(folder, 0.0) + NAME_BONUS * min(2.0, sum(min(1.0, self.idf[f"w:{w}"] / 4)
+                                                                              for w in matched))
+        if tidy_home:
+            scores[current] = scores.get(current, 0.0) + STAY_BONUS
+        clashes = {}
+        for folder in list(scores):
+            folder_years = years(os.path.basename(folder))
+            if folder_years and clues.name_years and not folder_years & clues.name_years:
+                scores[folder] *= YEAR_CLASH
+                clashes[folder] = (sorted(folder_years)[0], sorted(clues.name_years)[0])
+        if record.ext in GOOGLE_LINKS:
+            scores = {f: s for f, s in scores.items() if source and _inside(f, source.root)}
+        ranked = sorted(((f, s) for f, s in scores.items() if s > 0), key=lambda kv: -kv[1])[:5]
+        if not ranked:
+            reason = "Google link files only move within their own drive" if record.ext in GOOGLE_LINKS \
+                else "No sorted files are like this one"
+            return Suggestion(record.path, current, None, 0, [Reason(False, reason)])
+
+        total = sum(s ** SHARPNESS for _, s in ranked)
+        best, best_score = ranked[0]
+        closest = max((s for s, _ in sims.get(best, [])), default=0.0)
+        coverage = min(1.0, closest / CLEAR_MATCH)
+        percent = min(MAX_PERCENT, round(100 * best_score ** SHARPNESS / total * coverage))
+        type_only = not self._shared_clues(clues, [j for _, j in sims.get(best, [])[:3]]) and best not in name_matches
+        if type_only:
+            percent = min(percent, TYPE_ONLY_PERCENT)
+        close = sorted(((sim, j) for sim, j in sims.get(best, []) if j != i), reverse=True)
+        others_there = len([j for j in self.by_folder.get(best, []) if j != i])
+        one_match = (others_there >= 3 and close and (len(close) < 2 or close[1][0] < 0.5 * close[0][0])
+                     and close[0][1] in getattr(self, "out_of_place", ()))
+        if one_match:
+            percent = min(percent, ONE_MATCH_PERCENT)
+        runner_up = None
+        if len(ranked) > 1:
+            second, second_score = ranked[1]
+            runner_up = (second, round(100 * second_score ** SHARPNESS / total * coverage))
+        reasons = self._reasons(i, best, sims.get(best, []), name_matches.get(best), clashes.get(best), coverage,
+                                runner_up)
+        if type_only:
+            reasons.append(Reason(False, "Only the file type matches"))
+        elif one_match:
+            reasons.append(Reason(False, f"Only one similar file there, among {others_there}"))
+        return Suggestion(record.path, current, best, percent, reasons, runner_up)
+
+    def _name_matches(self, clues: Clues) -> dict[str, list[str]]:
+        mine = set(clues.name_words) | set(clues.content_words)
+        matches = {}
+        for folder in self.by_folder:
+            folder_words = set(words(os.path.basename(folder)))
+            shared = sorted(w for w in folder_words & mine if self.idf.get(f"w:{w}", 0) > 2)
+            if shared:
+                matches[folder] = shared
+        return matches
+
+    # ---------------------------------------------------------------- reasons
+    def _reasons(self, i, best, close, name_match, clash, coverage, runner_up) -> list[Reason]:
+        clues, record = self.clues[i], self.records[i]
+        reasons: list[Reason] = []
+        if best == self.folder[i]:
+            reasons.append(Reason(True, "Fits the folder it is already in"))
+        close = sorted(close, reverse=True)
+        if close:
+            j = close[0][1]
+            more = len(close) - 1
+            extra = f" and {more} more" if more else ""
+            reasons.append(Reason(True, f"Like “{self.records[j].name}”{extra} in {self.label(best)}"))
+            shared = self._shared_words(clues, [j for _, j in close[:3]])
+            in_name = [w for w in shared if w in clues.name_words][:3]
+            in_text = [w for w in shared if w not in clues.name_words][:3]
+            if in_name:
+                reasons.append(Reason(True, "Name shares " + ", ".join(f"“{w}”" for w in in_name)))
+            if in_text:
+                reasons.append(Reason(True, "Mentions " + ", ".join(f"“{w}”" for w in in_text)))
+        if name_match:
+            reasons.append(Reason(True, f"Folder name “{os.path.basename(best)}” matches "
+                                        + ", ".join(f"“{w}”" for w in name_match)))
+        there = self.by_folder.get(best, [])
+        same_kind = sum(1 for j in there if self.records[j].kind == record.kind and j != i)
+        others = len([j for j in there if j != i])
+        if others and same_kind:
+            label = KIND_LABELS.get(record.kind, record.kind.capitalize())
+            reasons.append(Reason(True, f"{label}, like {same_kind} of {others} files there"))
+        if clash:
+            reasons.append(Reason(False, f"Folder is for {clash[0]}; this file is from {clash[1]}"))
+        if coverage < 1.0:
+            reasons.append(Reason(False, "No close match among sorted files"))
+        if runner_up:
+            reasons.append(Reason(False, f"Runner-up: {self.label(runner_up[0])} ({runner_up[1]}%)"))
+        return reasons
+
+    def _shared_clues(self, clues: Clues, others: list[int]) -> bool:
+        """Whether the file shares a word, prefix or detail (not just its type) with any of these files."""
+        mine = {k for k in clues.vector if k[0] in "wpx"}
+        return any(mine & self.clues[j].vector.keys() for j in others)
+
+    def _shared_words(self, clues: Clues, others: list[int]) -> list[str]:
+        totals: dict[str, float] = defaultdict(float)
+        for j in others:
+            vector = self.clues[j].vector
+            for key, value in clues.vector.items():
+                if key.startswith("w:") and key in vector:
+                    totals[key[2:]] += value * vector[key]
+        return [w for w, _ in sorted(totals.items(), key=lambda kv: -kv[1])]

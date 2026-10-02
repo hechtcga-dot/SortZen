@@ -18,6 +18,9 @@ src/sortzen/
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
   scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, text, photos, zip,
                        programs), fingerprints, scanner (skip rules, remembered results)
+  engine/              sorting engine (never touches files): features.py (clues from names,
+                       contents, kinds), planner.py (folder profiles, suggestions, percentages,
+                       reasons), plan.py (Suggestion, Reason, Plan)
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
                        file_index.py (SQLite: remembered scan results)
   services/            AppService: the only API the window uses
@@ -37,6 +40,7 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .           # run tests (must stay green)
 python packaging/launcher.py                        # run the program
 python tests/fixtures/make_test_folders.py OUT      # build the test folders in OUT
+python -m tests.engine_score                        # grade the engine against the answer key
 python packaging/launcher.py --self-test=out.json   # start, check bundled pieces, exit
 ```
 `tests/test_wording.py` enforces the writing rules below.
