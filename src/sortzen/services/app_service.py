@@ -5,18 +5,22 @@ import os
 import time
 from typing import Callable
 
+from ..ai import privacy
 from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
-from ..config import AppPaths, default_paths
+from ..ai.sorter import AIFile, AIFolder, AIRun, AISorter
+from ..config import COST_CAP_PER_1000_FILES, AppPaths, default_paths
+from ..engine.ai_evidence import apply_ai
+from ..repositories.ai_answers import AIAnswers, answer_key
 from ..repositories.api_keys import ApiKeyStore
 from ..repositories.file_index import FileIndex, path_key
 from ..repositories.settings import SettingsRepository
 from ..engine import Planner, Source
 from ..engine.duplicates import CopyGroup, find_copies
-from ..engine.plan import Plan
+from ..engine.plan import STAY as STAY_ACTION, Plan
 from ..engine.planner import SORT_OUT, TIDY
 from ..mover import Mover, MoveRequest, RunResult
 from ..mover.mover import same_contents
-from ..scanning.file_types import QUEUE_FOLDER, is_queue_folder
+from ..scanning.file_types import GOOGLE_LINKS, QUEUE_FOLDER, is_queue_folder
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
@@ -28,6 +32,17 @@ DEFAULTS = {                    # settings with on/off values, and their default
     "read_google_drive": False,  # read file contents on Google Drive (may download them)
     "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
 }
+AI_DEFAULTS = {                 # what the AI step may send, and how much it may spend
+    "ai_enabled": True,
+    "ai_privacy": privacy.NAME_ONLY,            # or privacy.BEGINNING
+    "ai_name_only_folders": [],
+    "ai_name_only_words": privacy.DEFAULT_NAME_ONLY_WORDS,
+    "ai_previews": False,
+    "house_rules": "",
+    "ai_cap_per_1000": COST_CAP_PER_1000_FILES,
+}
+AI_MAX_FOLDERS = 300            # folders listed to the AI service (those holding the most files)
+AI_EXAMPLES = 3                 # example file names per folder
 GENTLE_PAUSE = 0.005
 PLAN_SHARE = 5                  # planning counts as one fifth of the files on the progress bar
 SPEED_DEFAULTS = {"read": 100.0, "remembered": 5000.0, "plan": 1500.0}     # files per second
@@ -82,6 +97,8 @@ class AppService:
         self.index = FileIndex(self.paths.database_path)
         self.scanner = Scanner(self.index)
         self.mover = Mover(self.paths.runs_dir)
+        self.ai_answers = AIAnswers(self.paths.database_path)
+        self._records: dict = {}            # the last plan's files, by path
 
     # ---------------------------------------------------------------- AI service
     def ai_service(self) -> str:
@@ -110,6 +127,31 @@ class AppService:
 
     def ollama_url(self) -> str:
         return str(self.settings.get("ollama_url") or OLLAMA_URL)
+
+    def ai_value(self, name: str):
+        value = self.settings.get(name)
+        return AI_DEFAULTS[name] if value is None else value
+
+    def set_ai_value(self, name: str, value) -> None:
+        if name not in AI_DEFAULTS:
+            raise ValueError(f"Unknown AI setting: {name}")
+        self.settings.set(name, value)
+
+    def ai_ready(self) -> bool:
+        """The AI step can run: it is switched on and the service has its key (Ollama needs none)."""
+        return bool(self.ai_value("ai_enabled")) and self.has_api_key()
+
+    def ai_spent(self, month: str | None = None) -> float:
+        return float((self.settings.get("ai_spent") or {}).get(month or time.strftime("%Y-%m"), 0.0))
+
+    def _add_spent(self, dollars: float) -> None:
+        spent = dict(self.settings.get("ai_spent") or {})
+        month = time.strftime("%Y-%m")
+        spent[month] = round(spent.get(month, 0.0) + dollars, 6)
+        self.settings.set("ai_spent", spent)
+
+    def forget_ai_answers(self) -> None:
+        self.ai_answers.forget_all()
 
     # ---------------------------------------------------------------- API keys
     def api_key(self, service: str | None = None) -> str:
@@ -325,6 +367,8 @@ class AppService:
                           answers=self.answers(), corrections=self.corrections(), left_out=self.left_out())
         plan = planner.plan()
         plan.copies = find_copies(records, plan, self.is_left_out)
+        self._records = {r.path: r for r in records}
+        self._apply_ai(plan)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
         return plan
@@ -412,6 +456,117 @@ class AppService:
         if plan:
             found.update(plan.new_folders)
         return sorted(found, key=lambda f: self.display(f).lower())
+
+    # ---------------------------------------------------------------- AI step
+    def _ai_valid(self, plan: Plan):
+        roots = [path_key(r) for r in self.destination_folders()] + \
+                [path_key(f["path"]) for f in self.source_folders() if f["mode"] == TIDY]
+        new = {path_key(f) for f in plan.new_folders}
+        seen: dict[str, bool] = {}
+
+        def valid(folder: str) -> bool:
+            key = path_key(folder)
+            if key not in seen:
+                seen[key] = (key in new or os.path.isdir(folder)) and any(_inside(key, r) for r in roots) \
+                    and not self.is_left_out(folder) and not any(is_queue_folder(p) for p in folder.split(os.sep))
+            return seen[key]
+
+        return valid
+
+    def _apply_ai(self, plan: Plan) -> None:
+        """Remembered AI answers count as evidence in every plan, at no cost."""
+        keys = {s.path: answer_key(self._records[s.path]) for s in plan.files if s.path in self._records}
+        if not keys:
+            return
+        found = self.ai_answers.get_many(list(set(keys.values())))
+        by_path = {path: found[key] for path, key in keys.items() if key in found}
+        if by_path:
+            apply_ai(plan, by_path, self._ai_valid(plan), {k: v.name for k, v in SERVICES.items()})
+
+    def _ai_unsure(self, plan: Plan) -> list:
+        """Files from the folders being sorted that SortZen couldn't settle by itself."""
+        level = self.autonomy()
+        corrections = {path_key(p) for p in self.corrections()}
+        unsure = []
+        for s in plan.files:
+            record = self._records.get(s.path)
+            if record is None or record.role != "source" or record.ext in GOOGLE_LINKS or s.action == STAY_ACTION:
+                continue
+            if (s.destination is None or s.percent < level) and path_key(s.path) not in corrections \
+                    and not self.is_left_out(s.path):
+                unsure.append(record)
+        return unsure
+
+    def _ai_request(self, plan: Plan) -> tuple[list[AIFolder], list[AIFile], int]:
+        """The folders and files to send, as privacy settings allow, and how many already have an answer."""
+        valid = self._ai_valid(plan)
+        files_in: dict[str, list[str]] = {}
+        for r in self._records.values():
+            folder = os.path.dirname(r.path)
+            if r.role == "destination" or valid(folder):
+                files_in.setdefault(folder, []).append(r.name)
+        folders = [f for f in self.destination_choices(plan) if valid(f)]
+        folders.sort(key=lambda f: -len(files_in.get(f, [])))
+        folders = sorted(folders[:AI_MAX_FOLDERS], key=lambda f: self.display(f).lower())
+        listed = [AIFolder(f, self.display(f), [privacy.scrub_name(n) for n in sorted(files_in.get(f, []))[:AI_EXAMPLES]])
+                  for f in folders]
+        unsure = self._ai_unsure(plan)
+        remembered = self.ai_answers.get_many([answer_key(r) for r in unsure])
+        sending = self.ai_value("ai_privacy") == privacy.BEGINNING
+        name_folders, name_words = self.ai_value("ai_name_only_folders"), self.ai_value("ai_name_only_words")
+        files = []
+        for r in unsure:
+            key = answer_key(r)
+            if key in remembered:
+                continue
+            content = sending and not r.cloud_only and not privacy.name_only(r.path, name_folders, name_words)
+            text = privacy.beginning(r.text) if content and r.text else ""
+            preview = bool(content and r.kind == "image" and self.ai_value("ai_previews"))
+            files.append(AIFile(key, r.path, privacy.scrub_name(r.name), self.display(os.path.dirname(r.path)),
+                                text, preview))
+        return listed, files, len(unsure) - len(files)
+
+    def _ai_cap(self) -> float:
+        return max(0.01, float(self.ai_value("ai_cap_per_1000")) * max(1, len(self._records)) / 1000)
+
+    def _sorter(self, provider=None) -> AISorter:
+        return AISorter(provider or self.provider(), self.ai_service(), self.model(), self.ai_value("house_rules"))
+
+    def ai_estimate(self, plan: Plan, **trying) -> dict:
+        """What asking the AI service would cost and send, before anything is sent.
+
+        ``trying`` holds settings being chosen on screen (e.g. ai_privacy="beginning"); they are used
+        for this estimate only and not saved.
+        """
+        saved = {k: self.settings.data.get(k) for k in trying}
+        self.settings.data.update(trying)
+        try:
+            return self._ai_estimate(plan)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    self.settings.data.pop(k, None)
+                else:
+                    self.settings.data[k] = v
+
+    def _ai_estimate(self, plan: Plan) -> dict:
+        folders, files, remembered = self._ai_request(plan)
+        service = SERVICES[self.ai_service()]
+        estimate = AISorter(None, service.key, self.model(), self.ai_value("house_rules")).estimate(folders, files)
+        return {"files": len(files), "remembered": remembered, "folders": len(folders),
+                "with_content": sum(1 for f in files if f.has_content), "cost": estimate, "cap": self._ai_cap(),
+                "service": service.name, "model": self.model(), "local": service.key == "ollama",
+                "privacy": self.ai_value("ai_privacy"), "spent_this_month": self.ai_spent()}
+
+    def ask_ai(self, plan: Plan, emit=None, token=None, provider=None) -> AIRun:
+        """Ask the AI service about the unsure files; answers are remembered as they arrive."""
+        folders, files, _ = self._ai_request(plan)
+        if not files:
+            return AIRun()
+        sorter = self._sorter(provider)
+        _, run = sorter.run(folders, files, self._ai_cap(), emit, token, on_answers=self.ai_answers.save)
+        self._add_spent(run.spent)
+        return run
 
     # ---------------------------------------------------------------- moving
     def move_preview(self, plan: Plan, rows: list[plan_view.PlanRow]) -> moving.MovePreview:
