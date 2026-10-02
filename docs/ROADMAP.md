@@ -27,7 +27,7 @@ moves files after the plan is confirmed.
 | 8 | Plan screen: sortable columns everywhere, Type column, search and filters, group by destination, problems before moving, accuracy readout, tick boxes | **Done** |
 | 9 | Mover: confirmed moves, whole-folder moves, new folders, removing emptied folders, name clashes, cross-drive copy and check, run log, Undo | **Done** |
 | 10 | Duplicates review: exact copies, suggested copy to keep, dated "Queued for deletion" folders, Undo | **Done** |
-| 11 | AI step: service drop-down and key, privacy settings (name only, beginning of file), name-only folders and words, scrubbing, image previews, two passes, batches, cost estimate and cap, house rules | To do |
+| 11 | AI step: service drop-down and key, privacy settings (name only, beginning of file), name-only folders and words, scrubbing, image previews, two passes, batches, cost estimate and cap, house rules | **Done** |
 | 12 | Settings window (General, AI, Privacy, Advanced), save and load a profile, Help: activity log and diagnostic info, uninstall option to remove settings | To do |
 | 13 | **Alpha 0.2 build** | To do |
 

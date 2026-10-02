@@ -17,6 +17,7 @@ from ..services.app_service import FolderError
 from ..tasks import Estimate, JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
+from .ai_dialog import AskAIDialog
 from .copies_page import CopiesPage
 from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
 from .folders_page import FoldersPage
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         self.plan_page.update_plan.connect(self.make_plan)
         self.plan_page.export.connect(self.export_plan)
         self.plan_page.move_ticked.connect(self.move_rows)
+        self.plan_page.ask_ai.connect(self.ask_ai)
         self.copies_page = CopiesPage(self.service)
         self.copies_page.queue.connect(self.queue_copies)
         self.copies_page.open_folder.connect(self.open_folder)
@@ -234,6 +236,10 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.runs_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.plan_action)
+        self.ai_action = action("Ask AI about unsure files…", self.ask_ai,
+                                tip="Ask an AI service about the files SortZen couldn't place by itself")
+        self.ai_action.setEnabled(False)
+        plan_menu.addAction(self.ai_action)
         self.copies_action = action("Copies…", lambda: self.tabs.setCurrentWidget(self.copies_page),
                                     tip="Exact copies found while making the plan")
         self.copies_action.setEnabled(False)
@@ -412,6 +418,7 @@ class MainWindow(QMainWindow):
             self.tabs.removeTab(self.tabs.indexOf(self.copies_page))
         self.copies_page.set_copies(plan.copies)
         self.copies_action.setEnabled(bool(plan.copies))
+        self.ai_action.setEnabled(True)
         self.tabs.setCurrentWidget(self.questions_page if open_questions else self.plan_page)
 
     def save_answers(self, answers: dict) -> None:
@@ -503,6 +510,30 @@ class MainWindow(QMainWindow):
         self.progress.stop.connect(self.service.stop_job)
         self.progress.show()
         self.run_job("queue", lambda emit, token: self.service.queue_copies(groups, emit, token))
+
+    def ask_ai(self, confirm: bool = True) -> None:
+        """Ask the AI service about unsure files after showing what is sent and what it may cost."""
+        if self.plan is None or self.service.jobs.busy:
+            return
+        if confirm and not AskAIDialog(self, self.service, self.plan).exec():
+            return
+        plan = self.plan
+        self.progress = ProgressWindow(self, "Asking the AI service")
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("ai", lambda emit, token: self.service.ask_ai(plan, emit, token))
+
+    def _asked(self, run) -> None:
+        if not run.asked:
+            self.statusBar().showMessage("There was nothing new to ask about.", 6000)
+            return
+        text = (f"The AI service suggested a folder for {run.answered:,} of {run.asked:,} files"
+                + (f" ({run.second_pass:,} asked again with the beginning of the file)" if run.second_pass else "")
+                + f". Cost: about ${run.spent:.4f}.")
+        if run.stopped:
+            text += f"\n\nIt stopped early: {run.stopped}. The answers so far are kept."
+        QMessageBox.information(self, APP_NAME, text + "\n\nThe plan is made again with the answers.")
+        self.make_plan()
 
     def show_runs(self) -> None:
         dialog = RunsDialog(self, self.service.move_runs())
@@ -605,6 +636,8 @@ class MainWindow(QMainWindow):
                 if self._plan_waiting:
                     self._plan_waiting = False
                     self.make_plan()
+            if event.name == "ai":
+                self._asked(event.result)
             if event.name in ("move", "undo-move", "queue"):
                 self._moved(event.result, event.name == "undo-move", event.name == "queue")
             if event.name == "plan":
@@ -620,6 +653,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
+            if event.name == "ai":
+                QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
             if event.name in ("move", "undo-move", "queue"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
                                     "is written down; Edit › Undo a move puts it back.")

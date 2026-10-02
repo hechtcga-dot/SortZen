@@ -199,6 +199,38 @@ class MainWindowTest(unittest.TestCase):
         self.assertTrue(extra.path and os.path.exists(extra.path))
         self.assertEqual(self.window.undo_action.text(), "Undo queue copies")
 
+    def test_ask_ai_dialog_and_job(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.ui.ai_dialog import AskAIDialog
+        from tests.test_ai import FakeProvider
+
+        root = shared_test_folders()
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        dialog = AskAIDialog(self.window, self.service, self.window.plan)
+        self.assertIn("Ask Gemini about", dialog.title.text())
+        self.assertFalse(dialog.ask.isEnabled())                  # no key yet
+        dialog.ai_box.key.setText("test-key")
+        self.assertTrue(dialog.ask.isEnabled())
+        dialog.privacy.buttons["beginning"].setChecked(True)
+        self.assertIn("beginning of the file", dialog.cost.text())
+        self.assertEqual(self.service.ai_value("ai_privacy"), "name")     # nothing saved before Ask
+        dialog.accept()
+        self.assertTrue(self.service.has_api_key("gemini"))
+        self.assertEqual(self.service.ai_value("ai_privacy"), "beginning")
+        first = self.window.plan
+        with mock.patch.object(type(self.service), "provider", lambda s: FakeProvider()), \
+                mock.patch.object(QMessageBox, "information") as told:
+            self.window.ask_ai(confirm=False)
+            self.assertTrue(wait_until(self.app, lambda: told.called))
+            self.assertTrue(wait_until(self.app, lambda: self.window.plan is not first and not self.service.jobs.busy))
+        self.assertIn("suggested a folder", told.call_args.args[2])
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview

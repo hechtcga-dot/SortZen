@@ -14,7 +14,9 @@ files.
 ```
 src/sortzen/
   config.py            constants, per-user storage paths (SORTZEN_DATA_DIR override)
-  ai/                  provider interface, Gemini and web adapters, service list, JSON parsing
+  ai/                  provider interface, Gemini and web adapters, service list, JSON parsing,
+                       privacy.py (scrubbing, name-only rules, previews), costs.py (prices),
+                       sorter.py (two passes in batches, spending cap)
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
   scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, text, photos, zip,
                        programs), fingerprints, scanner (skip rules, remembered results)
@@ -22,12 +24,13 @@ src/sortzen/
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
                        reasons, corrections), overview.py (subfolders, kept-together folders,
                        topics, questions, answers), duplicates.py (exact copies, the copy
-                       kept and why), plan.py (Suggestion, FolderSuggestion, Topic, Question,
+                       kept and why), ai_evidence.py (AI answers as evidence), plan.py (Suggestion, FolderSuggestion, Topic, Question,
                        Plan)
   mover/               moves confirmed files and folders (never decides): no overwriting,
                        copy and check across drives, step-by-step run log, Undo
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
-                       file_index.py (SQLite: remembered scan results)
+                       file_index.py (SQLite: remembered scan results), ai_answers.py
+                       (SQLite: remembered AI answers)
   services/            AppService: the only API the window uses (folders, autonomy, answers,
                        corrections, make_plan, move, undo); plan_view.py (Ready/Review/
                        Staying rows, problems, display paths, Excel export); moving.py
@@ -35,6 +38,7 @@ src/sortzen/
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
                        questions_page.py, progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
+                       ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        sortable.py (click-to-sort columns), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt

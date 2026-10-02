@@ -50,6 +50,7 @@ class PlanPage(QWidget):
     update_plan = Signal()
     export = Signal()
     move_ticked = Signal(list)               # rows to move
+    ask_ai = Signal()
 
     def __init__(self, service):
         super().__init__()
@@ -71,6 +72,10 @@ class PlanPage(QWidget):
         refresh.setToolTip("Read the folders again and use your answers and choices (F5)")
         refresh.clicked.connect(self.update_plan)
         top.addWidget(refresh)
+        self.ai_button = QPushButton("Ask AI about unsure files…")
+        self.ai_button.setToolTip("Shows what would be sent and what it may cost first. Answers are remembered.")
+        self.ai_button.clicked.connect(self.ask_ai)
+        top.addWidget(self.ai_button)
         export = QPushButton("Export to Excel…")
         export.clicked.connect(self.export)
         top.addWidget(export)

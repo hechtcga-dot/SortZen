@@ -223,34 +223,53 @@ SortZen learns only from choices made inside SortZen. It does not watch Explorer
 - Learned preferences can be viewed and cleared.
 
 ## 9. AI and cost
-- Default service: **Gemini**, using a low-cost "Lite" model. A drop-down offers Claude,
-  ChatGPT, OpenRouter, Ollama (runs on the PC) and Off.
+- Default service: **Gemini**. A drop-down offers Claude, ChatGPT, OpenRouter, Ollama
+  (runs on the PC) and Off.
 - API keys are stored in Windows Credential Manager, encrypted for the Windows user, and
-  never in the program folder or the repository.
+  never in the program folder, the settings file or the repository.
+- The plan is always made on the PC first. "Ask AI about unsure files…" (Plan tab and Plan
+  menu) then offers to ask the AI service about the files SortZen couldn't settle: files
+  from the folders being sorted that wait in Review. Files users placed themselves, files
+  left out and Google link files are never sent.
+- Before anything is sent, a window shows how many files will be asked about, what will be
+  sent, the estimated cost, the spending cap and the amount spent this month. The service,
+  its key and the privacy choice can be set right there.
 - Cost target: **no more than $0.25 per 1,000 files**, met by:
   - Local first (§7): the AI only sees files that rules and examples couldn't place.
-  - Two passes: the AI first sees the name and folder only; only files it is still unsure
-    about get content, as the privacy settings allow.
-  - Batches of 30–50 files, so the folder layout, house rules and examples are sent once
-    per batch.
-  - An estimated cost shown before every run, a spending cap, and replies remembered by
-    fingerprint so the same file is never paid for twice.
+  - Two passes: the AI first sees the name and folder only; only files it is still less
+    than 70% sure about are asked again with content, as the privacy settings allow.
+  - Batches of 40 files, so the numbered folder list (with up to three example names per
+    folder) and the house rules are sent once per batch.
+  - A spending cap: by default $0.25 per 1,000 files in the plan (changeable in Settings).
+    SortZen stops before a batch would go over it.
+  - Answers are remembered by the file's contents, so the same file is never paid for
+    twice, and they count in every later plan at no cost.
 - **House rules**: plain-English notes, e.g. "Resumes are personal even if they mention my
   employer", sent with every AI batch.
+- An AI answer is one more piece of evidence, shown with its reasons:
+  - When it agrees with SortZen, the percentage rises halfway towards 100 at most, scaled
+    by how sure the AI was (never above 97%).
+  - On its own it counts for at most 70%, so at the usual autonomy level those files still
+    wait in Review. It replaces SortZen's own guess only when that guess was less sure.
+  - Nothing moves until users confirm, as always.
 
 ## 10. Privacy settings
-Explained in plain language at first setup (what leaves the PC and when), and always
-available in Settings:
+Explained in plain language in the "Ask AI" window and in Settings (what leaves the PC
+and when):
+- **What leaves the PC**: the names of the files SortZen couldn't place, where they are now,
+  and the names of the folders with a few example file names. Very long numbers in names
+  (accounts, cards, phones) and email addresses are removed.
 - **How much of a file the AI may see**:
-  - Name only: most private, least accurate.
-  - The beginning of the file, up to about 1,000 words: most accurate.
-- **Always name only**: folders and words listed in Settings (e.g. "tax", "bank",
-  "passport").
-- **Image previews**: off by default. When on, a small preview of images SortZen can't
-  place is sent. Otherwise images are sorted by name and photo details.
-- Numbers, email addresses and anything that looks like an account or card number are
-  removed from text before it is sent.
-- With Ollama, nothing leaves the PC; the setup screen says so.
+  - Name only (the default): most private, least accurate.
+  - The beginning of the file: the first 400 words of a document, in the second pass only.
+- **Always name only**: folders and words listed in Settings (by default "tax", "bank",
+  "passport", "medical", "password"): for those files only the name is ever sent.
+- **Image previews**: off by default. When on, a small preview (256 pixels) of pictures
+  SortZen can't place is sent in the second pass. Otherwise pictures are sorted by name and
+  photo details.
+- Numbers (years kept), email addresses and anything that looks like an account or card
+  number are removed from text before it is sent.
+- With Ollama, nothing leaves the PC; the window says so.
 
 ## 11. Review and move
 - Files and folders are moved, not copied, after a **review screen** showing the full plan:
