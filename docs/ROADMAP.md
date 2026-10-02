@@ -14,7 +14,7 @@ Files move from alpha 0.2.
 | 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | **Done** |
 | 1 | Synthetic test folders; scanner and file readers with remembered results | **Done** |
 | 2a | Sorting engine, file by file: folder profiles, suggestions with a percentage and how it was worked out, runner-up, misplaced files in organised folders | **Done** |
-| 2b | Sorting engine, the overview: subfolder outcomes (stays, keep together, sort the inside, Review), topics and their homes, one-level new folders, questions | To do |
+| 2b | Sorting engine, the overview: subfolder outcomes (stays, keep together, sort the inside, Review), topics and their homes, one-level new folders, questions | **Done** |
 | 3 | Plan screen (read-only): add folders (sort into other folders or tidy this folder), scan, questions, plan with Ready and Review, percentage breakdowns, corrections, export the plan to Excel | To do |
 | 4 | **Alpha 0.1 build**: program folder and per-user installer from the Windows build workflow; plan only | To do |
 | 5 | AI step: service drop-down, key storage, privacy settings (name only, beginning of file), two passes, batches, cost estimate and cap | To do |
@@ -57,7 +57,7 @@ below the autonomy level, subfolder outcomes, topics, and misplaced files. The s
 recorded so later changes can't quietly lower it. `python -m tests.engine_score` prints
 the score and the mistakes.
 
-| Measure (2a, file by file) | Score | Test requires |
+| Measure (engine decides everything itself) | Score | Test requires |
 |---|---|---|
 | Top suggestion right | 97.2% | 93% |
 | Ready (90%+) suggestions right | 100% (312 files) | 97% |
@@ -65,6 +65,10 @@ the score and the mistakes.
 | Review-only files kept for Review | 100% | 95% |
 | Wrong moves out of organised folders | 0 | at most 2 |
 | Misplaced files found | 2 of 3 (the third shows as staying, with the alternative as a reason) | all but one |
+| Subfolders decided right (2b) | 30 of 30 | all but two |
+| Kept-together folders placed right | 3 of 3 | all but one |
+| Topics together or asked about | 1 of 1 | all |
+| Questions asked | 3 | at most 10 |
 
 ## Alpha 0.1 test: pass criteria (plan only, real folders)
 - Nothing on disk changes.

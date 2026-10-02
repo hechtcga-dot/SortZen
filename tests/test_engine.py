@@ -130,3 +130,64 @@ class EngineScoreTest(unittest.TestCase):
 
     def test_speed(self):
         self.assertLess(self.seconds, 20)
+
+
+def _parse(fraction: str) -> tuple[int, int]:
+    got, total = fraction.split(" of ")
+    return int(got), int(total)
+
+
+class OverviewScoreTest(unittest.TestCase):
+    """Subfolders, topics and questions on the test folders, graded against the answer key."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root, cls.key = shared_test_folders(), answer_key()
+        cls.plan = run_engine(cls.root)
+        cls.result = score(cls.plan, cls.key, cls.root)
+
+    def test_subfolders(self):
+        right, total = _parse(self.result["folders decided right"])
+        self.assertGreaterEqual(right, total - 2)
+        right, total = _parse(self.result["kept-together folders placed right"])
+        self.assertGreaterEqual(right, total - 1)
+
+    def test_topics_and_questions(self):
+        right, total = _parse(self.result["topics together or asked about"])
+        self.assertEqual(right, total)
+        self.assertLessEqual(self.result["questions"], 10)
+        garden = next(q for q in self.plan.questions if "Garden Planner" in q.text)
+        self.assertIn("3 places", garden.text)
+        self.assertEqual(garden.choices[-1].label, "Leave them where they are")
+
+    def test_answers_are_applied(self):
+        garden = next(q for q in self.plan.questions if "Garden Planner" in q.text)
+        folder_q = next(q for q in self.plan.questions if q.key.startswith("folder:"))
+        sort_choice = next(i for i, c in enumerate(folder_q.choices) if c.outcome == "sort inside")
+        answered = run_engine(self.root, answers={garden.key: 0, folder_q.key: sort_choice})
+        home = garden.choices[0].destination
+        members = {os.path.normcase(m) for m in garden.about}
+        for s in answered.files:
+            if os.path.normcase(s.path) in members:
+                self.assertEqual((s.destination, s.percent), (home, 100))
+        for f in answered.folders:
+            if os.path.normcase(f.path) in members and os.path.normcase(f.path) != os.path.normcase(home):
+                self.assertEqual((f.outcome, f.destination), ("keep together", home))
+        self.assertEqual(answered.folder(folder_q.about[0]).outcome, "sort inside")
+        self.assertNotIn(garden.key, [q.key for q in answered.questions if q.answer is None])
+
+
+class CorrectionsTest(unittest.TestCase):
+    def test_a_correction_is_kept_and_teaches_similar_files(self):
+        base = tempfile.mkdtemp()
+        down, docs = os.path.join(base, "Downloads"), os.path.join(base, "Documents")
+        recs = [record(f"{docs}/Recipes/{n}.docx", f"{n} recipe flour sugar oven") for n in ("Bread", "Pie", "Scones")]
+        recs += [record(f"{docs}/Garden/{n}.docx", f"{n} seeds soil watering") for n in ("Kale", "Beans", "Peas")]
+        first = record(f"{down}/Tomato chutney.docx", "tomato chutney jars vinegar")
+        second = record(f"{down}/Tomato salsa.docx", "tomato salsa jars vinegar")
+        corrections = {first.path: os.path.join(docs, "Recipes")}
+        plan = Planner(recs + [first, second], [Source(down, SORT_OUT)], [docs], corrections=corrections).plan()
+        corrected, similar = plan.for_path(first.path), plan.for_path(second.path)
+        self.assertEqual((corrected.destination, corrected.percent), (os.path.join(docs, "Recipes"), 100))
+        self.assertEqual(similar.destination, os.path.join(docs, "Recipes"))
+        self.assertTrue(any("Tomato chutney.docx" in r.text for r in similar.reasons))

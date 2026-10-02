@@ -72,6 +72,13 @@ decision; when the code and this file disagree, this file wins until it is chang
 - Signs a folder is messy: a generic name ("older downloads", "New folder", "misc",
   "stuff", "temp"); many unrelated file types and topics; dates spread over months or
   years.
+- Messy folders are found in rounds: folders that are clearly messy by name come first,
+  then a folder counts as messy when most of its files clearly belong in several different
+  organised folders elsewhere, comparing only with folders not already found messy.
+- A kept-together folder goes where most of its files fit. When the best fit is inside a
+  project folder (e.g. Projects/Project Osprey), it goes beside that project instead. When
+  its own files give no clear answer, it follows a related kept-together folder with the
+  same distinctive name.
 - The AI is only asked about a folder when these signs are unclear, and then sees the
   folder name and about 20 file names.
 - On the review screen any folder can be switched between keep together and sort the
@@ -114,7 +121,8 @@ SortZen looks at everything first, then decides file by file.
 Before suggesting any move, SortZen scans every added folder at every level and builds an
 overview of what is there:
 - **Topics**: groups of related files and folders wherever they are, found from shared
-  distinctive words in names and contents, people's names, version series
+  distinctive words in names (words in at most 15% of names, and at least one folder among
+  them) and contents, people's names, version series
   (`Name_1.0.zip` … `Name_1.6.zip`), copies (`name (1)`, `folder (4)`), and what is
   stored together. For example: "Garden Planner" files in My Drive, in My Drive/Owen
   Sample and in Documents/Projects are one topic, a program built for Owen Sample.

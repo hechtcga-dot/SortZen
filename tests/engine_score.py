@@ -17,21 +17,18 @@ from sortzen.scanning.scanner import Scanner
 AUTONOMY = 90
 
 
-def run_engine(root: Path, key: dict):
-    """Plan each test scenario on its own: Downloads into Sorted, and My Drive tidied in place.
-
-    Folders the answer key marks "sort inside" or "review" are not used as destinations.
-    """
-    not_destinations = [str(root / f) for f, o in key["folders"].items() if o in ("sort inside", "review")]
+def run_engine(root: Path, key: dict | None = None, answers: dict | None = None):
+    """Plan each test scenario on its own: Downloads into Sorted, and My Drive tidied in place."""
     with tempfile.TemporaryDirectory() as data:
         scanner = Scanner(FileIndex(Path(data) / "index.db"), protected=[])
         downloads = scanner.scan(root / "Downloads", "source", recursive=True).files
         drive = scanner.scan(root / "My Drive", "source", recursive=True).files
         sorted_ = scanner.scan(root / "Sorted", "destination", recursive=True).files
     first = Planner(downloads + sorted_, [Source(str(root / "Downloads"), SORT_OUT)], [str(root / "Sorted")],
-                    not_destinations).plan()
-    second = Planner(drive, [Source(str(root / "My Drive"), TIDY)], [], not_destinations).plan()
-    first.files += second.files
+                    answers=answers).plan()
+    second = Planner(drive, [Source(str(root / "My Drive"), TIDY)], [], answers=answers).plan()
+    for part in ("files", "folders", "topics", "questions", "new_folders"):
+        getattr(first, part).extend(getattr(second, part))
     return first
 
 
@@ -82,7 +79,36 @@ def score(plan, key: dict, root: Path, autonomy: int = AUTONOMY) -> dict:
             ready_right += right
         if not right:
             mistakes.append((rel, "wrong folder", expected, predicted, s.percent))
+    folders_right, folder_mistakes, kept_total, kept_right = 0, [], 0, 0
+    planned_folders = {_rel(root, f.path): f for f in plan.folders}
+    judged = {f: o for f, o in key["folders"].items() if not o.startswith("together: ")}
+    for folder, expected in judged.items():
+        f = planned_folders.get(folder)
+        got = f.outcome if f else "stays"
+        want = expected.split(":")[0]
+        right = got == want
+        if want == "keep together":
+            kept_total += 1
+            kept_right += right and _rel(root, f.destination) == expected.split(": ", 1)[1]
+        folders_right += right
+        if not right:
+            folder_mistakes.append((folder, want, got))
+    topics_ok = []
+    for topic, members in key.get("topics", {}).items():
+        places = set()
+        for m in members:
+            f, s = planned_folders.get(m), by_rel.get(m)
+            if f:
+                places.add(_rel(root, f.destination) if f.destination else m)
+            elif s:
+                places.add(_rel(root, s.destination or s.current_folder))
+        asked = any(len({_rel(root, a) for a in q.about} & set(members)) >= len(members) / 2 for q in plan.questions)
+        topics_ok.append(len(places) == 1 or asked)
     return {
+        "folders decided right": f"{folders_right} of {len(judged)}",
+        "kept-together folders placed right": f"{kept_right} of {kept_total}",
+        "topics together or asked about": f"{sum(topics_ok)} of {len(topics_ok)}",
+        "questions": len(plan.questions),
         "files with a right answer": placed,
         "top suggestion right": correct / placed,
         "ready (at or above autonomy)": ready,
@@ -94,6 +120,8 @@ def score(plan, key: dict, root: Path, autonomy: int = AUTONOMY) -> dict:
         "misplaced files found": f"{misplaced_found} of {misplaced_total}",
         "right, by percentage band": {f"{b}%+": (n, round(r / n, 2) if n else None) for b, (n, r) in buckets.items()},
         "mistakes": sorted(mistakes, key=lambda m: -m[4]),
+        "folder mistakes": folder_mistakes,
+        "question texts": [q.text for q in plan.questions],
     }
 
 
@@ -102,10 +130,16 @@ def main() -> None:
 
     root = shared_test_folders()
     key = answer_key()
-    result = score(run_engine(root, key), key, root)
+    result = score(run_engine(root), key, root)
     for name, value in result.items():
-        if name != "mistakes":
+        if name not in ("mistakes", "folder mistakes", "question texts"):
             print(f"{name:40} {value if not isinstance(value, float) else f'{value:.1%}'}")
+    print("\nFolder mistakes (folder, expected, got):")
+    for m in result["folder mistakes"]:
+        print("   ", m)
+    print("\nQuestions:")
+    for q in result["question texts"]:
+        print("   ", q)
     print("\nMistakes (highest percentage first):")
     for rel, kind, expected, predicted, percent in result["mistakes"][: int(sys.argv[1]) if len(sys.argv) > 1 else 40]:
         print(f"{percent:3d}%  {kind:16} {rel}\n        expected {expected}\n        got      {predicted}")

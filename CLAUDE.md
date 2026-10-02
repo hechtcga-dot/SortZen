@@ -20,7 +20,9 @@ src/sortzen/
                        programs), fingerprints, scanner (skip rules, remembered results)
   engine/              sorting engine (never touches files): features.py (clues from names,
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
-                       reasons), plan.py (Suggestion, Reason, Plan)
+                       reasons, corrections), overview.py (subfolders, kept-together folders,
+                       topics, questions, answers), plan.py (Suggestion, FolderSuggestion,
+                       Topic, Question, Plan)
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
                        file_index.py (SQLite: remembered scan results)
   services/            AppService: the only API the window uses

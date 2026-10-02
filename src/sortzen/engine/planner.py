@@ -17,7 +17,7 @@ from ..repositories.file_index import path_key
 from ..scanning.file_types import GOOGLE_LINKS
 from ..scanning.records import FileRecord
 from .features import Clues, clues_for, finish_vectors, rarity, words, years
-from .plan import Plan, Reason, Suggestion
+from .plan import FOLDER_REVIEW, KEEP_TOGETHER, STAYS, Plan, Reason, Suggestion
 
 SORT_OUT = "sort into other folders"
 TIDY = "tidy this folder"
@@ -72,11 +72,15 @@ class _Index:
 
 class Planner:
     def __init__(self, records: list[FileRecord], sources: list[Source], destinations: list[str],
-                 not_destinations: list[str] = ()):
+                 not_destinations: list[str] = (), answers: dict[str, int] | None = None,
+                 corrections: dict[str, str] | None = None):
         self.records = list(records)
         self.sources = [Source(os.path.abspath(s.root), s.mode) for s in sources]
         self.destinations = [os.path.abspath(d) for d in destinations]
-        self.not_destinations = [os.path.abspath(d) for d in not_destinations]   # messy or undecided folders
+        self.not_destinations = [os.path.abspath(d) for d in not_destinations]   # never used as destinations
+        self.answers = dict(answers or {})                       # question key -> chosen choice
+        self.corrections = {path_key(k): os.path.abspath(v) for k, v in (corrections or {}).items()}
+        self.excluded: list[str] = []                            # messy, undecided or moving folders
 
     # ---------------------------------------------------------------- set-up
     def _source_of(self, path: str) -> Source | None:
@@ -89,7 +93,7 @@ class Planner:
         return folder
 
     def _is_candidate(self, folder: str) -> bool:
-        if any(_inside(folder, d) for d in self.not_destinations):
+        if any(_inside(folder, d) for d in self.not_destinations + self.excluded):
             return False
         if any(_inside(folder, d) for d in self.destinations):
             return True
@@ -101,41 +105,63 @@ class Planner:
 
     # ---------------------------------------------------------------- the plan
     def plan(self) -> Plan:
+        from . import overview
+
         self.clues: list[Clues] = [clues_for(r) for r in self.records]
         self.idf = rarity(self.clues)
         finish_vectors(self.clues, self.idf)
         self.folder = [os.path.dirname(r.path) for r in self.records]
-        candidate = {f: self._is_candidate(f) for f in set(self.folder)}
-        self.examples = [i for i, f in enumerate(self.folder) if candidate[f]]
+        self.home = [self.corrections.get(path_key(r.path), f) for r, f in zip(self.records, self.folder)]
+        self._prepare()
+        plan = Plan(folders=overview.decide_folders(self))
+        self.excluded = [f.path for f in plan.folders if f.outcome != STAYS]
+        self.held = [f.path for f in plan.folders if f.outcome in (KEEP_TOGETHER, FOLDER_REVIEW)]
+        self._prepare()
+        overview.place_kept_folders(self, plan)
+        for i, record in enumerate(self.records):
+            if self._source_of(record.path) and not any(_inside(record.path, h) for h in self.held):
+                plan.files.append(self._suggest(i))
+        overview.find_topics(self, plan)
+        overview.ask_about_folders(self, plan)
+        overview.apply_answers(self, plan)
+        plan.files.sort(key=lambda s: s.path.lower())
+        plan.folders.sort(key=lambda f: f.path.lower())
+        plan.new_folders = sorted({s.destination for s in plan.files if s.new_folder}
+                                  | {t.home for t in plan.topics if t.new_folder})
+        return plan
+
+    def _prepare(self) -> None:
+        """Folder profiles: the files in each folder that may receive files."""
+        candidate = {f: self._is_candidate(f) for f in set(self.home)}
+        self.examples = [i for i, f in enumerate(self.home) if candidate[f]]
         self.example_pos = {i: pos for pos, i in enumerate(self.examples)}
         self.by_folder: dict[str, list[int]] = defaultdict(list)
         for i in self.examples:
-            self.by_folder[self.folder[i]].append(i)
+            self.by_folder[self.home[i]].append(i)
         self.index = _Index([self.clues[i].vector for i in self.examples])
         # First pass: sorted files that look misplaced count less as examples for their folder.
         self.weight = {i: 1.0 for i in self.examples}
         self.out_of_place: set[int] = set()
-        first = {i: self._suggest(i) for i in self.examples}
+        first = {i: self._suggest(i) for i in self.examples
+                 if path_key(self.records[i].path) not in self.corrections}
         for i, suggestion in first.items():
-            if suggestion.action == "move" and suggestion.percent >= 50:
+            if suggestion.destination not in (None, self.home[i]) and suggestion.percent >= 50:
                 self.out_of_place.add(i)
                 if suggestion.percent >= MISPLACED_PERCENT:
                     self.weight[i] = MISPLACED_WEIGHT
-        plan = Plan()
-        for i, record in enumerate(self.records):
-            if self._source_of(record.path):
-                plan.files.append(self._suggest(i))
-        plan.files.sort(key=lambda s: s.path.lower())
-        return plan
 
-    def _suggest(self, i: int) -> Suggestion:
+    def _suggest(self, i: int, outside: str | None = None) -> Suggestion:
+        """Where file i belongs. With ``outside``, that folder and its files are left out of the comparison."""
         record, clues = self.records[i], self.clues[i]
         current = self.folder[i]
+        corrected = self.corrections.get(path_key(record.path))
+        if corrected and outside is None:
+            return Suggestion(record.path, current, corrected, 100, [Reason(True, "You chose this folder")])
         if clues.default_name and clues.no_contents:
             return Suggestion(record.path, current, None, 0, [Reason(False, "Default name and no readable contents")],
                               note="looks empty")
         source = self._source_of(record.path)
-        tidy_home = bool(source and source.mode == TIDY and current in self.by_folder)
+        tidy_home = bool(outside is None and source and source.mode == TIDY and current in self.by_folder)
         if tidy_home and self.by_folder[current] == [i]:
             return Suggestion(record.path, current, current, LONE_FILE_PERCENT,
                               [Reason(True, "The only file in its folder")])
@@ -143,9 +169,11 @@ class Planner:
         sims: dict[str, list[tuple[float, int]]] = defaultdict(list)
         for pos, sim in neighbours:
             j = self.examples[pos]
-            sims[self.folder[j]].append((sim * self.weight.get(j, 1.0), j))
+            if outside is None or not _inside(self.home[j], outside):
+                sims[self.home[j]].append((sim * self.weight.get(j, 1.0), j))
         scores = {f: sum(w * s for w, (s, _) in zip(TOP_PER_FOLDER, sorted(v, reverse=True))) for f, v in sims.items()}
-        name_matches = self._name_matches(clues)
+        name_matches = {f: m for f, m in self._name_matches(clues).items()
+                        if outside is None or not _inside(f, outside)}
         for folder, matched in name_matches.items():
             scores[folder] = scores.get(folder, 0.0) + NAME_BONUS * min(2.0, sum(min(1.0, self.idf[f"w:{w}"] / 4)
                                                                               for w in matched))
@@ -194,7 +222,15 @@ class Planner:
             return Suggestion(record.path, current, current, stay,
                               [Reason(True, "Fits the folder it is already in"),
                                Reason(False, f"Might belong in {self.label(best)} ({percent}%)")])
-        return Suggestion(record.path, current, best, percent, reasons, runner_up)
+        suggestion = Suggestion(record.path, current, best, percent, reasons, runner_up)
+        if best in clashes and outside is None:
+            new = os.path.join(os.path.dirname(best),
+                               os.path.basename(best).replace(clashes[best][0], clashes[best][1]))
+            if not os.path.isdir(new) and new not in self.by_folder:
+                suggestion.destination, suggestion.new_folder = new, True
+                suggestion.reasons.insert(0, Reason(True, f"New folder “{os.path.basename(new)}” next to "
+                                                          f"“{os.path.basename(best)}”"))
+        return suggestion
 
     def _name_matches(self, clues: Clues) -> dict[str, list[str]]:
         mine = set(clues.name_words) | set(clues.content_words)

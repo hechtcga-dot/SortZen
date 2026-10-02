@@ -21,6 +21,8 @@ class Suggestion:
     reasons: list[Reason] = field(default_factory=list)
     runner_up: tuple[str, int] | None = None
     note: str = ""                      # e.g. "looks empty"
+    new_folder: bool = False            # the destination does not exist yet
+    topic: str = ""
 
     @property
     def action(self) -> str:
@@ -33,9 +35,55 @@ class Suggestion:
         return self.destination is not None and self.percent >= autonomy
 
 
+STAYS, KEEP_TOGETHER, SORT_INSIDE, FOLDER_REVIEW = "stays", "keep together", "sort inside", "review"
+
+
+@dataclass
+class FolderSuggestion:
+    """What happens to a subfolder of a source folder."""
+    path: str
+    outcome: str                        # STAYS, KEEP_TOGETHER, SORT_INSIDE or FOLDER_REVIEW
+    percent: int
+    reasons: list[Reason] = field(default_factory=list)
+    destination: str | None = None      # where a kept-together folder goes (None: where it is)
+    files: int = 0
+    topic: str = ""
+
+
+@dataclass(frozen=True)
+class Choice:
+    label: str
+    destination: str | None             # None: leave as it is
+    outcome: str = ""                   # for folder questions: the outcome this choice gives
+
+
+@dataclass
+class Question:
+    key: str                            # stable across runs, so answers are remembered
+    text: str
+    choices: list[Choice]
+    about: list[str]                    # paths of the files and folders it concerns
+    answer: int | None = None
+
+
+@dataclass
+class Topic:
+    name: str
+    members: list[str]                  # files and folders, wherever they are
+    home: str
+    new_folder: bool = False
+
+
 @dataclass
 class Plan:
     files: list[Suggestion] = field(default_factory=list)
+    folders: list[FolderSuggestion] = field(default_factory=list)
+    topics: list[Topic] = field(default_factory=list)
+    questions: list[Question] = field(default_factory=list)
+    new_folders: list[str] = field(default_factory=list)
+
+    def folder(self, path: str) -> FolderSuggestion | None:
+        return next((f for f in self.folders if f.path == path), None)
 
     def moves(self) -> list[Suggestion]:
         return [s for s in self.files if s.action == MOVE]
