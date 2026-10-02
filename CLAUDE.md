@@ -108,10 +108,11 @@ Inno Setup; unittest.
 ## Versions
 - One version number: `__version__` in `src/sortzen/__init__.py`. The window, the program
   and the installer read it; a test checks they agree.
-- Alpha builds are 0.1, 0.2 …; each new build goes up one step. New features, fixes and
-  small improvements are gathered together into the next build rather than released one
-  at a time; a third number (0.2.1) is used only when a fix to a released build is asked
-  for on its own.
+- Alpha builds are 0.1, 0.2 …; each new build goes up one step.
+- A few small fixes or tweaks to a released build can go out as a third number (0.2.3).
+- As soon as something major is asked for, or the small tweaks pile up, everything not yet
+  built (the small fixes included) goes into the next step (0.3) instead. The work is never
+  split into a small build plus a separate major one.
 
 ## Working style
 - Explain changes in plain language; prefer small, verifiable steps.
