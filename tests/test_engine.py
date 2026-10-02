@@ -252,3 +252,43 @@ class CopiesEngineTest(unittest.TestCase):
         group.keep_instead("/a/y.pdf")
         self.assertEqual(group.kept.path, "/a/y.pdf")
         self.assertEqual([(c.path, c.ticked) for c in group.extras], [("/a/x.pdf", True), ("/a/p/z.pdf", False)])
+
+
+class RulesTest(unittest.TestCase):
+    def test_rules_place_matching_files_except_users_own_choices(self):
+        from sortzen.engine.plan import Plan, Reason, Suggestion
+        from sortzen.engine.rules import Rule, apply_rules
+
+        plan = Plan(files=[Suggestion("/d/Northgate invoices 2024.pdf", "/d", "/s/Bills", 70),
+                           Suggestion("/d/invoice 7.docx", "/d", None, 0),
+                           Suggestion("/d/invoice 9.pdf", "/d", "/s/Mine", 100, [Reason(True, "You chose this folder")]),
+                           Suggestion("/s/Old/invoice 3.pdf", "/s/Old", "/s/Old", 80),
+                           Suggestion("/d/holiday.jpg", "/d", "/s/Photos", 95)])
+        rules = [Rule("invoice", "/s/Invoices"), Rule("invoice", "/s/Invoices/PDF", ".pdf")]
+        placed = apply_rules(plan, rules, lambda f: True, lambda p: p.startswith("/d/"))
+        a, b, c, d, e = plan.files
+        self.assertEqual(placed, 2)
+        self.assertEqual((a.destination, a.percent, a.runner_up), ("/s/Invoices/PDF", 100, ("/s/Bills", 70)))
+        self.assertIn("Your rule: Names with “invoice” (PDF files)", a.reasons[0].text)
+        self.assertEqual(b.destination, "/s/Invoices")
+        self.assertEqual(c.destination, "/s/Mine")                  # the user's own choice wins
+        self.assertEqual(d.destination, "/s/Old")                   # only folders being sorted
+        self.assertEqual(e.destination, "/s/Photos")
+
+    def test_suggest_only_useful_and_harmless_rules(self):
+        from sortzen.engine.rules import Rule, suggest_rule
+
+        examples = ["Northgate invoice 12.pdf", "Prairie Invoice 3.pdf"]
+        others = [("/d/Clearwater invoice 9.pdf", "/s/Bills", 60), ("/d/invoice scan.jpg", None, 0),
+                  ("/d/Northgate letter.pdf", "/s/Letters", 95)]
+        found = suggest_rule(examples, "/s/Invoices", others, [], set())
+        self.assertEqual(found.rule, Rule("invoice", "/s/Invoices"))
+        self.assertEqual((found.examples, len(found.matches)), (2, 2))
+        self.assertIsNone(suggest_rule(examples[:1], "/s/Invoices", others, [], set()))      # one file only
+        self.assertIsNone(suggest_rule(examples, "/s/Invoices", others, [], {found.rule.key,
+                                                                            Rule("invoice", "/s/Invoices", ".pdf").key}))
+        sure = [("/d/Clearwater invoice 9.pdf", "/s/Bills", 95)]       # would overrule a sure suggestion
+        self.assertIsNone(suggest_rule(examples, "/s/Invoices", sure, [], set()))
+        narrower = suggest_rule(examples, "/s/Invoices", others + [("/d/invoice photo.jpg", "/s/Photos", 97)], [],
+                                set())
+        self.assertEqual(narrower.rule, Rule("invoice", "/s/Invoices", ".pdf"))      # avoids the sure picture
