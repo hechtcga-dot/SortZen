@@ -23,9 +23,11 @@ src/sortzen/
   engine/              sorting engine (never touches files): features.py (clues from names,
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
                        reasons, corrections), overview.py (subfolders, kept-together folders,
-                       topics, questions, answers), duplicates.py (exact copies, the copy
+                       topics, questions, answers, programs, versions and copies),
+                       duplicates.py (exact copies, the copy
                        kept and why), ai_evidence.py (AI answers as evidence), rules.py (rules
-                       users make, rule suggestions, renamed planned folders), plan.py (Suggestion, FolderSuggestion, Topic, Question,
+                       users make, rule suggestions, renamed planned folders), groups.py
+                       (groups of unsure files), plan.py (Suggestion, FolderSuggestion, Topic, Question,
                        Plan)
   mover/               moves confirmed files and folders (never decides): no overwriting,
                        copy and check across drives, step-by-step run log, Undo
@@ -38,7 +40,7 @@ src/sortzen/
                        Staying rows, problems, display paths, Excel export); moving.py
                        (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
-                       questions_page.py, progress_window.py (+ tips.py), dialogs.py,
+                       to_place_page.py (groups and questions), progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        settings_window.py,

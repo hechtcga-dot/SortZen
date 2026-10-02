@@ -91,7 +91,7 @@ class MainWindowTest(unittest.TestCase):
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
         tabs = [self.window.tabs.tabText(i) for i in range(self.window.tabs.count())]
         self.assertIn("Plan", tabs)
-        self.assertTrue(any(t.startswith("Questions") for t in tabs))
+        self.assertTrue(any(t.startswith("To place") for t in tabs))
         page = self.window.plan_page
         self.assertIn("ready", page.summary.text())
         ready = page.tree.topLevelItem(0)
@@ -372,6 +372,39 @@ class MainWindowTest(unittest.TestCase):
         with mock.patch.object(QMessageBox, "warning") as warned:
             self.assertIsNone(self.window.rename_folder(str(root / "Sorted" / "Music"), "Bad/Name", confirm=False))
         self.assertIn("can't contain", warned.call_args.args[2])
+
+    def test_to_place_groups_and_any_folder_answers(self):
+        import shutil
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        for n in (48213, 99120, 1203, 77):
+            (root / "Downloads" / f"{n}.pdf").write_bytes(b"%PDF-1.4\n%" + str(n).encode())
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        page = self.window.to_place_page
+        titles = [c.group.title for c in page.group_cards]
+        self.assertIn("4 PDFs whose names are only numbers", titles)
+        card = next(c for c in page.group_cards if c.group.title == "4 PDFs whose names are only numbers")
+        card.picker.box.setEditText("Sorted/Documents/Scans")       # a new folder, typed as shown
+        self.assertEqual(card.picker.folder(), str(root / "Sorted" / "Documents" / "Scans"))
+        card.rule.setChecked(True)
+        first = self.window.plan
+        card.put.click()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not first and not self.service.jobs.busy))
+        moved = self.window.plan.for_path(str(root / "Downloads" / "77.pdf"))
+        self.assertEqual((moved.destination, moved.percent), (str(root / "Sorted" / "Documents" / "Scans"), 100))
+        self.assertEqual(len(self.service.rules()), 1)
+        self.assertNotIn("4 PDFs whose names are only numbers", [c.group.title for c in page.group_cards])
+        self.window.undo()
+        self.assertEqual((self.service.rules(), self.service.corrections()), ([], {}))
+        if page.cards:                                              # questions take any folder too
+            question = page.cards[0]
+            question.picker.box.setEditText("Sorted/Projects/Typed")
+            self.assertEqual(question.answer(), str(root / "Sorted" / "Projects" / "Typed"))
 
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult

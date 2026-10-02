@@ -139,6 +139,15 @@ overview of what is there:
   name matches, or a **new folder** when nothing fits, nested where it belongs (e.g.
   Projects/Programming/Owen Sample/Garden Planner). New folders are part of the plan:
   created only when the plan is confirmed, and removed by Undo.
+- **Programs** are kept whole: a folder with code (at least 5 code files and 40% of its
+  files), setup or project files (`requirements.txt`, `package.json`, a `.sln` …), or a
+  built program (a `.exe` with its `.dll` parts) is one unit. Its files are never sorted
+  one by one, and topics and questions never reach inside it.
+- **Versions and copies** of one thing go together: sibling folders whose names differ
+  only by version or copy endings ("Name", "Name-1.7.3", "Name-release-1.3",
+  "Name-windows (4)", "Name (1)"), with the zips and installers of the same name beside
+  them, are gathered at 90% into one new folder beside them: "Name Program" when one of
+  them is a program, otherwise "Name (all copies)". The new folder can be renamed (§11).
 - **Misplaced files**: files inside organised folders that clearly belong to another
   topic are suggested to move out ("Move out of Payroll backup"), held to the autonomy
   level like any other move.
@@ -147,18 +156,29 @@ overview of what is there:
 - When AI is on, it receives the folder tree and the topic summaries once per run
   (names only, as the privacy settings allow) to suggest homes and structure.
 
-### 2. Questions
-When the overview can't settle something on its own, SortZen asks before showing the plan,
-most important first and at most 10 per run. Each question names what was found and
-offers choices, e.g.:
+### 2. To place: groups and questions
+The **To place** tab (between Folders and Plan) holds what SortZen couldn't settle:
+- **Groups of files with no clear home**: the files waiting in Review from the folders
+  being sorted, gathered by the kind of name they have ("39 PDFs whose names are only
+  numbers", "17 PDFs named like “INV10197.pdf”") or a word they share ("13 files with
+  “letter” in the name"); at least 3 files each, biggest first, 30 at most. Each group
+  shows the folder most of its files lean towards, a folder box (recently chosen folders
+  first, then every folder; a folder can be typed as shown, e.g. "Sorted/Work/Scans", or
+  as the name of a new folder, which is made in the first destination folder), Browse…,
+  and "Put them there". "Also files like these in future plans" makes a rule for them
+  (names that are only numbers, names like “IMG_1234”, or the shared word, with the
+  file type). "Show the files" lists them. Placing a group can be undone.
+- **Questions**, most important first and at most 10 per run, each with its suggested
+  answers and "Another folder:" with the same folder box. Each question names what was
+  found and offers choices, e.g.:
 
 > "Garden Planner" files are in 3 places: My Drive (3), My Drive/Owen Sample (14 files
 > and 7 folders) and Documents/Projects (2). What is it?
 > ○ A project I'm working on for Owen Sample → Projects/Programming/Owen Sample/Garden Planner
 > ○ Owen Sample's own files → My Drive/Owen Sample
-> ○ Something else: choose a folder…
+> ○ Another folder: [pick or type a folder]
 
-Answers become rules (§8). Anything still unsettled goes to Review.
+Answers are remembered. Anything still unsettled goes to Review.
 
 ### 3. File by file
 For each file, in this order, stopping at the first confident answer:

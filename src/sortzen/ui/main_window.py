@@ -1,4 +1,4 @@
-"""The workspace window: folder tree on the left; Start, Questions and Plan tabs on the right."""
+"""The workspace window: folder tree on the left; Start, Folders, To place, Plan and Copies tabs on the right."""
 from __future__ import annotations
 
 import logging
@@ -28,7 +28,7 @@ from .plan_page import PlanPage
 from .progress_window import ProgressWindow
 from .settings_window import SettingsWindow
 from .sortable import human_size
-from .questions_page import QuestionsPage
+from .to_place_page import ToPlacePage
 
 STEPS = (
     ("Add folders", "Choose the messy folders to sort and the folders files may go to. "
@@ -81,8 +81,9 @@ class MainWindow(QMainWindow):
         self.folders_page.set_mode.connect(self.set_mode)
         self.folders_page.open_folder.connect(self.open_folder)
         self.tabs.addTab(self.folders_page, "Folders")
-        self.questions_page = QuestionsPage()
-        self.questions_page.save.connect(self.save_answers)
+        self.to_place_page = ToPlacePage(self.service)
+        self.to_place_page.save.connect(self.save_answers)
+        self.to_place_page.place_group.connect(self.place_group)
         self.plan_page = PlanPage(self.service)
         self.plan_page.change_destination.connect(self.change_destination)
         self.plan_page.leave_in_place.connect(self.leave_in_place)
@@ -331,7 +332,7 @@ class MainWindow(QMainWindow):
     def _forget_plan(self) -> None:
         """The plan belongs to the folders it was made for; drop it when they change wholesale."""
         self.plan = None
-        for page in (self.plan_page, self.questions_page, self.copies_page):
+        for page in (self.plan_page, self.to_place_page, self.copies_page):
             if self.tabs.indexOf(page) >= 0:
                 self.tabs.removeTab(self.tabs.indexOf(page))
         self.export_action.setEnabled(False)
@@ -492,13 +493,18 @@ class MainWindow(QMainWindow):
         self.plan_page.set_plan(plan)
         if self.tabs.indexOf(self.plan_page) < 0:
             self.tabs.addTab(self.plan_page, "Plan")
-        open_questions = [q for q in plan.questions if q.answer is None]
-        self.questions_page.set_questions(plan.questions)
-        if plan.questions and self.tabs.indexOf(self.questions_page) < 0:
-            self.tabs.insertTab(1, self.questions_page, "Questions")
-        if plan.questions:
-            self.tabs.setTabText(self.tabs.indexOf(self.questions_page),
-                                 f"Questions ({len(open_questions)})" if open_questions else "Questions")
+        groups = self.service.file_groups(plan)
+        self.to_place_page.set_contents(plan, groups, plan.questions, self.service.destination_choices(plan),
+                                         self.service.recent_destinations(plan))
+        waiting = self.to_place_page.count()
+        if (groups or plan.questions) and self.tabs.indexOf(self.to_place_page) < 0:
+            self.tabs.insertTab(self.tabs.indexOf(self.plan_page), self.to_place_page, "To place")
+        elif not (groups or plan.questions) and self.tabs.indexOf(self.to_place_page) >= 0:
+            self.tabs.removeTab(self.tabs.indexOf(self.to_place_page))
+        if self.tabs.indexOf(self.to_place_page) >= 0:
+            self.tabs.setTabText(self.tabs.indexOf(self.to_place_page),
+                                 f"To place ({waiting:,})" if waiting else "To place")
+        open_questions = waiting
         if plan.copies:
             if self.tabs.indexOf(self.copies_page) < 0:
                 self.tabs.insertTab(self.tabs.indexOf(self.plan_page) + 1, self.copies_page, "Copies")
@@ -508,7 +514,17 @@ class MainWindow(QMainWindow):
         self.copies_page.set_copies(plan.copies)
         self.copies_action.setEnabled(bool(plan.copies))
         self.ai_action.setEnabled(True)
-        self.tabs.setCurrentWidget(self.questions_page if open_questions else self.plan_page)
+        self.tabs.setCurrentWidget(self.to_place_page if open_questions else self.plan_page)
+
+    def place_group(self, group, folder: str, make_rule: bool) -> None:
+        """Send a whole group of unsure files to one folder (and files like them later, with a rule)."""
+        before = self.service.place_group(group, folder, make_rule)
+        self.plan_page.note_corrections(group.paths)
+        self._push_undo("Place a group", lambda: self.service.undo_place_group(before))
+        self.statusBar().showMessage(f"{len(group.paths):,} files go to {self.service.display(folder)}"
+                                     + (", and a rule places files like them from now on." if make_rule else "."),
+                                     8000)
+        self.make_plan()
 
     def save_answers(self, answers: dict) -> None:
         before = {k: self.service.answers().get(k) for k in answers}

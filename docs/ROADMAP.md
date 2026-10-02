@@ -36,7 +36,9 @@ moves files after the plan is confirmed.
 |---|-------|--------|
 | 14 | Quicker choosing: recently chosen folders, "Move to", new folders by name, renaming planned and existing folders | **Done** |
 | 15 | Rules: suggested from repeated choices, applied in every plan, listed in Settings | **Done** |
-| 16 | **Alpha 0.3 build** | To do |
+| 16 | Programs kept whole; versions and copies gathered into one folder | **Done** |
+| 17 | To place tab: groups of unsure files placed in one go (with a rule for files like them), questions answered with any folder | **Done** |
+| 18 | **Alpha 0.3 build** | To do |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).

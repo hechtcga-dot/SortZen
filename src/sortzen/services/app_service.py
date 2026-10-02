@@ -635,6 +635,23 @@ class AppService:
     def export_plan(self, plan: Plan, target: str) -> None:
         plan_view.export_xlsx(plan, target, self.all_roots(), self.autonomy(), self.ask_everything())
 
+    def resolve_folder(self, text: str, plan: Plan | None = None) -> str | None:
+        """The folder meant by what users typed: a full path, a folder as shown ("Sorted/Work/Payroll"), or a
+        new folder's name (made in the first destination folder, or the first folder being tidied)."""
+        text = (text or "").strip().strip('"').replace("\\", "/").rstrip("/")
+        if not text:
+            return None
+        if os.path.isabs(text) or re.match(r"^[A-Za-z]:", text):
+            return os.path.abspath(text)
+        for root in self.all_roots():
+            name = os.path.basename(root)
+            if text == name or text.startswith(name + "/"):
+                return os.path.normpath(os.path.join(os.path.dirname(root), text))
+        homes = self.destination_folders() + [f["path"] for f in self.source_folders() if f["mode"] == TIDY]
+        if not homes:
+            return None
+        return os.path.normpath(os.path.join(homes[0], text))
+
     def destination_choices(self, plan: Plan | None = None) -> list[str]:
         """Folders a file can be sent to: every folder under the destination folders and tidied folders."""
         roots = self.destination_folders() + [f["path"] for f in self.source_folders() if f["mode"] == TIDY]
