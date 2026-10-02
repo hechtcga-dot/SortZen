@@ -371,7 +371,8 @@ and when):
     Start tab, which also offers the standard Windows folders as destinations.
   - While a plan is made, a window shows a small animation, one progress bar across all
     folders, the current step ("Listing files in older downloads: 850 found"), time so far
-    and a time estimate, rotating tips, and Stop safely. The estimate comes from a quick
+    and a time estimate, tips that change every 20 seconds (with a Next button and a
+    "Did you know?" fact after every two tips), and Stop safely. The estimate comes from a quick
     count of the files (nothing is opened) and from how fast earlier runs were.
   - The **Folders** tab lists every added folder with its files and size, the time a plan
     will take (from a quick count; nothing is opened), and warnings: very large

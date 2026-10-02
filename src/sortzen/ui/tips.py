@@ -1,4 +1,4 @@
-"""Short tips shown while SortZen works."""
+"""Short tips and a few facts shown while SortZen works."""
 
 TIPS = [
     "Not sure about a suggestion? Select it in the plan to see how SortZen worked out the percentage.",
@@ -20,3 +20,18 @@ TIPS = [
     "Tick “Be gentle with my computer” in Settings to keep the computer quiet while SortZen reads.",
     "Messy subfolders like “older downloads” are sorted from the inside; project folders move as one.",
 ]
+
+FACTS = [
+    "The floppy disk on the Save button held 1.44 MB: less than a single phone photo today.",
+    "The folder icon comes from paper filing cabinets: early desktop computers copied the office desk.",
+    "Windows file names can't contain any of these characters: \\ / : * ? \" < > |",
+    "Many Windows programs can't handle a full path longer than 260 characters. SortZen warns before "
+    "a move would make one.",
+    "JPEG, the usual photo format, is named after the Joint Photographic Experts Group, which created it.",
+    "The PDF format was created in the early 1990s so a document looks the same on every computer.",
+    "The ZIP format for squeezing files together dates back to 1989.",
+    "The first computer “bug” was a real moth, found stuck in a relay of an early computer in 1947.",
+    "A byte is 8 bits, so a 1 GB folder holds about 8 billion ones and zeros.",
+    "The QWERTY keyboard layout comes from typewriters of the 1870s.",
+]
+FACT_EVERY = 3          # every third message is a fact

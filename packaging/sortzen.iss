@@ -1,12 +1,12 @@
 ; SortZen Windows installer (Inno Setup 6). Built by .github/workflows/windows-build.yml:
-;   iscc /DAppVersion=0.2.1 packaging\sortzen.iss
+;   iscc /DAppVersion=0.2.2 packaging\sortzen.iss
 ; Installs for the current user (no administrator rights needed), adds a Start menu
 ; shortcut (and a desktop one if chosen) and an uninstaller. Uninstalling removes the
 ; program and asks whether to also remove the settings, answers, remembered results, move
 ; logs (%LOCALAPPDATA%\SortZen) and saved API keys. Sorted files are never touched.
 
 #ifndef AppVersion
-  #define AppVersion "0.2.1"
+  #define AppVersion "0.2.2"
 #endif
 
 [Setup]

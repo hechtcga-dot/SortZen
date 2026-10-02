@@ -404,9 +404,17 @@ class ProgressWindowTest(unittest.TestCase):
         window.set_progress(10, 100)                 # never goes backwards
         self.assertEqual(window.bar.value(), 500)
         self.assertTrue(window.times.text().startswith("50% done"))
-        first = window.tip.text()
-        window._next_tip()
-        self.assertNotEqual(first, window.tip.text())
+        from sortzen.ui.progress_window import TIP_SECONDS
+
+        self.assertEqual(window.tip_timer.interval(), TIP_SECONDS * 1000)
+        self.assertGreaterEqual(TIP_SECONDS, 15)
+        shown = [window.tip.text()]
+        for _ in range(5):
+            window.next_button.click()
+            shown.append(window.tip.text())
+        self.assertEqual(len(set(shown)), 6)                # Next always shows something new
+        self.assertTrue(all(t.startswith(("Tip: ", "Did you know? ")) for t in shown))
+        self.assertTrue(any(t.startswith("Did you know? ") for t in shown))
         stopped = []
         window.stop.connect(lambda: stopped.append(True))
         window.stop_button.click()

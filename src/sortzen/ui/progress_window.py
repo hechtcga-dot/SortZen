@@ -11,9 +11,9 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from . import theme
-from .tips import TIPS
+from .tips import FACT_EVERY, FACTS, TIPS
 
-TIP_SECONDS = 8
+TIP_SECONDS = 20
 
 
 class SortingAnimation(QWidget):
@@ -62,6 +62,18 @@ class SortingAnimation(QWidget):
         p.end()
 
 
+def _mixed(tips: list[str], facts: list[str]) -> list[tuple[str, str]]:
+    """Tips in a random order, with a fact after every few of them."""
+    rng = random.Random()
+    tips, facts = rng.sample(tips, len(tips)), rng.sample(facts, len(facts))
+    mixed = []
+    for number, tip in enumerate(tips, start=1):
+        mixed.append(("Tip:", tip))
+        if number % (FACT_EVERY - 1) == 0 and facts:
+            mixed.append(("Did you know?", facts.pop()))
+    return mixed + [("Did you know?", f) for f in facts]
+
+
 def _clock(seconds: float) -> str:
     seconds = int(seconds)
     return f"{seconds // 60}:{seconds % 60:02d}"
@@ -108,10 +120,17 @@ class ProgressWindow(QDialog):
         col.addWidget(self.bar)
         self.times = QLabel(objectName="hint")
         col.addWidget(self.times)
+        tip_row = QHBoxLayout()
         self.tip = QLabel(objectName="hint")
         self.tip.setWordWrap(True)
         self.tip.setMinimumHeight(36)
-        col.addWidget(self.tip)
+        self.tip.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        tip_row.addWidget(self.tip, 1)
+        self.next_button = QPushButton("Next ›")
+        self.next_button.setToolTip("Show the next tip")
+        self.next_button.clicked.connect(self._next_tip)
+        tip_row.addWidget(self.next_button, 0, Qt.AlignmentFlag.AlignTop)
+        col.addLayout(tip_row)
         row = QHBoxLayout()
         row.addStretch(1)
         self.stop_button = QPushButton("Stop safely")
@@ -119,11 +138,10 @@ class ProgressWindow(QDialog):
         self.stop_button.clicked.connect(self._stop)
         row.addWidget(self.stop_button)
         col.addLayout(row)
-        self.tips = random.Random().sample(TIPS, len(TIPS))
-        self._next_tip()
+        self.tips = _mixed(TIPS, FACTS)
         self.tip_timer = QTimer(self, interval=TIP_SECONDS * 1000)
         self.tip_timer.timeout.connect(self._next_tip)
-        self.tip_timer.start()
+        self._next_tip()
         self.clock = QTimer(self, interval=1000)
         self.clock.timeout.connect(self._update_times)
         self.clock.start()
@@ -149,9 +167,11 @@ class ProgressWindow(QDialog):
         self.times.setText(text)
 
     def _next_tip(self) -> None:
-        tip = self.tips.pop(0)
-        self.tips.append(tip)
-        self.tip.setText(f"Tip: {tip}")
+        """Show the next tip or fact; each one stays for TIP_SECONDS (the Next button skips ahead)."""
+        kind, text = self.tips.pop(0)
+        self.tips.append((kind, text))
+        self.tip.setText(f"{kind} {text}")
+        self.tip_timer.start()
 
     def _stop(self) -> None:
         self.stop_button.setEnabled(False)

@@ -9,7 +9,7 @@ Every move can be undone.
 
 Installing
 ----------
-1. Run SortZen-Setup-0.2.1.exe. No administrator rights are needed; SortZen installs for
+1. Run SortZen-Setup-0.2.2.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over 0.1
    or 0.2 keeps your settings, answers and choices.
 2. SortZen isn't code-signed yet, so Windows may show "Windows protected your PC".
@@ -68,6 +68,10 @@ Your privacy
 
 What's new in 0.2
 -----------------
+Fixes in 0.2.2:
+- The window shown while SortZen works keeps each tip up for 20 seconds, has a "Next"
+  button, and mixes in a few "Did you know?" facts.
+
 Fixes in 0.2.1:
 - The AI model is picked from a drop-down list (or typed); "Get the list from ..." shows
   the models the service offers, and "Check" tries the service, model and key.
