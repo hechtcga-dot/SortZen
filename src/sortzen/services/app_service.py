@@ -13,6 +13,7 @@ from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
 from ..ai.sorter import AIFile, AIFolder, AIRun, AISorter
 from ..config import COST_CAP_PER_1000_FILES, AppPaths, default_paths
 from ..engine.ai_evidence import apply_ai
+from ..engine.groups import FileGroup, find_groups
 from ..engine.rules import Rule, RuleSuggestion, apply_rules, rename_planned, suggest_rule
 from ..repositories.ai_answers import AIAnswers, answer_key
 from ..repositories.api_keys import ApiKeyStore
@@ -294,14 +295,17 @@ class AppService:
     def set_ask_everything(self, on: bool) -> None:
         self.settings.set("ask_everything", bool(on))
 
-    def answers(self) -> dict[str, int]:
+    def answers(self) -> dict[str, int | str]:
         return dict(self.settings.get("answers") or {})
 
-    def save_answers(self, answers: dict[str, int | None]) -> None:
+    def save_answers(self, answers: dict[str, int | str | None]) -> None:
+        """Answers by question key: a choice's number, a folder users named, or None to forget it."""
         current = self.answers()
         for key, choice in answers.items():
-            if choice is None:
+            if choice is None or choice == "":
                 current.pop(key, None)
+            elif isinstance(choice, str):
+                current[key] = os.path.abspath(choice)
             else:
                 current[key] = int(choice)
         self.settings.set("answers", current)
@@ -347,7 +351,8 @@ class AppService:
         found = []
         for r in self.settings.get("rules") or []:
             try:
-                found.append(Rule(str(r["word"]), str(r["destination"]), str(r.get("ext") or "")))
+                found.append(Rule(str(r.get("word") or ""), str(r["destination"]), str(r.get("ext") or ""),
+                                  str(r.get("shape") or ""), str(r.get("example") or "")))
             except (KeyError, TypeError):
                 continue
         return found
@@ -355,17 +360,42 @@ class AppService:
     def add_rule(self, rule: Rule) -> list[dict]:
         """Save a rule. Returns the rules before, for Undo."""
         before = list(self.settings.get("rules") or [])
-        self.settings.set("rules", before + [{"word": rule.word, "ext": rule.ext, "destination": rule.destination}])
+        self.settings.set("rules", before + [_rule_dict(rule)])
         return before
 
     def remove_rule(self, rule: Rule) -> list[dict]:
         before = list(self.settings.get("rules") or [])
-        self.settings.set("rules", [r for r in before if Rule(r["word"], r["destination"], r.get("ext") or "").key
-                                    != rule.key])
+        self.settings.set("rules", [r for r in before if Rule(r.get("word") or "", r["destination"], r.get("ext") or "",
+                                                              r.get("shape") or "").key != rule.key])
         return before
 
-    def restore_rules(self, before: list[dict]) -> None:
-        self.settings.set("rules", list(before))
+    def restore_rules(self, before: list) -> None:
+        """Set the rules (dictionaries as saved, or Rule objects)."""
+        self.settings.set("rules", [r if isinstance(r, dict) else _rule_dict(r) for r in before])
+
+    # ---------------------------------------------------------------- groups of unsure files
+    def file_groups(self, plan: Plan) -> list[FileGroup]:
+        """Files SortZen couldn't place, in groups that can be placed in one go."""
+        corrected = {path_key(p) for p in self.corrections()}
+        unsure = [r for r in self._ai_unsure(plan) if path_key(r.path) not in corrected]
+        by_path = {s.path: s for s in plan.files}
+        return find_groups([by_path[r.path] for r in unsure if r.path in by_path and not by_path[r.path].topic])
+
+    def place_group(self, group: FileGroup, destination: str, make_rule: bool = False) -> dict:
+        """Send every file of a group to one folder (and, when asked, files like them in future plans).
+
+        Returns what to restore for Undo: {"corrections": ..., "rules": ...}."""
+        destination = os.path.abspath(destination)
+        before = {"corrections": self.correct(group.paths, destination), "rules": None}
+        self.note_destination(destination)
+        if make_rule:
+            before["rules"] = self.add_rule(group.rule(destination))
+        return before
+
+    def undo_place_group(self, before: dict) -> None:
+        self.restore_corrections(before["corrections"])
+        if before["rules"] is not None:
+            self.restore_rules(before["rules"])
 
     def decline_rule(self, rule: Rule) -> None:
         """Never suggest this rule again."""
@@ -388,9 +418,9 @@ class AppService:
 
     def _apply_rules(self, plan: Plan) -> None:
         rules = self.rules()
-        if rules:
-            valid = self._ai_valid(plan)
-            apply_rules(plan, rules, lambda f: os.path.isdir(f) or valid(f),
+        if rules:                   # a rule's folder is made when files first move into it
+            apply_rules(plan, rules, lambda f: not self.is_left_out(f)
+                        and not any(is_queue_folder(part) for part in f.split(os.sep)),
                         lambda p: p in self._records and self._records[p].role == "source"
                         and not self.is_left_out(p), self.display)
 
@@ -903,6 +933,13 @@ class AppService:
 
 
 _PATHS = re.compile(r"([A-Za-z]:[\\/]|\\\\|/(home|Users|tmp|mnt|media|root)/)[^\"'\n]*?(?=[\"'\n,)]|$|\s{2})")
+
+
+def _rule_dict(rule: Rule) -> dict:
+    found = {"word": rule.word, "ext": rule.ext, "destination": rule.destination}
+    if rule.shape:
+        found.update(shape=rule.shape, example=rule.example)
+    return found
 
 
 def _no_paths(text: str) -> str:

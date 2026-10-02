@@ -140,5 +140,5 @@ class SettingsWindow(QDialog):
         self.privacy_mode.apply()
         self.privacy_lists.apply()
         kept = [self.rules.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.rules.count())]
-        self.service.restore_rules([{"word": x.word, "ext": x.ext, "destination": x.destination} for x in kept if x])
+        self.service.restore_rules([x for x in kept if x])
         super().accept()

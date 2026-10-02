@@ -501,3 +501,44 @@ class RulesRecentsRenameTest(unittest.TestCase):
         self.assertTrue((self.sorted / "Other" / "misc.txt").exists())
         self.assertEqual(self.service.corrections()[str(self.downloads / "holiday notes.txt")],
                          str(self.sorted / "Other"))
+
+
+class GroupsServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.downloads, self.sorted = base / "Downloads", base / "Sorted"
+        for n in (48213, 99120, 1203, 77):
+            (self.downloads).mkdir(exist_ok=True)
+            (self.downloads / f"{n}.pdf").write_bytes(b"%PDF-1.4\n%" + str(n).encode())
+        (self.sorted / "Recipes").mkdir(parents=True)
+        (self.sorted / "Recipes" / "Lemon tart.txt").write_text("lemon tart recipe", encoding="utf-8")
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads))
+        self.service.add_destination(str(self.sorted))
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_place_a_group_with_a_rule_then_undo(self):
+        groups = self.service.file_groups(self.plan)
+        self.assertEqual(groups[0].title, "4 PDFs whose names are only numbers")
+        scans = str(self.sorted / "Scans")
+        before = self.service.place_group(groups[0], scans, make_rule=True)
+        self.assertEqual(len(self.service.corrections()), 4)
+        (self.downloads / "555.pdf").write_bytes(b"%PDF-1.4\n%555")
+        plan = self.service.make_plan()
+        new = plan.for_path(str(self.downloads / "555.pdf"))
+        self.assertEqual((new.destination, new.percent), (scans, 100))
+        self.assertIn("Names that are only numbers (PDF files)", new.reasons[0].text)
+        self.assertEqual(self.service.file_groups(plan), [])
+        self.service.undo_place_group(before)
+        self.assertEqual((self.service.corrections(), self.service.rules()), ({}, []))
+
+    def test_typed_answer_saved_as_a_folder(self):
+        self.service.save_answers({"topic:x": str(self.sorted / "Typed"), "folder:y": 1})
+        self.assertEqual(self.service.answers(), {"topic:x": str(self.sorted / "Typed"), "folder:y": 1})
+        self.service.save_answers({"topic:x": None})
+        self.assertEqual(self.service.answers(), {"folder:y": 1})
