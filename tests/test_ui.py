@@ -43,6 +43,9 @@ class MainWindowTest(unittest.TestCase):
         self.window.show()
 
     def tearDown(self):
+        if self.service.jobs.current:
+            self.service.jobs.current.join(30)
+        self.app.processEvents()
         self.window.close()
         self.dir.cleanup()
 
@@ -105,6 +108,33 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual(self.window.plan.for_path(row.path).percent, 100)
         self.window.undo()
         self.assertEqual(self.service.corrections(), {})
+
+    def test_folders_tab_counts_drill_down_and_tick_boxes(self):
+        from PySide6.QtCore import Qt
+
+        root = shared_test_folders()
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.refresh_folders()
+        page = self.window.folders_page
+        self.assertTrue(wait_until(self.app, lambda: page.counts, 30))
+        self.assertIn("files", page.summary.text())
+        self.assertIn("Making a plan takes", page.estimate.text())
+        downloads = page.tree.topLevelItem(0)
+        downloads.setExpanded(True)
+        self.app.processEvents()
+        older = next(downloads.child(i) for i in range(downloads.childCount())
+                     if downloads.child(i).text(0) == "older downloads")
+        self.assertGreater(int(older.text(1).replace(",", "")), 50)
+        older.setCheckState(0, Qt.CheckState.Unchecked)
+        self.assertEqual(self.service.left_out(), [str(root / "Downloads" / "older downloads")])
+        self.assertEqual(downloads.checkState(0), Qt.CheckState.PartiallyChecked)
+        older.setExpanded(True)
+        self.app.processEvents()
+        self.assertEqual(older.child(0).checkState(0), Qt.CheckState.Unchecked)
+        self.window.undo()
+        self.assertEqual(self.service.left_out(), [])
+        self.assertEqual(downloads.checkState(0), Qt.CheckState.Checked)
 
     def test_autonomy_regroups_instantly(self):
         root = shared_test_folders()

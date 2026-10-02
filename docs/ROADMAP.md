@@ -23,7 +23,7 @@ moves files after the plan is confirmed.
 |---|-------|--------|
 | 5 | Speed: searching on distinctive clues, cached folder words and paths, fewer PDF pages, Google Drive check, "Be gentle with my computer" (planning 9,000 files: about 30 s → 5 s) | **Done** |
 | 6 | Loading window: animation, overall progress, step text, time estimate, tips | **Done** |
-| 7 | Folders tab: several folders, counts and sizes, estimate, warnings, tick boxes (left out but learned from), advanced "stop reading once learned" | To do |
+| 7 | Folders tab: several folders, counts and sizes, estimate, warnings, tick boxes (left out but learned from), advanced "stop reading once learned" | **Done** |
 | 8 | Plan screen: sortable columns everywhere, Type column, search and filters, group by destination, problems before moving, accuracy readout, tick boxes | To do |
 | 9 | Mover: confirmed moves, whole-folder moves, new folders, removing emptied folders, name clashes, cross-drive copy and check, run log, Undo | To do |
 | 10 | Duplicates review: exact copies, suggested copy to keep, dated "Queued for deletion" folders, Undo | To do |

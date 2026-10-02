@@ -18,6 +18,7 @@ from ..tasks import Estimate, JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
 from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
+from .folders_page import FoldersPage
 from .icons import app_icon
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
@@ -44,6 +45,7 @@ class MainWindow(QMainWindow):
         self.plan = None
         self.progress: ProgressWindow | None = None
         self.undo_stack: list[tuple[str, object]] = []
+        self._plan_waiting = False
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self.resize(1200, 760)
@@ -61,6 +63,16 @@ class MainWindow(QMainWindow):
         self.tabs.setDocumentMode(True)
         self.start_page = self._start_page()
         self.tabs.addTab(self.start_page, "Start")
+        self.folders_page = FoldersPage(self.service)
+        self.folders_page.add_source.connect(self.add_source)
+        self.folders_page.add_destination.connect(self.add_destination)
+        self.folders_page.add_windows.connect(self.add_windows_folders)
+        self.folders_page.recount.connect(self.count_folders)
+        self.folders_page.leave_out.connect(self.leave_out)
+        self.folders_page.remove_folder.connect(self.remove_folder)
+        self.folders_page.set_mode.connect(self.set_mode)
+        self.folders_page.open_folder.connect(self.open_folder)
+        self.tabs.addTab(self.folders_page, "Folders")
         self.questions_page = QuestionsPage()
         self.questions_page.save.connect(self.save_answers)
         self.plan_page = PlanPage(self.service)
@@ -226,6 +238,23 @@ class MainWindow(QMainWindow):
                           "This version shows the plan and moves nothing.")
 
     # ---------------------------------------------------------------- folders
+    def count_folders(self) -> None:
+        """Count files in the background (nothing is opened) for the Folders tab."""
+        if self.service.jobs.busy or not self.service.all_roots():
+            if not self.service.all_roots():
+                self.folders_page.set_counts([])
+            return
+        self.folders_page.show_counting()
+        self.run_job("count", lambda emit, token: self.service.count_folders())
+
+    def leave_out(self, paths: list, out: bool) -> None:
+        previous = self.service.set_left_out(paths, out)
+        self._push_undo("Leave out" if out else "Include again", lambda: self.service.restore_left_out(previous))
+        self.folders_page.refresh_ticks()
+        word = "Left out" if out else "Included again"
+        self.statusBar().showMessage(f"{word}: {len(paths)} item{'s' if len(paths) != 1 else ''}. "
+                                     "Update the plan to see the effect.", 6000)
+
     def refresh_folders(self) -> None:
         for group in (self.sources_item, self.destinations_item):
             group.takeChildren()
@@ -244,6 +273,7 @@ class MainWindow(QMainWindow):
                 hint = QTreeWidgetItem(group, [empty])
                 hint.setFlags(Qt.ItemFlag.NoItemFlags)
                 hint.setForeground(0, muted)
+        self.count_folders()
         has_sources = bool(self.service.source_folders())
         suggested = self.service.suggested_destinations()
         self.windows_button.setVisible(bool(suggested))
@@ -312,6 +342,7 @@ class MainWindow(QMainWindow):
             return
         self._push_undo(undo_text, lambda: undo(path))
         self.refresh_folders()
+        self.tabs.setCurrentWidget(self.folders_page)
 
     def set_mode(self, path: str, mode: str) -> None:
         before = next((f["mode"] for f in self.service.source_folders() if f["path"] == path), mode)
@@ -334,6 +365,9 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- the plan
     def make_plan(self) -> None:
         if self.service.jobs.busy:
+            if self.service.jobs.current.name == "count":     # plan as soon as the count is done
+                self._plan_waiting = True
+                self.statusBar().showMessage("Counting files first…")
             return
         if not self.service.source_folders():
             QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
@@ -420,6 +454,7 @@ class MainWindow(QMainWindow):
         text, undo = self.undo_stack.pop()
         undo()
         self.refresh_folders()
+        self.folders_page.refresh_ticks()
         self.undo_action.setEnabled(bool(self.undo_stack))
         self.undo_action.setText(f"Undo {self.undo_stack[-1][0].lower()}" if self.undo_stack else "Undo")
         self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
@@ -445,6 +480,11 @@ class MainWindow(QMainWindow):
         elif isinstance(event, JobFinished):
             self._close_progress()
             self.statusBar().showMessage("Ready")
+            if event.name == "count":
+                self.folders_page.set_counts(event.result or [])
+                if self._plan_waiting:
+                    self._plan_waiting = False
+                    self.make_plan()
             if event.name == "plan":
                 if event.result is None:
                     self.statusBar().showMessage("Stopped. Nothing was changed.", 6000)
@@ -452,6 +492,9 @@ class MainWindow(QMainWindow):
                     self.show_plan(event.result)
         elif isinstance(event, JobFailed):
             self._close_progress()
+            if event.name == "count" and self._plan_waiting:
+                self._plan_waiting = False
+                self.make_plan()
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")

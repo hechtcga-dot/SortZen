@@ -27,6 +27,11 @@ DEFAULTS = {                    # settings with on/off values, and their default
 GENTLE_PAUSE = 0.005
 PLAN_SHARE = 5                  # planning counts as one fifth of the files on the progress bar
 SPEED_DEFAULTS = {"read": 100.0, "remembered": 5000.0, "plan": 1500.0}     # files per second
+BIG_FOLDER_FILES = 5000
+BIG_FILE_BYTES = 500 * 1024 * 1024
+LONG_RUN_SECONDS = 180
+LEARNED_FILES = 100             # a left-out folder with this many files read has taught SortZen enough...
+LEARNED_NEW_SHARE = 0.25        # ...unless its new files are more than this share of them
 MODES = (SORT_OUT, TIDY)
 WINDOWS_FOLDERS = {      # name -> Windows known-folder id (found through Windows, so OneDrive moves are followed)
     "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
@@ -233,6 +238,38 @@ class AppService:
                 current[p] = destination
         self.settings.set("corrections", current)
 
+    # ---------------------------------------------------------------- left out
+    def left_out(self) -> list[str]:
+        """Files and folders left exactly where they are; SortZen still learns from them."""
+        return list(self.settings.get("left_out") or [])
+
+    def set_left_out(self, paths: list[str], out: bool) -> list[str]:
+        """Leave paths out (or include them again). Returns the previous list, for Undo."""
+        previous = self.left_out()
+        keys = {path_key(p) for p in paths}
+        kept = [p for p in previous if path_key(p) not in keys]
+        self.settings.set("left_out", kept + [os.path.abspath(p) for p in paths] if out else kept)
+        return previous
+
+    def restore_left_out(self, previous: list[str]) -> None:
+        self.settings.set("left_out", list(previous))
+
+    def is_left_out(self, path: str) -> bool:
+        key = path_key(path)
+        return any(_inside(key, path_key(p)) for p in self.left_out())
+
+    def learned_folders(self, counts) -> list[str]:
+        """Left-out folders that have taught SortZen enough: their new files are read by name only."""
+        if not self.option("stop_reading_learned"):
+            return []
+        learned = []
+        for path in self.left_out():
+            for c in counts:
+                files, _, new = c.tree.get(path, (0, 0, 0))
+                if files and files - new >= LEARNED_FILES and new <= LEARNED_NEW_SHARE * (files - new):
+                    learned.append(path)
+        return learned
+
     # ---------------------------------------------------------------- the plan
     def make_plan(self, emit=None, token=None) -> Plan | None:
         """Scan every added folder (remembered results make repeat scans quick) and plan. Moves nothing."""
@@ -249,6 +286,7 @@ class AppService:
         emit(Status("Counting files", "nothing is opened yet"))
         counts = self.count_folders()
         emit(Estimate(self.estimate_seconds(counts)))
+        learned = self.learned_folders(counts)
         total_files = sum(c.files for c in counts)
         plan_units = max(1, total_files // PLAN_SHARE)
         grand = total_files + plan_units
@@ -267,7 +305,7 @@ class AppService:
 
             summary = self.scanner.scan(count.root, role, recursive=True,
                                         exclude=[f["path"] for f in sources] if role == "destination" else (),
-                                        emit=overall, token=token, listing=count.listing)
+                                        emit=overall, token=token, listing=count.listing, names_only=learned)
             records += summary.files
             read, remembered = read + summary.read, remembered + summary.remembered
             if summary.cancelled:
@@ -279,7 +317,7 @@ class AppService:
         started = time.perf_counter()
         planner = Planner(records, [Source(f["path"], f["mode"]) for f in sources],
                           [c.root for c in counts[len(sources):]],
-                          answers=self.answers(), corrections=self.corrections())
+                          answers=self.answers(), corrections=self.corrections(), left_out=self.left_out())
         plan = planner.plan()
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
@@ -297,6 +335,34 @@ class AppService:
         counts += [self.scanner.count(d, recursive=True, exclude=source_paths)
                    for d in _outermost(self.destination_folders())]
         return counts
+
+    def count_report(self, counts) -> dict:
+        """The Folders tab's summary line, time estimate and warnings about what will take longest."""
+        files = sum(c.files for c in counts)
+        size = sum(c.size for c in counts)
+        new = sum(c.new_files for c in counts)
+        seconds = self.estimate_seconds(counts)
+        minutes = max(1, round(seconds / 60))
+        when = "the first time" if new == files else ("" if new else "(everything already read)")
+        estimate = "under a minute" if seconds < 60 else f"about {minutes} minute{'s' if minutes != 1 else ''}"
+        warnings = []
+        for c in counts:
+            name = os.path.basename(c.root) or c.root
+            for sub, n in c.busiest[:3]:
+                if n >= BIG_FOLDER_FILES:
+                    warnings.append(f"“{sub}” in {name} holds {n:,} files; this part takes longest.")
+            big = [p for p, b in c.biggest if b >= BIG_FILE_BYTES]
+            if big:
+                warnings.append(f"{len(big)} file{'s' if len(big) != 1 else ''} over 500 MB in {name} (such as "
+                                f"“{os.path.basename(big[0])}”): only their names and details are read.")
+            if c.google_drive:
+                warnings.append(f"{name} is on Google Drive: its files are sorted by name and not downloaded. "
+                                "Settings › Read file contents on Google Drive changes this.")
+        if seconds > LONG_RUN_SECONDS:
+            warnings.append("For the quickest run, close programs you don't need. Or tick “Be gentle with my "
+                            "computer” in Settings to keep it quiet (slower).")
+        return {"files": files, "size": size, "new": new, "seconds": seconds,
+                "estimate": f"{estimate} {when}".strip(), "warnings": warnings}
 
     def speeds(self) -> dict[str, float]:
         stored = self.settings.get("speeds") or {}

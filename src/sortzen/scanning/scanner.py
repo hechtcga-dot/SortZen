@@ -36,6 +36,7 @@ class FolderCount:
     busiest: list[tuple[str, int]]          # subfolders holding the most files, (name, files)
     google_drive: bool                      # on Google Drive for desktop, contents not read
     listing: tuple = field(default=(), repr=False)
+    tree: dict = field(default_factory=dict, repr=False)   # folder -> (files, bytes, new files), all levels
 
 
 class ProtectedFolderError(ValueError):
@@ -77,7 +78,7 @@ class Scanner:
         self.pause = 0.0            # seconds to rest after each file read ("Be gentle with my computer")
 
     def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None,
-             listing=None) -> ScanSummary:
+             listing=None, names_only=()) -> ScanSummary:
         """Read the folder's files (unchanged ones come from the index). ``listing`` reuses one from listing()."""
         root = Path(os.path.abspath(str(root)))
         if not root.is_dir():
@@ -88,6 +89,7 @@ class Scanner:
         emit = emit or (lambda event: None)
         summary = ScanSummary(str(root), role)
         excluded = [path_key(p) for p in exclude]
+        names_keys = [path_key(n) for n in names_only]
 
         streamed = not self.read_google_drive and on_google_drive(str(root))
         if listing is None:
@@ -107,12 +109,14 @@ class Scanner:
                 key = path_key(path)
                 cloud = streamed or bool(getattr(st, "st_file_attributes", 0) & CLOUD_ONLY)
                 previous = known.get(key)
+                names = bool(names_keys) and any(_inside(key, n) for n in names_keys)
                 if (previous and previous.size == st.st_size and previous.modified_ns == st.st_mtime_ns
-                        and previous.cloud_only == cloud and previous.role == role):
+                        and previous.cloud_only == cloud and previous.role == role
+                        and (names or not previous.details.get("names_only"))):
                     record = previous
                     summary.remembered += 1
                 else:
-                    record = self._read(path, str(root), role, st, cloud)
+                    record = self._read(path, str(root), role, st, cloud, contents=not names)
                     if record is None:
                         summary.skip("in use")
                         continue
@@ -146,17 +150,29 @@ class Scanner:
             known = self.index.known(conn, path_key(root))
         new = 0
         per_subfolder: dict[str, int] = {}
+        tree: dict[str, list[int]] = {}
+        root_text = str(root)
         for path, st in entries:
             previous = known.get(path_key(path))
-            if not previous or previous.size != st.st_size or previous.modified_ns != st.st_mtime_ns:
-                new += 1
+            fresh = not previous or previous.size != st.st_size or previous.modified_ns != st.st_mtime_ns
+            new += fresh
             rel = os.path.relpath(path, root).split(os.sep)
             if len(rel) > 1:
                 per_subfolder[rel[0]] = per_subfolder.get(rel[0], 0) + 1
+            folder = os.path.dirname(path)
+            while True:
+                counts = tree.setdefault(folder, [0, 0, 0])
+                counts[0] += 1
+                counts[1] += st.st_size
+                counts[2] += fresh
+                if folder == root_text or len(folder) <= len(root_text):
+                    break
+                folder = os.path.dirname(folder)
         biggest = sorted(((p, st.st_size) for p, st in entries), key=lambda x: -x[1])[:20]
         return FolderCount(str(root), len(entries), new, sum(st.st_size for _, st in entries),
                            biggest, sorted(per_subfolder.items(), key=lambda x: -x[1])[:10],
-                           not self.read_google_drive and on_google_drive(str(root)), (entries, skipped))
+                           not self.read_google_drive and on_google_drive(str(root)), (entries, skipped),
+                           {k: tuple(v) for k, v in tree.items()})
 
     def _walk(self, folder: str, recursive: bool, excluded, entries, summary, emit=None, name="") -> None:
         try:
@@ -198,12 +214,15 @@ class Scanner:
                     emit(Status("Listing files", f"{name}: {len(entries):,} found"))
 
     @staticmethod
-    def _read(path: str, root: str, role: str, st, cloud: bool) -> FileRecord | None:
+    def _read(path: str, root: str, role: str, st, cloud: bool, contents: bool = True) -> FileRecord | None:
         name = os.path.basename(path)
         ext = os.path.splitext(name)[1].lower()
         record = FileRecord(path=path, root=path_key(root), role=role, name=name, ext=ext, kind=kind_of(ext),
                             size=st.st_size, modified_ns=st.st_mtime_ns, cloud_only=cloud)
         if cloud:
+            return record
+        if not contents:
+            record.details = {"names_only": True}
             return record
         try:
             record.fingerprint = fingerprint(Path(path), st.st_size)

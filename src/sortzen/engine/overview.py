@@ -90,6 +90,8 @@ def decide_folders(p) -> list[FolderSuggestion]:
     pending: list[tuple[str, object]] = []
 
     def look(folder: str, source) -> None:
+        if p.is_left_out(folder):
+            return
         clear = _decide_clear(p, folder, source)
         if clear is None:
             pending.append((folder, source))
@@ -321,7 +323,7 @@ def find_topics(p, plan: Plan) -> None:
             planned = decided.destination if decided and decided.destination else parent
             items[folder] = (True, parent, planned)
         by_word: dict[str, set[str]] = defaultdict(set)
-        for path in items:
+        for path in [i for i in items if not p.is_left_out(i)]:
             for w in _topic_words(os.path.basename(path)):
                 by_word[w].add(path)
         groups: list[tuple[list[str], set[str]]] = []

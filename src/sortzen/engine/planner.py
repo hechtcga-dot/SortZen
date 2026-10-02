@@ -108,7 +108,7 @@ class _Index:
 class Planner:
     def __init__(self, records: list[FileRecord], sources: list[Source], destinations: list[str],
                  not_destinations: list[str] = (), answers: dict[str, int] | None = None,
-                 corrections: dict[str, str] | None = None):
+                 corrections: dict[str, str] | None = None, left_out: list[str] = ()):
         self.records = list(records)
         self.sources = [Source(os.path.abspath(s.root), s.mode) for s in sources]
         self.destinations = [os.path.abspath(d) for d in destinations]
@@ -116,6 +116,7 @@ class Planner:
         self.answers = dict(answers or {})                       # question key -> chosen choice
         self.corrections = {path_key(k): os.path.abspath(v) for k, v in (corrections or {}).items()}
         self.excluded: list[str] = []                            # messy, undecided or moving folders
+        self.left_out = [os.path.abspath(p) for p in left_out]  # left in place, still learned from
         self._sources: dict[str, Source | None] = {}
         self._labels: dict[str, str] = {}
 
@@ -135,9 +136,14 @@ class Planner:
                 return root
         return folder
 
+    def is_left_out(self, path: str) -> bool:
+        return any(_inside(path, p) for p in self.left_out)
+
     def _is_candidate(self, folder: str) -> bool:
         if any(_inside(folder, d) for d in self.not_destinations + self.excluded):
             return False
+        if self.is_left_out(folder):
+            return True             # a profile to learn from; files are never sent there
         if any(_inside(folder, d) for d in self.destinations):
             return True
         source = self._source_of(folder)
@@ -164,7 +170,8 @@ class Planner:
         self._prepare()
         overview.place_kept_folders(self, plan)
         for i, record in enumerate(self.records):
-            if self._source_of(record.path) and not any(_inside(record.path, h) for h in self.held):
+            if (self._source_of(record.path) and not any(_inside(record.path, h) for h in self.held)
+                    and not self.is_left_out(record.path)):
                 plan.files.append(self._suggest(i))
         overview.find_topics(self, plan)
         overview.ask_about_folders(self, plan)
@@ -242,6 +249,11 @@ class Planner:
                 else "No sorted files are like this one"
             return Suggestion(record.path, current, None, 0, [Reason(False, reason)])
 
+        if self.is_left_out(ranked[0][0]) and not self.is_left_out(current):
+            others = [(f, sc) for f, sc in ranked if not self.is_left_out(f)]
+            return Suggestion(record.path, current, None, 0,
+                              [Reason(False, f"Most like the files in {self.label(ranked[0][0])}, which is left out")],
+                              runner_up=(others[0][0], 0) if others else None)
         total = sum(s ** SHARPNESS for _, s in ranked)
         best, best_score = ranked[0]
         closest = max((s for s, _ in sims.get(best, [])), default=0.0)

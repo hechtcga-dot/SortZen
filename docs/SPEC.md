@@ -288,6 +288,22 @@ available in Settings:
     folders, the current step ("Listing files in older downloads: 850 found"), time so far
     and a time estimate, rotating tips, and Stop safely. The estimate comes from a quick
     count of the files (nothing is opened) and from how fast earlier runs were.
+  - The **Folders** tab lists every added folder with its files and size, the time a plan
+    will take (from a quick count; nothing is opened), and warnings: very large
+    subfolders, files over 500 MB, folders on Google Drive, and a suggestion to close other
+    programs or use "Be gentle with my computer" for long runs. Folders expand into
+    subfolders and files (folders first), loaded as they are opened.
+  - **Tick boxes**: everything starts ticked. An unticked file or folder is left exactly
+    where it is: nothing moves into or out of it, and its files are not suggested anywhere.
+    SortZen still reads it and learns from it; a file most like the files in a left-out
+    folder waits in Review ("Most like the files in 2022 Audit, which is left out"). A
+    folder with something left out inside shows a half tick. Also on right-click ("Leave
+    out", "Include again"); Undo works.
+  - Advanced setting, on by default: "Stop reading left-out folders once SortZen has
+    learned enough from them". A left-out folder with at least 100 files already read, and
+    new files no more than a quarter of those, has its new files read by name only.
+  - Every list sorts by any column: click a heading, click again to reverse. Names sort in
+    natural order ("file 2" before "file 10"); numbers, sizes and percentages as numbers.
   - The **Questions** tab lists what SortZen couldn't settle; answers are saved and the plan
     is updated.
   - The **Plan** tab groups everything into Ready, Review, Staying and "Sorted from the

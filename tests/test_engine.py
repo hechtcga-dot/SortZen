@@ -217,3 +217,23 @@ class SpeedTest(unittest.TestCase):
         self.assertGreater(len(records), 4000)
         self.assertGreater(len(plan.files), 2500)
         self.assertLess(seconds, 30)
+
+
+class LeftOutTest(unittest.TestCase):
+    def test_left_out_files_stay_and_still_teach(self):
+        base = tempfile.mkdtemp()
+        down, docs = os.path.join(base, "Downloads"), os.path.join(base, "Documents")
+        audit = os.path.join(docs, "2022 Audit")
+        recs = [record(f"{audit}/2022 TB {n}.pdf", "trial balance audit year-end", "pdf", ".pdf") for n in range(3)]
+        recs += [record(f"{docs}/Recipes/{n}.docx", f"{n} recipe flour sugar oven") for n in ("Bread", "Pie", "Scones")]
+        project = os.path.join(down, "Project Wren")
+        recs += [record(f"{project}/Wren notes {n}.docx", "Project Wren roof plans") for n in range(3)]
+        tb = record(f"{down}/TB final.pdf", "trial balance audit year-end", "pdf", ".pdf")
+        cake = record(f"{down}/Cake recipe.docx", "cake recipe flour sugar oven")
+        plan = Planner(recs + [tb, cake], [Source(down, SORT_OUT)], [docs], left_out=[audit, project]).plan()
+        self.assertIsNone(plan.for_path(project + os.sep + "Wren notes 0.docx"))
+        self.assertIsNone(plan.folder(project))
+        held = plan.for_path(tb.path)
+        self.assertIsNone(held.destination)
+        self.assertIn("which is left out", held.reasons[0].text)
+        self.assertEqual(plan.for_path(cake.path).destination, os.path.join(docs, "Recipes"))

@@ -177,3 +177,49 @@ class MakePlanTest(unittest.TestCase):
         empty = AppService(AppPaths(Path(self.dir.name) / "empty"), ApiKeyStore(FakeKeyring()))
         with self.assertRaises(FolderError):
             empty.make_plan()
+
+
+class LeftOutServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.service = AppService(AppPaths(root / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.down = root / "Downloads"
+        (self.down / "Keep me").mkdir(parents=True)
+        for i in range(120):
+            (self.down / "Keep me" / f"note {i}.txt").write_text(f"budget note {i}")
+        (self.down / "loose.txt").write_text("budget note loose")
+        self.service.add_source(str(self.down))
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_left_out_round_trip_and_plan(self):
+        keep = str(self.down / "Keep me")
+        previous = self.service.set_left_out([keep], True)
+        self.assertTrue(self.service.is_left_out(keep + os.sep + "note 1.txt"))
+        plan = self.service.make_plan()
+        self.assertFalse(any("Keep me" in s.path for s in plan.files))
+        self.service.restore_left_out(previous)
+        self.assertFalse(self.service.is_left_out(keep))
+
+    def test_learned_folders_are_read_by_name_only(self):
+        from unittest import mock
+        from sortzen.scanning import scanner as scanner_module
+
+        keep = str(self.down / "Keep me")
+        self.service.set_left_out([keep], True)
+        self.service.make_plan()                                   # first run reads everything
+        self.assertEqual(self.service.learned_folders(self.service.count_folders()), [keep])
+        (self.down / "Keep me" / "new.txt").write_text("budget note new")
+        with mock.patch.object(scanner_module, "read_contents", side_effect=AssertionError("opened")):
+            self.service.make_plan()
+        self.service.set_option("stop_reading_learned", False)
+        self.assertEqual(self.service.learned_folders(self.service.count_folders()), [])
+
+    def test_count_tree_and_estimate(self):
+        counts = self.service.count_folders()
+        self.assertEqual(counts[0].files, 121)
+        self.assertEqual(counts[0].tree[str(self.down / "Keep me")][0], 120)
+        self.assertGreater(self.service.estimate_seconds(counts), 0)

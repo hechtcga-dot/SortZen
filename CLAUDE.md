@@ -28,8 +28,9 @@ src/sortzen/
   services/            AppService: the only API the window uses (folders, autonomy, answers,
                        corrections, make_plan); plan_view.py (Ready/Review/Staying rows,
                        display paths, Excel export)
-  ui/                  PySide6 window (main_window.py), plan_page.py, questions_page.py,
-                       dialogs.py, theme, fonts (OFL), icon
+  ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
+                       questions_page.py, progress_window.py (+ tips.py), dialogs.py,
+                       sortable.py (click-to-sort columns), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt
                        (shipped with each build), BUILD_WINDOWS.bat (local build)
