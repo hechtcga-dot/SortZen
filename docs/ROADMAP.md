@@ -22,18 +22,19 @@ step.
 3. Reading scanned PDFs (OCR), finding duplicates, sorting on a schedule.
 
 ## Phase 1: test folders
-`tests/fixtures/make_test_folders.py` builds a test setup from made-up content only:
-- a "Downloads" folder of about 300 mixed files: installers, zip files, photos with camera
-  details, screenshots, music, videos, and Word, PDF and Excel files for an invented
-  employer ("Example Co.") alongside personal files (a resume mentioning Example Co.,
-  recipes, receipts);
-- already-sorted destination folders (Documents/Word/Work, Documents/Word/Personal,
-  Pictures/…) for first-run learning;
-- subfolders inside Downloads: a messy "older downloads" folder of unrelated files, which
-  holds its own project folder, and a "Project 1" folder of related files with its own
-  subfolders;
-- the expected destination of every file and the expected outcome of every subfolder (the
-  answer key).
+`tests/fixtures/make_test_folders.py` builds a test setup from made-up content only, with
+the mess real folders have: copies ("name (1).xlsx"), typos and odd capitals, random-code
+and scanner-generated names, scanned PDFs with no text, Google link files, shortcuts, an
+applicant's resume beside the user's own, and work and personal files mixed together.
+- **Downloads**: loose files, a messy "older downloads" folder with a project folder
+  inside it, a project folder with its own subfolders, and an unzipped folder next to its
+  .zip. Destinations are in **Sorted** (Documents/Work/…, Documents/Personal/…, Pictures,
+  Music, Videos, Software, Archives), which already hold examples.
+- **My Drive**: a cloud drive tidied in place: loose files among organised folders that
+  stay where they are, messy folders whose files belong in the organised ones, and folders
+  only users can decide about (a holding folder, a former colleague's restored drive).
+- **answer_key.json**: the expected destination of every file (or Review) and the
+  expected outcome of every subfolder.
 
 Engine tests compare SortZen's choices with the answer key and report a score.
 

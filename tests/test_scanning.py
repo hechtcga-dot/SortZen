@@ -12,9 +12,8 @@ from sortzen.scanning import readers, scanner as scanner_module
 from sortzen.scanning.fingerprint import fingerprint
 from sortzen.scanning.scanner import ProtectedFolderError, Scanner
 from sortzen.tasks import CancelToken, Progress
-from tests.fixtures.make_test_folders import (
-    build, write_docx, write_jpeg, write_pdf, write_pptx, write_xlsx,
-)
+from tests.fixtures import answer_key, shared_test_folders
+from tests.fixtures.make_test_folders import write_docx, write_jpeg, write_pdf, write_pptx, write_xlsx
 
 
 class ReadersTest(unittest.TestCase):
@@ -108,13 +107,10 @@ class FingerprintTest(unittest.TestCase):
 class ScannerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fixture_dir = tempfile.TemporaryDirectory()
-        cls.fixture = build(Path(cls.fixture_dir.name))
-        cls.answer_key = json.loads((cls.fixture / "answer_key.json").read_text(encoding="utf-8"))
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.fixture_dir.cleanup()
+        cls.fixture = shared_test_folders()
+        cls.answer_key = answer_key()
+        cls.loose_downloads = [rel for rel in cls.answer_key["files"] if rel.count("/") == 1
+                               and rel.startswith("Downloads/")]
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -133,23 +129,31 @@ class ScannerTest(unittest.TestCase):
     def test_scans_the_whole_test_downloads(self):
         events = []
         summary = self.scanner.scan(self.fixture / "Downloads", "source", recursive=False, emit=events.append)
-        self.assertEqual(len(summary.files), 300)
-        self.assertEqual(summary.read, 300)
-        self.assertEqual(summary.skipped, {})
+        self.assertEqual(sorted("Downloads/" + r.name for r in summary.files), sorted(self.loose_downloads))
+        self.assertEqual(summary.read, len(self.loose_downloads))
+        self.assertEqual(summary.skipped, {"subfolder": 3})
         self.assertIsInstance(events[-1], Progress)
-        self.assertEqual((events[-1].done, events[-1].total), (300, 300))
+        self.assertEqual(events[-1].done, events[-1].total)
         by_name = {r.name: r for r in summary.files}
-        resume = next(r for n, r in by_name.items() if n.startswith("Resume"))
-        self.assertIn("Example Co.", resume.text)
-        self.assertEqual(resume.kind, "word")
+        self.assertIn("Prairie Ridge School Division", by_name["Jordan Sample Resume 2025.docx"].text)
+        self.assertTrue(by_name["1DXPB0.PDF"].details["no_text"])
         self.assertTrue(all(r.fingerprint for r in summary.files))
-        damaged = [r for r in summary.files if r.error]
-        self.assertEqual(damaged, [])
+        self.assertEqual([r.name for r in summary.files if r.error], [])
+
+    def test_google_link_files(self):
+        summary = self.scanner.scan(self.fixture / "My Drive", "source", recursive=False)
+        google = [r for r in summary.files if r.ext in (".gdoc", ".gsheet", ".gform")]
+        self.assertGreaterEqual(len(google), 10)
+        forms = next(r for r in google if r.name == "Blank Quiz.gform")
+        self.assertEqual((forms.kind, forms.details, forms.text), ("form", {"google": "Google Forms"}, ""))
+        sheet = next(r for r in google if r.name == "Seed_Catalog_Final.gsheet")
+        self.assertEqual(sheet.kind, "spreadsheet")
+        self.assertFalse(any("@" in str(r.details) + r.text for r in google))       # the account email is not kept
 
     def test_destinations_are_scanned_with_subfolders(self):
         summary = self.scanner.scan(self.fixture / "Sorted", "destination", recursive=True)
         self.assertEqual(len(summary.files), sum(1 for p in (self.fixture / "Sorted").rglob("*") if p.is_file()))
-        self.assertTrue(any("Word" + os.sep + "Work" in r.path for r in summary.files))
+        self.assertTrue(any(os.sep.join(("Work", "Payroll")) in r.path for r in summary.files))
 
     def test_source_subfolders_are_counted_not_entered(self):
         downloads = self.folder()
@@ -182,9 +186,9 @@ class ScannerTest(unittest.TestCase):
         self.scanner.scan(downloads, "source", recursive=False)
         with mock.patch.object(scanner_module, "read_contents", side_effect=AssertionError("read again")):
             summary = self.scanner.scan(downloads, "source", recursive=False)
-        self.assertEqual((summary.read, summary.remembered), (0, 300))
-        resume = next(r for r in summary.files if r.name.startswith("Resume"))
-        self.assertIn("Example Co.", resume.text)
+        self.assertEqual((summary.read, summary.remembered), (0, len(self.loose_downloads)))
+        resume = next(r for r in summary.files if r.name == "Jordan Sample Resume 2025.docx")
+        self.assertIn("Prairie Ridge School Division", resume.text)
 
     def test_changed_added_and_removed_files(self):
         downloads = self.folder()

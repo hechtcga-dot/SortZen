@@ -14,6 +14,8 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
+from .file_types import GOOGLE_LINKS
+
 logging.getLogger("pypdf").setLevel(logging.ERROR)     # damaged PDFs are recorded, not printed
 
 MAX_TEXT_CHARS = 20_000
@@ -38,6 +40,8 @@ def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str
     ext = ext.lower()
     if size > MAX_CONTENT_BYTES and kind not in ("image", "archive", "installer"):
         return {}, ""
+    if ext in GOOGLE_LINKS:
+        return {"google": GOOGLE_LINKS[ext]}, ""
     if ext == ".docx":
         return _docx(path)
     if ext == ".xlsx" or ext == ".xlsm":

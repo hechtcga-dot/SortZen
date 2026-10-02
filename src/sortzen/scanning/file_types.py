@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 KINDS = {
-    "word": {".docx", ".doc", ".odt", ".rtf"},
+    "word": {".docx", ".doc", ".odt", ".rtf", ".gdoc"},
     "pdf": {".pdf"},
-    "spreadsheet": {".xlsx", ".xls", ".xlsm", ".ods", ".csv"},
-    "presentation": {".pptx", ".ppt", ".odp"},
+    "spreadsheet": {".xlsx", ".xls", ".xlsm", ".ods", ".csv", ".gsheet"},
+    "presentation": {".pptx", ".ppt", ".odp", ".gslides"},
+    "form": {".gform"},
     "text": {".txt", ".md", ".log", ".json", ".xml", ".ini", ".cfg"},
     "image": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif", ".svg"},
     "video": {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v", ".webm"},
@@ -16,6 +17,10 @@ KINDS = {
     "shortcut": {".lnk", ".url"},
 }
 _BY_EXT = {ext: kind for kind, exts in KINDS.items() for ext in exts}
+
+# Google Drive for desktop writes these small link files; the document itself stays online.
+GOOGLE_LINKS = {".gdoc": "Google Docs", ".gsheet": "Google Sheets", ".gslides": "Google Slides",
+                ".gform": "Google Forms"}
 
 # Never sorted: Windows housekeeping files, Office lock files and downloads still in progress.
 IGNORED_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}

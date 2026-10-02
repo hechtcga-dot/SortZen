@@ -77,13 +77,18 @@ decision; when the code and this file disagree, this file wins until it is chang
   folders. Shortcuts are sorted as files and never followed into other folders.
 - **OneDrive cloud-only files** are sorted by name and details only, because reading their
   contents would download them. A setting turns this off.
+- **Google Drive link files** (.gdoc, .gsheet, .gslides, .gform) are small pointers to
+  documents that stay online. They are sorted by name and type, and only move to folders
+  inside the same Google Drive, because moving one out of the drive disconnects it.
 
 ## 6. Reading files (on the PC, no AI)
 - Details: name, type, size, dates, current folder.
 - Contents: Word (.docx: text, title, author), PDF (typed text from the first 10 pages,
   title, author), Excel (.xlsx), PowerPoint (.pptx), text and CSV (any common encoding),
   photo details (camera, date taken, size), the names of files inside .zip archives, and
-  program details (.exe: product and company, read through Windows).
+  program details (.exe: product and company, read through Windows). Google link files
+  count as documents, spreadsheets, presentations or forms; the account they belong to is
+  not recorded.
 - PDFs with no typed text are marked as scans (reading them needs OCR, after the alpha).
 - Text is kept up to 20,000 characters per file. Files over 50 MB (other than photos,
   archives and programs) are sorted by name and details only.
