@@ -1,0 +1,133 @@
+name: Windows build
+
+# Runs every test on Windows, builds SortZen with PyInstaller, self-tests the program,
+# builds and install-tests the installer, and uploads the installer and README.txt.
+# Pushing a tag like v0.1.0, or running it by hand with "release_tag" filled in, also
+# publishes them on the repository's Releases page.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish this build as a release with this tag (e.g. v0.1.0); leave empty for a test build"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # The ready-made PyInstaller starter program is shared by many programs, including some
+      # malware, so virus scanners sometimes block it. Compiling it here gives SortZen its own.
+      - name: Compile PyInstaller's bootloader from source
+        env:
+          PYINSTALLER_COMPILE_BOOTLOADER: "1"
+        run: |
+          pip install wheel
+          pip install --force-reinstall --no-deps --no-cache-dir --no-binary pyinstaller "pyinstaller>=6,<7"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Build icon
+        run: python packaging/make_icon.py
+
+      - name: Build SortZen
+        run: pyinstaller packaging/sortzen.spec --noconfirm
+
+      - name: Self-test the built program
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "self_test.json"
+          $p = Start-Process -FilePath "dist\SortZen\SortZen.exe" -ArgumentList "--self-test=$report" -Wait -PassThru
+          Get-Content $report
+          if ($p.ExitCode -ne 0) { throw "Self-test failed (exit $($p.ExitCode))" }
+
+      - name: Add the README
+        shell: pwsh
+        run: Copy-Item packaging\README.txt dist\
+
+      - name: Build the installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $version = python -c "import sys; sys.path.insert(0, 'src'); import sortzen; print(sortzen.__version__)"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$version" packaging\sortzen.iss 2>&1 | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          Get-ChildItem dist
+
+      - name: Install silently and self-test the installed program
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\SortZen-Setup-*.exe | Select-Object -First 1
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer failed (exit $($p.ExitCode))" }
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\SortZen\SortZen.exe"
+          if (-not (Test-Path $exe)) { throw "Installed program not found at $exe" }
+          $report = Join-Path $env:RUNNER_TEMP "installed_self_test.json"
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $t = Start-Process -FilePath $exe -ArgumentList "--self-test=$report" -Wait -PassThru
+          "Installed start + self-test: $([math]::Round($sw.Elapsed.TotalSeconds, 1)) s"
+          Get-Content $report
+          if ($t.ExitCode -ne 0) { throw "Installed SortZen failed its self-test" }
+          $installed = (Get-ChildItem (Split-Path $exe) -Recurse | Measure-Object Length -Sum).Sum
+          Get-ChildItem dist -File | ForEach-Object { "{0,-40} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+          "Installed size: {0:N1} MB" -f ($installed / 1MB)
+
+      - name: Uninstall silently
+        shell: pwsh
+        run: |
+          $app = Join-Path $env:LOCALAPPDATA "Programs\SortZen"
+          $p = Start-Process -FilePath (Join-Path $app "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall failed (exit $($p.ExitCode))" }
+          for ($i = 0; $i -lt 60 -and (Test-Path (Join-Path $app "SortZen.exe")); $i++) { Start-Sleep 1 }
+          if (Test-Path (Join-Path $app "SortZen.exe")) { throw "Program files were not removed" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SortZen-windows
+          path: |
+            dist/SortZen-Setup-*.exe
+            dist/README.txt
+          if-no-files-found: error
+
+      - name: Publish release (tags, or a hand-run with release_tag)
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: SortZen ${{ github.event.inputs.release_tag || github.ref_name }}
+          prerelease: true
+          body: |
+            Alpha, plan only: SortZen shows what it would do and moves nothing.
+            Download SortZen-Setup-*.exe below and run it (no administrator rights needed).
+            Windows may show "Windows protected your PC": click "More info", then "Run anyway".
+            README.txt explains how to use it.
+          files: |
+            dist/SortZen-Setup-*.exe
+            dist/README.txt

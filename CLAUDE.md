@@ -30,12 +30,15 @@ src/sortzen/
                        display paths, Excel export)
   ui/                  PySide6 window (main_window.py), plan_page.py, questions_page.py,
                        dialogs.py, theme, fonts (OFL), icon
-packaging/launcher.py  runs the program from source; packaged entry point
+packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
+                       sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt
+                       (shipped with each build), BUILD_WINDOWS.bat (local build)
 tests/                 unittest suites (window tests run offscreen)
   fixtures/            make_test_folders.py: made-up Downloads and My Drive (about 440 files
                        and 37 subfolders to sort, topics), sorted folders, answer key;
                        shared_test_folders() builds them once per test run
-.github/workflows/     tests.yml: tests and self-test on Windows
+.github/workflows/     tests.yml: tests and self-test on Windows on every push;
+                       windows-build.yml: tests, program, installer, install test, release
 ```
 
 ## Commands
@@ -76,6 +79,16 @@ Inno Setup; unittest.
   undone.
 - Only folders users added are read. API keys and real user files are never committed.
 - The interface follows SPEC §4.
+
+## Builds and releases
+- A build is published by pushing a tag `vX.Y.Z` (or running "Windows build" by hand with
+  `release_tag`); the workflow puts `SortZen-Setup-X.Y.Z.exe` and README.txt on the
+  repository's Releases page as a pre-release.
+- Each build is developed on its own branch (`release/0.1`, …) and merged into `main`
+  when the next one starts.
+- Before a build: bump the version (below), and update `packaging/README.txt` ("SortZen
+  X.Y - README", the setup file name, "What's new in X.Y") and the installer default in
+  `packaging/sortzen.iss`; `tests/test_version.py` checks they agree.
 
 ## Versions
 - One version number: `__version__` in `src/sortzen/__init__.py`. The window, the program
