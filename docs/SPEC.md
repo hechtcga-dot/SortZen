@@ -284,9 +284,11 @@ available in Settings:
   - "Change destination…" and "Leave it where it is" (buttons and right-click, for one or
     several files) are remembered at once; "Update plan" lets SortZen learn from them for
     similar files. Every change can be undone (Ctrl+Z).
-- **0.2**: files and folders move after the plan is confirmed, with Undo.
-- Not in the alpha: removing duplicates (copies are grouped and flagged but all kept),
-  renaming (§12), the in-app updater (§13), rule suggestions (SortZen offering "Make this
-  a rule?" after repeated corrections), a privacy option that sends a random sample of
-  words, new folders more than one level deep (questions can still choose deeper ones),
-  reading scanned PDFs (OCR), sorting on a schedule.
+- **0.2**: everything in 0.1, plus speed work, the Folders tab, duplicates review, the AI
+  step, the Settings window, profiles, and moving files and folders after the plan is
+  confirmed, with Undo.
+- Not in the alpha: renaming (§12), the in-app updater (§13), rule suggestions (SortZen
+  offering "Make this a rule?" after repeated corrections), a privacy option that sends a
+  random sample of words, new folders more than one level deep (questions can still choose
+  deeper ones), permanently deleting queued files from inside SortZen, reading scanned
+  PDFs (OCR), sorting on a schedule.

@@ -6,8 +6,8 @@ step.
 ## Alpha (versions 0.x)
 
 Alpha 0.1 is **plan only**: it scans, asks its questions and shows the full plan with
-every percentage and its reasons, but moves nothing, so it can run safely on real folders.
-Files move from alpha 0.2.
+every percentage and its reasons, but moves nothing. Alpha 0.2 adds everything below and
+moves files after the plan is confirmed.
 
 | # | Phase | Status |
 |---|-------|--------|
@@ -16,17 +16,28 @@ Files move from alpha 0.2.
 | 2a | Sorting engine, file by file: folder profiles, suggestions with a percentage and how it was worked out, runner-up, misplaced files in organised folders | **Done** |
 | 2b | Sorting engine, the overview: subfolder outcomes (stays, keep together, sort the inside, Review), topics and their homes, one-level new folders, questions | **Done** |
 | 3 | Plan screen (read-only): add folders (sort into other folders or tidy this folder), scan, questions, plan with Ready and Review, percentage breakdowns, corrections, export the plan to Excel | **Done** |
-| 4 | **Alpha 0.1 build**: program folder and per-user installer from the Windows build workflow; plan only | To do |
-| 5 | AI step: service drop-down, key storage, privacy settings (name only, beginning of file), two passes, batches, cost estimate and cap | To do |
-| 6 | Mover: whole-folder moves, new folders, removing emptied folders, name clashes, cross-drive copy and check, Google link files kept in their drive, run log, Undo | To do |
-| 7 | **Alpha 0.2 build**: files move | To do |
+| 4 | **Alpha 0.1 build**: program folder and per-user installer from the Windows build workflow; plan only | **Done** |
+
+### Alpha 0.2
+| # | Phase | Status |
+|---|-------|--------|
+| 5 | Speed: folder summaries, searching on distinctive clues, each check once, remembered plan, fewer PDF pages, Google Drive check, "Be gentle with my computer" | To do |
+| 6 | Loading window: animation, overall progress, step text, time estimate, tips | To do |
+| 7 | Folders tab: several folders, counts and sizes, estimate, warnings, tick boxes (left out but learned from), advanced "stop reading once learned" | To do |
+| 8 | Plan screen: sortable columns everywhere, Type column, search and filters, group by destination, problems before moving, accuracy readout, tick boxes | To do |
+| 9 | Mover: confirmed moves, whole-folder moves, new folders, removing emptied folders, name clashes, cross-drive copy and check, run log, Undo | To do |
+| 10 | Duplicates review: exact copies, suggested copy to keep, dated "Queued for deletion" folders, Undo | To do |
+| 11 | AI step: service drop-down and key, privacy settings (name only, beginning of file), name-only folders and words, scrubbing, image previews, two passes, batches, cost estimate and cap, house rules | To do |
+| 12 | Settings window (General, AI, Privacy, Advanced), save and load a profile, Help: activity log and diagnostic info, uninstall option to remove settings | To do |
+| 13 | **Alpha 0.2 build** | To do |
 
 ## After the alpha
-1. Removing duplicates (copies are grouped and flagged in the alpha).
-2. Renaming screen (SPEC §12).
-3. In-app updater (SPEC §13).
-4. Rule suggestions, the random-word privacy option, deeper new-folder structures.
-5. Reading scanned PDFs (OCR), sorting on a schedule.
+1. Renaming screen (SPEC §12).
+2. In-app updater (SPEC §13), and a download page friends can reach (the repository is
+   private).
+3. Rule suggestions, the random-word privacy option, deeper new-folder structures,
+   permanently deleting queued files from inside SortZen.
+4. Reading scanned PDFs (OCR), sorting on a schedule.
 
 ## Phase 1: test folders
 `tests/fixtures/make_test_folders.py` builds a test setup from made-up content only, with
