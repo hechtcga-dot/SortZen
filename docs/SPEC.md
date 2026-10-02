@@ -91,13 +91,16 @@ decision; when the code and this file disagree, this file wins until it is chang
   folders. Shortcuts are sorted as files and never followed into other folders.
 - **OneDrive cloud-only files** are sorted by name and details only, because reading their
   contents would download them. A setting turns this off.
+- **Google Drive for desktop** (the drive labelled "Google Drive"): reading a file there can
+  make Google Drive download it, so its files are sorted by name and details only unless
+  "Read file contents on Google Drive" is on (Settings).
 - **Google Drive link files** (.gdoc, .gsheet, .gslides, .gform) are small pointers to
   documents that stay online. They are sorted by name and type, and only move to folders
   inside the same Google Drive, because moving one out of the drive disconnects it.
 
 ## 6. Reading files (on the PC, no AI)
 - Details: name, type, size, dates, current folder.
-- Contents: Word (.docx: text, title, author), PDF (typed text from the first 10 pages,
+- Contents: Word (.docx: text, title, author), PDF (typed text from the first 2 pages,
   title, author), Excel (.xlsx), PowerPoint (.pptx), text and CSV (any common encoding),
   photo details (camera, date taken, size), the names of files inside .zip archives, and
   program details (.exe: product and company, read through Windows). Google link files
@@ -109,6 +112,12 @@ decision; when the code and this file disagree, this file wins until it is chang
 - A damaged file is still listed and sorted by name and details, with the reason shown.
 - Results are remembered per file (path, size, date changed), so a repeat scan of an
   unchanged folder takes seconds. Stop Safely keeps everything scanned so far.
+- **Be gentle with my computer** (Settings): reading runs at the lowest processor and disk
+  priority with short rests between files, so the computer stays quiet and responsive;
+  it takes longer.
+- Planning compares each file first with the files that share its distinctive clues (rare
+  words and details), and works out full similarity for at most 200 of them, so planning
+  time grows in step with the number of files (about 5 seconds for 9,000 files).
 - Each file gets a content fingerprint: small files are hashed whole; large files from
   their size plus samples at the start, middle and end, so big videos are as quick as
   small files. Learning is tied to the fingerprint, not the name, so a file keeps its

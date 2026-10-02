@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterator
 
@@ -39,8 +40,13 @@ _COLUMNS = ("path", "root", "role", "name", "ext", "kind", "size", "modified_ns"
             "details", "text", "error")
 
 
+@lru_cache(maxsize=200_000)
+def _key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
 def path_key(path) -> str:
-    return os.path.normcase(os.path.abspath(str(path)))
+    return _key(str(path))
 
 
 def _record(row) -> FileRecord:

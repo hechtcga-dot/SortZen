@@ -8,6 +8,7 @@ would download them.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from ..repositories.file_index import FileIndex, path_key
@@ -36,10 +37,30 @@ def _inside(key: str, roots) -> bool:
     return any(key == r or key.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
 
 
+def on_google_drive(path: str) -> bool:
+    """Whether a folder is on the drive Google Drive for desktop creates (labelled "Google Drive").
+
+    Reading a file there can make Google Drive download it, so its files are treated like
+    cloud-only files unless reading them is allowed.
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    drive = os.path.splitdrive(os.path.abspath(path))[0]
+    if not drive:
+        return False
+    label = ctypes.create_unicode_buffer(261)
+    ok = ctypes.windll.kernel32.GetVolumeInformationW(drive + "\\", label, 261, None, None, None, None, 0)
+    return bool(ok) and label.value.lower().startswith("google drive")
+
+
 class Scanner:
-    def __init__(self, index: FileIndex, protected: list[str] | None = None):
+    def __init__(self, index: FileIndex, protected: list[str] | None = None, read_google_drive: bool = False):
         self.index = index
         self.protected = protected_roots() if protected is None else [path_key(p) for p in protected]
+        self.read_google_drive = read_google_drive
+        self.pause = 0.0            # seconds to rest after each file read ("Be gentle with my computer")
 
     def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None) -> ScanSummary:
         root = Path(os.path.abspath(str(root)))
@@ -52,6 +73,7 @@ class Scanner:
         summary = ScanSummary(str(root), role)
         excluded = [path_key(p) for p in exclude]
 
+        streamed = not self.read_google_drive and on_google_drive(str(root))
         emit(Status("Listing files", root.name))
         entries: list[tuple[str, os.stat_result]] = []
         self._walk(str(root), recursive, excluded, entries, summary)
@@ -65,7 +87,7 @@ class Scanner:
                     summary.cancelled = True
                     break
                 key = path_key(path)
-                cloud = bool(getattr(st, "st_file_attributes", 0) & CLOUD_ONLY)
+                cloud = streamed or bool(getattr(st, "st_file_attributes", 0) & CLOUD_ONLY)
                 previous = known.get(key)
                 if (previous and previous.size == st.st_size and previous.modified_ns == st.st_mtime_ns
                         and previous.cloud_only == cloud and previous.role == role):
@@ -78,6 +100,8 @@ class Scanner:
                         continue
                     self.index.save(conn, record)
                     summary.read += 1
+                    if self.pause and not cloud:
+                        time.sleep(self.pause)
                     if summary.read % COMMIT_EVERY == 0:
                         conn.commit()
                 seen.add(key)

@@ -191,3 +191,29 @@ class CorrectionsTest(unittest.TestCase):
         self.assertEqual((corrected.destination, corrected.percent), (os.path.join(docs, "Recipes"), 100))
         self.assertEqual(similar.destination, os.path.join(docs, "Recipes"))
         self.assertTrue(any("Tomato chutney.docx" in r.text for r in similar.reasons))
+
+
+class SpeedTest(unittest.TestCase):
+    """Planning grows roughly in step with the number of files, not with its square."""
+
+    def test_four_thousand_files(self):
+        from sortzen.repositories.file_index import FileIndex
+        from sortzen.scanning.scanner import Scanner
+        from tests.fixtures.make_test_folders import build
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            records, sources, destinations = [], [], []
+            scanner = Scanner(FileIndex(root / "i.db"), protected=[])
+            for seed in range(10):
+                build(root / f"set{seed}", seed=seed)
+                records += scanner.scan(root / f"set{seed}" / "Downloads", "source", recursive=True).files
+                records += scanner.scan(root / f"set{seed}" / "Sorted", "destination", recursive=True).files
+                sources.append(Source(str(root / f"set{seed}" / "Downloads"), SORT_OUT))
+                destinations.append(str(root / f"set{seed}" / "Sorted"))
+            start = time.perf_counter()
+            plan = Planner(records, sources, destinations).plan()
+            seconds = time.perf_counter() - start
+        self.assertGreater(len(records), 4000)
+        self.assertGreater(len(plan.files), 2500)
+        self.assertLess(seconds, 30)

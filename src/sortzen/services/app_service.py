@@ -14,9 +14,16 @@ from ..engine.plan import Plan
 from ..engine.planner import SORT_OUT, TIDY
 from ..scanning.scanner import Scanner
 from ..tasks import JobRunner, Status
+from ..tasks.gentle import gentle
 from . import plan_view
 
 AUTONOMY_DEFAULT = 90
+DEFAULTS = {                    # settings with on/off values, and their defaults
+    "gentle": False,            # "Be gentle with my computer": lowest priority, short rests
+    "read_google_drive": False,  # read file contents on Google Drive (may download them)
+    "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
+}
+GENTLE_PAUSE = 0.005
 MODES = (SORT_OUT, TIDY)
 WINDOWS_FOLDERS = {      # name -> Windows known-folder id (found through Windows, so OneDrive moves are followed)
     "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
@@ -162,6 +169,15 @@ class AppService:
         found = [windows_folder(n) for n in ("Documents", "Pictures", "Music", "Videos")]
         return [p for p in found if os.path.isdir(p) and path_key(p) not in added]
 
+    # ---------------------------------------------------------------- on/off settings
+    def option(self, name: str) -> bool:
+        return bool(self.settings.get(name, DEFAULTS[name]))
+
+    def set_option(self, name: str, on: bool) -> None:
+        if name not in DEFAULTS:
+            raise KeyError(name)
+        self.settings.set(name, bool(on))
+
     # ---------------------------------------------------------------- autonomy, answers, corrections
     def autonomy(self) -> int:
         try:
@@ -217,7 +233,13 @@ class AppService:
     # ---------------------------------------------------------------- the plan
     def make_plan(self, emit=None, token=None) -> Plan | None:
         """Scan every added folder (remembered results make repeat scans quick) and plan. Moves nothing."""
+        with gentle(self.option("gentle")):
+            return self._make_plan(emit, token)
+
+    def _make_plan(self, emit=None, token=None) -> Plan | None:
         emit = emit or (lambda event: None)
+        self.scanner.read_google_drive = self.option("read_google_drive")
+        self.scanner.pause = GENTLE_PAUSE if self.option("gentle") else 0.0
         sources, destinations = self.source_folders(), _outermost(self.destination_folders())
         if not sources:
             raise FolderError("Add a folder to sort first.")

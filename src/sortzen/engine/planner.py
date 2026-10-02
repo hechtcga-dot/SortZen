@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from functools import lru_cache
 from dataclasses import dataclass
 
 from ..repositories.file_index import path_key
@@ -47,27 +48,61 @@ class Source:
     mode: str = SORT_OUT
 
 
+@lru_cache(maxsize=500_000)
 def _inside(path: str, folder: str) -> bool:
     key, root = path_key(path), path_key(folder)
     return key == root or key.startswith(root.rstrip(os.sep) + os.sep)
 
 
 class _Index:
-    """Finds the most similar sorted files to a file, by shared clues."""
+    """Finds the most similar sorted files to a file.
+
+    Files are first found through their distinctive clues (words and details that few files
+    share); the full similarity is then worked out for those files only. Clues that most
+    files share, such as "it's a PDF", decide nothing on their own and are not searched on,
+    unless a file has nothing more distinctive.
+    """
+
+    COMMON_SHARE = 0.01         # a clue in more than this share of files is not searched on
+    MIN_FOUND = 30
+    MOST_FOUND = 200
 
     def __init__(self, vectors: list[dict[str, float]]):
-        self.postings: dict[str, list[tuple[int, float]]] = defaultdict(list)
+        self.vectors = vectors
+        self.postings: dict[str, list[int]] = defaultdict(list)
         for pos, vector in enumerate(vectors):
-            for key, value in vector.items():
-                self.postings[key].append((pos, value))
+            for key in vector:
+                self.postings[key].append(pos)
+        self.common = max(50, int(self.COMMON_SHARE * len(vectors)))
 
     def search(self, vector: dict[str, float], exclude: int | None = None) -> list[tuple[int, float]]:
-        scores: dict[int, float] = defaultdict(float)
+        shared: dict[int, float] = defaultdict(float)
         for key, value in vector.items():
-            for pos, other in self.postings.get(key, ()):
-                scores[pos] += value * other
-        scores.pop(exclude, None)
-        return sorted(scores.items(), key=lambda kv: -kv[1])[:NEIGHBOURS]
+            posting = self.postings.get(key, ())
+            if len(posting) <= self.common:
+                for pos in posting:
+                    shared[pos] += value
+        shared.pop(exclude, None)
+        if len(shared) < self.MIN_FOUND:     # nothing distinctive: the most specific clues first
+            found = set(shared)
+            for key in sorted(vector, key=lambda k: len(self.postings.get(k, ()))):
+                for pos in self.postings.get(key, ()):
+                    if pos != exclude:
+                        found.add(pos)
+                    if len(found) >= self.MOST_FOUND:
+                        break
+                if len(found) >= self.MOST_FOUND:
+                    break
+        else:       # the files sharing the most distinctive weight are worked out in full
+            found = sorted(shared, key=shared.__getitem__, reverse=True)[:self.MOST_FOUND]
+        scores = []
+        for pos in found:
+            other = self.vectors[pos]
+            sim = sum(value * other[key] for key, value in vector.items() if key in other)
+            if sim > 0:
+                scores.append((pos, sim))
+        scores.sort(key=lambda kv: -kv[1])
+        return scores[:NEIGHBOURS]
 
 
 class Planner:
@@ -81,10 +116,18 @@ class Planner:
         self.answers = dict(answers or {})                       # question key -> chosen choice
         self.corrections = {path_key(k): os.path.abspath(v) for k, v in (corrections or {}).items()}
         self.excluded: list[str] = []                            # messy, undecided or moving folders
+        self._sources: dict[str, Source | None] = {}
+        self._labels: dict[str, str] = {}
 
     # ---------------------------------------------------------------- set-up
     def _source_of(self, path: str) -> Source | None:
-        return next((s for s in self.sources if _inside(path, s.root)), None)
+        folder = os.path.dirname(path)
+        if folder not in self._sources:
+            self._sources[folder] = next((s for s in self.sources if _inside(folder, s.root)), None)
+        source = self._sources[folder]
+        if source is None and path_key(path) in {path_key(s.root) for s in self.sources}:
+            return next(s for s in self.sources if path_key(s.root) == path_key(path))
+        return source
 
     def _root_of(self, folder: str) -> str:
         for root in [s.root for s in self.sources] + self.destinations:
@@ -101,7 +144,9 @@ class Planner:
         return bool(source and source.mode == TIDY and path_key(folder) != path_key(source.root))
 
     def label(self, folder: str) -> str:
-        return os.path.relpath(folder, os.path.dirname(self._root_of(folder))).replace(os.sep, "/")
+        if folder not in self._labels:
+            self._labels[folder] = os.path.relpath(folder, os.path.dirname(self._root_of(folder))).replace(os.sep, "/")
+        return self._labels[folder]
 
     # ---------------------------------------------------------------- the plan
     def plan(self) -> Plan:
@@ -139,6 +184,10 @@ class Planner:
         for i in self.examples:
             self.by_folder[self.home[i]].append(i)
         self.index = _Index([self.clues[i].vector for i in self.examples])
+        self.folders_named: dict[str, list[str]] = defaultdict(list)
+        for folder in self.by_folder:
+            for w in set(words(os.path.basename(folder))):
+                self.folders_named[w].append(folder)
         # First pass: sorted files that look misplaced count less as examples for their folder.
         self.weight = {i: 1.0 for i in self.examples}
         self.out_of_place: set[int] = set()
@@ -233,14 +282,13 @@ class Planner:
         return suggestion
 
     def _name_matches(self, clues: Clues) -> dict[str, list[str]]:
-        mine = set(clues.name_words) | set(clues.content_words)
-        matches = {}
-        for folder in self.by_folder:
-            folder_words = set(words(os.path.basename(folder)))
-            shared = sorted(w for w in folder_words & mine if self.idf.get(f"w:{w}", 0) > 2)
-            if shared:
-                matches[folder] = shared
-        return matches
+        """Folders whose own name shares a rare word with the file's name or contents."""
+        matches: dict[str, list[str]] = defaultdict(list)
+        for w in set(clues.name_words) | set(clues.content_words):
+            if self.idf.get(f"w:{w}", 0) > 2:
+                for folder in self.folders_named.get(w, ()):
+                    matches[folder].append(w)
+        return {f: sorted(m) for f, m in matches.items()}
 
     # ---------------------------------------------------------------- reasons
     def _reasons(self, i, best, close, name_match, clash, coverage, runner_up) -> list[Reason]:

@@ -94,6 +94,14 @@ class FoldersTest(unittest.TestCase):
         with self.assertRaises(FolderError):
             self.service.add_destination(str(self.documents))
 
+    def test_options(self):
+        self.assertFalse(self.service.option("gentle"))
+        self.assertTrue(self.service.option("stop_reading_learned"))
+        self.service.set_option("gentle", True)
+        self.assertTrue(AppService(self.service.paths, self.service.keys).option("gentle"))
+        with self.assertRaises(KeyError):
+            self.service.set_option("nonsense", True)
+
     def test_autonomy_answers_corrections(self):
         self.assertEqual(self.service.autonomy(), 90)
         self.service.set_autonomy(120)

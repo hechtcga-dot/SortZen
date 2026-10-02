@@ -20,7 +20,7 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)     # damaged PDFs are record
 
 MAX_TEXT_CHARS = 20_000
 MAX_CONTENT_BYTES = 50 * 1024 * 1024     # bigger files are sorted by name and details only
-MAX_PDF_PAGES = 10
+MAX_PDF_PAGES = 2
 MAX_TEXT_FILE_BYTES = 256 * 1024
 MAX_ARCHIVE_NAMES = 50
 

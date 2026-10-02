@@ -273,3 +273,24 @@ class ScannerTest(unittest.TestCase):
         elapsed = time.perf_counter() - start
         self.assertEqual(summary.remembered, 1000)
         self.assertLess(elapsed, 5.0)
+
+
+class GoogleDriveTest(unittest.TestCase):
+    def test_streamed_drive_files_are_not_opened(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / "My Drive"
+            folder.mkdir()
+            (folder / "Budget.xlsx").write_bytes(b"would download")
+            scanner = Scanner(FileIndex(Path(d) / "i.db"), protected=[])
+            with mock.patch.object(scanner_module, "on_google_drive", return_value=True), \
+                    mock.patch.object(scanner_module, "read_contents", side_effect=AssertionError("opened")):
+                record = scanner.scan(folder, "source", recursive=False).files[0]
+            self.assertTrue(record.cloud_only)
+            scanner.read_google_drive = True
+            with mock.patch.object(scanner_module, "on_google_drive", return_value=True):
+                record = scanner.scan(folder, "source", recursive=False).files[0]
+            self.assertFalse(record.cloud_only)
+
+    def test_not_google_drive_elsewhere(self):
+        if os.name != "nt":
+            self.assertFalse(scanner_module.on_google_drive(tempfile.gettempdir()))
