@@ -219,7 +219,8 @@ class Planner:
         current = self.folder[i]
         corrected = self.corrections.get(path_key(record.path))
         if corrected and outside is None:
-            return Suggestion(record.path, current, corrected, 100, [Reason(True, "You chose this folder")])
+            return Suggestion(record.path, current, corrected, 100, [Reason(True, "You chose this folder")],
+                              new_folder=not os.path.isdir(corrected))
         if clues.default_name and clues.no_contents:
             return Suggestion(record.path, current, None, 0, [Reason(False, "Default name and no readable contents")],
                               note="looks empty")
