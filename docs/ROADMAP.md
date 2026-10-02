@@ -8,7 +8,7 @@ step.
 | # | Phase | Status |
 |---|-------|--------|
 | 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | **Done** |
-| 1 | Synthetic test folders; scanner and file readers with remembered results | To do |
+| 1 | Synthetic test folders; scanner and file readers with remembered results | **Done** |
 | 2 | Sorting engine: rules, learning from sorted folders, confidence and reason | To do |
 | 3 | AI step: service drop-down, key storage, privacy settings, two passes, batches, cost estimate and cap | To do |
 | 4 | Mover: move plan, name clashes, cross-drive copy and check, run log, Undo | To do |
@@ -22,7 +22,7 @@ step.
 3. Reading scanned PDFs (OCR), finding duplicates, sorting on a schedule.
 
 ## Phase 1: test folders
-A generator script builds a test setup from made-up content only:
+`tests/fixtures/make_test_folders.py` builds a test setup from made-up content only:
 - a "Downloads" folder of about 300 mixed files: installers, zip files, photos with camera
   details, screenshots, music, videos, and Word, PDF and Excel files for an invented
   employer ("Example Co.") alongside personal files (a resume mentioning Example Co.,

@@ -59,6 +59,8 @@ def self_test(report_path: str) -> int:
         checks["fonts"] = all(f in families for f in ("Fraunces", "IBM Plex Sans", "IBM Plex Mono"))
         from google import genai
         import keyring  # noqa: F401
+        import pypdf  # noqa: F401
+        from PIL import Image  # noqa: F401
 
         genai.Client(api_key="self-test")          # the AI library loads (no network call)
         checks["libraries"] = True

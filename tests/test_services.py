@@ -53,3 +53,30 @@ class AppServiceTest(unittest.TestCase):
         self.service.set_ai_service("claude")
         with self.assertRaises(ValueError):
             self.service.provider()
+
+
+class ScanFoldersTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        root = Path(self.dir.name)
+        self.service = AppService(AppPaths(root / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.downloads = root / "Documents" / "Downloads"
+        self.documents = root / "Documents"
+        (self.documents / "Word").mkdir(parents=True)
+        self.downloads.mkdir()
+        (self.downloads / "new.txt").write_text("new")
+        (self.documents / "Word" / "old.txt").write_text("old")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_sources_and_destinations(self):
+        summaries = self.service.scan_folders([self.downloads], [self.documents, self.documents / "Word"])
+        self.assertEqual([(s.role, [f.name for f in s.files]) for s in summaries],
+                         [("source", ["new.txt"]), ("destination", ["old.txt"])])
+
+    def test_outermost_destination_only(self):
+        from sortzen.services.app_service import _outermost
+        a, b, c = self.documents, self.documents / "Word", Path(self.dir.name) / "Documents2"
+        self.assertEqual(_outermost([b, a, c]), [a, c])

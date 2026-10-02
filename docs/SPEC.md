@@ -49,20 +49,33 @@ decision; when the code and this file disagree, this file wins until it is chang
 - First run offers the standard Windows folders as a starting template, located through
   Windows so that folders moved to OneDrive are found correctly.
 - Folders can be added or removed at any time. Nothing outside them is read.
-- Always skipped: hidden and system files, files in use, Windows and program folders.
-  Shortcuts are sorted as files and never followed into other folders.
+- Source folders are sorted one level deep: subfolders inside a source folder (e.g. an
+  unzipped download) are counted and left where they are.
+- A destination folder inside another destination is scanned once, as part of the outer
+  one; a source folder inside a destination is never treated as a destination.
+- Always skipped, and counted in the scan summary: hidden and system files, Windows
+  housekeeping files (desktop.ini, Thumbs.db), Office lock files (~$…), downloads still in
+  progress (.crdownload, .part …), files in use, the Recycle Bin, and Windows and program
+  folders. Shortcuts are sorted as files and never followed into other folders.
 - **OneDrive cloud-only files** are sorted by name and details only, because reading their
   contents would download them. A setting turns this off.
 
 ## 6. Reading files (on the PC, no AI)
 - Details: name, type, size, dates, current folder.
-- Contents: Word (.docx), PDF (typed text), Excel (.xlsx), PowerPoint (.pptx), text and
-  CSV, photo details (camera, date taken), the names of files inside .zip archives, and
-  installer details (.exe, .msi).
+- Contents: Word (.docx: text, title, author), PDF (typed text from the first 10 pages,
+  title, author), Excel (.xlsx), PowerPoint (.pptx), text and CSV (any common encoding),
+  photo details (camera, date taken, size), the names of files inside .zip archives, and
+  program details (.exe: product and company, read through Windows).
+- PDFs with no typed text are marked as scans (reading them needs OCR, after the alpha).
+- Text is kept up to 20,000 characters per file. Files over 50 MB (other than photos,
+  archives and programs) are sorted by name and details only.
+- A damaged file is still listed and sorted by name and details, with the reason shown.
 - Results are remembered per file (path, size, date changed), so a repeat scan of an
-  unchanged folder takes seconds.
-- Each file gets a content fingerprint (a hash). Learning is tied to the fingerprint, not
-  the name, so a file keeps its history when it is moved or renamed.
+  unchanged folder takes seconds. Stop Safely keeps everything scanned so far.
+- Each file gets a content fingerprint: small files are hashed whole; large files from
+  their size plus samples at the start, middle and end, so big videos are as quick as
+  small files. Learning is tied to the fingerprint, not the name, so a file keeps its
+  history when it is moved or renamed.
 
 ## 7. How SortZen decides
 For each file, in this order, stopping at the first confident answer:

@@ -1,12 +1,16 @@
-"""Program-wide service: settings, AI service choice, API keys and background jobs."""
+"""Program-wide service: settings, AI service choice, API keys, scanning and background jobs."""
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
 from ..config import AppPaths, default_paths
 from ..repositories.api_keys import ApiKeyStore
+from ..repositories.file_index import FileIndex, path_key
 from ..repositories.settings import SettingsRepository
+from ..scanning.records import ScanSummary
+from ..scanning.scanner import Scanner
 from ..tasks import JobRunner
 
 
@@ -16,6 +20,8 @@ class AppService:
         self.settings = SettingsRepository(self.paths.settings_path)
         self.keys = keys or ApiKeyStore()
         self.jobs = JobRunner()
+        self.index = FileIndex(self.paths.database_path)
+        self.scanner = Scanner(self.index)
 
     # ---------------------------------------------------------------- AI service
     def ai_service(self) -> str:
@@ -65,9 +71,37 @@ class AppService:
         service = self.ai_service()
         return make_provider(service, self.api_key(service), self.ollama_url())
 
+    # ---------------------------------------------------------------- scanning
+    def scan_folders(self, sources, destinations, emit=None, token=None) -> list[ScanSummary]:
+        """Scan source folders (their own files) and destination folders (with subfolders).
+
+        A destination inside another destination is scanned once, as part of the outer one,
+        and source folders inside a destination are left out of the destination's scan.
+        """
+        summaries = []
+        for root in sources:
+            summaries.append(self.scanner.scan(root, "source", recursive=False, emit=emit, token=token))
+            if summaries[-1].cancelled:
+                return summaries
+        for root in _outermost(destinations):
+            summaries.append(self.scanner.scan(root, "destination", recursive=True, exclude=sources,
+                                               emit=emit, token=token))
+            if summaries[-1].cancelled:
+                return summaries
+        return summaries
+
     # ---------------------------------------------------------------- background jobs
     def run_job(self, name: str, work: Callable, on_event: Callable):
         return self.jobs.start(name, work, on_event)
 
     def stop_job(self) -> None:
         self.jobs.cancel()
+
+
+def _outermost(folders) -> list:
+    keys = {path_key(f): f for f in folders}
+
+    def inside(key, other):
+        return key.startswith(other.rstrip(os.sep) + os.sep)
+
+    return [f for k, f in keys.items() if not any(inside(k, other) for other in keys if other != k)]

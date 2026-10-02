@@ -16,11 +16,16 @@ src/sortzen/
   config.py            constants, per-user storage paths (SORTZEN_DATA_DIR override)
   ai/                  provider interface, Gemini and web adapters, service list, JSON parsing
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
-  repositories/        settings.json, API keys (Windows Credential Manager via keyring)
+  scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, text, photos, zip,
+                       programs), fingerprints, scanner (skip rules, remembered results)
+  repositories/        settings.json, API keys (Windows Credential Manager via keyring),
+                       file_index.py (SQLite: remembered scan results)
   services/            AppService: the only API the window uses
   ui/                  PySide6 window, theme, fonts (OFL), icon
 packaging/launcher.py  runs the program from source; packaged entry point
 tests/                 unittest suites (window tests run offscreen)
+  fixtures/            make_test_folders.py: made-up Downloads (300 files), sorted folders,
+                       answer key
 .github/workflows/     tests.yml: tests and self-test on Windows
 ```
 
@@ -30,6 +35,7 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .           # run tests (must stay green)
 python packaging/launcher.py                        # run the program
+python tests/fixtures/make_test_folders.py OUT      # build the test folders in OUT
 python packaging/launcher.py --self-test=out.json   # start, check bundled pieces, exit
 ```
 `tests/test_wording.py` enforces the writing rules below.
@@ -48,7 +54,8 @@ python packaging/launcher.py --self-test=out.json   # start, check bundled piece
 ## Tech stack
 Python 3.12+, Windows 10/11; PySide6; AI provider interface (Gemini, Claude, ChatGPT,
 OpenRouter, Ollama); SQLite for remembered results and learning; keyring (Windows
-Credential Manager) for API keys; PyInstaller and Inno Setup; unittest.
+Credential Manager) for API keys; Pillow (photo details), pypdf (PDF text); PyInstaller and
+Inno Setup; unittest.
 
 ## Architecture rules
 - UI → services only. Services return data or typed errors; no dialogs in business logic.
