@@ -1,7 +1,7 @@
 """Asking the AI service about unsure files: what will be sent, what it may cost, then ask."""
 from __future__ import annotations
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QMessageBox, QVBoxLayout
 
 from .ai_widgets import OFF, AIServiceBox, PrivacyModeBox, hint
 
@@ -76,6 +76,11 @@ class AskAIDialog(QDialog):
         self.ask.setToolTip("Paste the API key first" if needs_key else "")
 
     def accept(self) -> None:
+        """Check the service, model and key with a tiny request first; on a problem, say so and stay open."""
+        if not self.ai_box.check():
+            QMessageBox.warning(self, "This AI service can't be used yet", self.ai_box.problem +
+                                "\n\nNothing was sent about your files.")
+            return
         self.ai_box.apply()
         self.privacy.apply()
         super().accept()

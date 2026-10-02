@@ -611,6 +611,10 @@ class MainWindow(QMainWindow):
         self.run_job("ai", lambda emit, token: self.service.ask_ai(plan, emit, token))
 
     def _asked(self, run) -> None:
+        if run.failed and not (run.asked or run.second_pass):
+            QMessageBox.warning(self, "The AI service couldn't answer",
+                                f"{run.stopped}\n\nNothing in the plan changed.")
+            return
         if not run.asked:
             self.statusBar().showMessage("There was nothing new to ask about.", 6000)
             return

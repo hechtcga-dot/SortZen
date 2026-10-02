@@ -9,9 +9,9 @@ Every move can be undone.
 
 Installing
 ----------
-1. Run SortZen-Setup-0.2.0.exe. No administrator rights are needed; SortZen installs for
+1. Run SortZen-Setup-0.2.1.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over 0.1
-   keeps your settings, answers and choices.
+   or 0.2 keeps your settings, answers and choices.
 2. SortZen isn't code-signed yet, so Windows may show "Windows protected your PC".
    Click "More info", then "Run anyway". This happens once per download.
 
@@ -68,6 +68,12 @@ Your privacy
 
 What's new in 0.2
 -----------------
+Fixes in 0.2.1:
+- The AI model is picked from a drop-down list (or typed); "Get the list from ..." shows
+  the models the service offers, and "Check" tries the service, model and key.
+- A wrong model name, a refused key or an unreachable service is explained in a message,
+  and the "Ask AI" window stays open to fix it, instead of closing.
+
 - Moving: ticked files and folders move after a confirmation window, never overwriting
   anything. Every move is logged and can be undone, even later (Edit > Undo a move...).
 - Copies tab: exact copies, the copy to keep and why, and a dated "Queued for deletion"

@@ -227,6 +227,13 @@ SortZen learns only from choices made inside SortZen. It does not watch Explorer
   (runs on the PC) and Off.
 - API keys are stored in Windows Credential Manager, encrypted for the Windows user, and
   never in the program folder, the settings file or the repository.
+- The model is chosen from a drop-down or typed by name. "Get the list from …" asks the
+  service which models it offers this key and remembers the list; a typed name that isn't
+  on it is pointed out. "Check" sends a tiny test request.
+- Pressing "Ask" first checks the service, model and key with a tiny request. When that
+  fails, the window stays open and says what is wrong in plain words (the service can't
+  find the model, didn't accept the key, can't be reached, or is busy) and nothing about
+  the files is sent. An error later in a run is shown the same way.
 - The plan is always made on the PC first. "Ask AI about unsure files…" (Plan tab and Plan
   menu) then offers to ask the AI service about the files SortZen couldn't settle: files
   from the folders being sorted that wait in Review. Files users placed themselves, files

@@ -220,7 +220,8 @@ class MainWindowTest(unittest.TestCase):
         dialog.privacy.buttons["beginning"].setChecked(True)
         self.assertIn("beginning of the file", dialog.cost.text())
         self.assertEqual(self.service.ai_value("ai_privacy"), "name")     # nothing saved before Ask
-        dialog.accept()
+        with mock.patch.object(type(self.service), "check_ai", lambda *a, **k: None):
+            dialog.accept()
         self.assertTrue(self.service.has_api_key("gemini"))
         self.assertEqual(self.service.ai_value("ai_privacy"), "beginning")
         first = self.window.plan
@@ -273,6 +274,50 @@ class MainWindowTest(unittest.TestCase):
             self.assertEqual(main(["SortZen.exe", "--remove-data"]), 0)
         self.assertFalse(storage.exists())
         self.assertIn("gemini", cleared)
+
+    def test_wrong_model_is_explained_and_nothing_closes(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.ai.provider import AIProvider
+        from sortzen.ai.sorter import AIRun
+        from sortzen.ui.ai_dialog import AskAIDialog
+
+        class NoSuchModel(AIProvider):
+            def generate_json(self, model, contents):
+                raise RuntimeError(f"404 NOT_FOUND. models/{model} is not found for API version v1beta")
+
+            def list_models(self):
+                return ["gemini-lite", "gemini-pro"]
+
+        root = shared_test_folders()
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        dialog = AskAIDialog(self.window, self.service, self.window.plan)
+        dialog.show()
+        box = dialog.ai_box
+        box.key.setText("test-key")
+        with mock.patch("sortzen.services.app_service.make_provider", lambda *a: NoSuchModel()):
+            box.fetch_models()
+            self.assertEqual([box.model.itemData(i) for i in range(box.model.count())][-2:],
+                             ["gemini-lite", "gemini-pro"])
+            box.model.setEditText("gemini-prooo")
+            self.assertIn("isn't in Gemini's list", box.note.text())
+            with mock.patch.object(QMessageBox, "warning") as warned:
+                dialog.accept()
+        self.assertIn("can't find the model “gemini-prooo”", warned.call_args.args[2])
+        self.assertTrue(dialog.isVisible())                          # stays open to fix the name
+        self.assertFalse(self.service.has_api_key("gemini"))         # nothing saved
+        box.model.setCurrentIndex(box.model.findData("gemini-lite"))
+        self.assertEqual(box.model_name(), "gemini-lite")
+        dialog.close()
+        failed = AIRun(stopped="Gemini can't find the model “x”.", failed=True)
+        with mock.patch.object(QMessageBox, "warning") as warned:
+            self.window._asked(failed)
+        self.assertIn("can't find the model", warned.call_args.args[2])
 
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult

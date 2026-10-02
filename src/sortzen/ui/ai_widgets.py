@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QPlainTextEdit, QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..ai import privacy
+from ..ai.errors import AIProblem
 from ..ai.services import SERVICES
+from . import theme
 
 OFF = "off"
 WHAT_LEAVES = ("What leaves this PC: the names of the files SortZen couldn't place, where they are now, and the "
@@ -46,8 +48,6 @@ class AIServiceBox(QWidget):
         current = service.ai_service() if service.ai_value("ai_enabled") else OFF
         self.choice.setCurrentIndex(self.choice.findData(current))
         form.addRow("AI service", self.choice)
-        self.model = QLineEdit()
-        form.addRow("Model", self.model)
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key_row = QWidget()
@@ -63,7 +63,28 @@ class AIServiceBox(QWidget):
         form.addRow("", self.how_to)
         form.addRow("", hint("Keys are kept in Windows Credential Manager, encrypted for your Windows account, "
                              "never in SortZen's files."))
+        self.model = QComboBox()
+        self.model.setEditable(True)
+        self.model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model.setToolTip("Pick a model from the list, or type its name")
+        self.model.setMinimumContentsLength(24)
+        model_row = QWidget()
+        model_line = QHBoxLayout(model_row)
+        model_line.setContentsMargins(0, 0, 0, 0)
+        model_line.addWidget(self.model, 1)
+        self.fetch = QPushButton("Get the list")
+        self.fetch.clicked.connect(self.fetch_models)
+        model_line.addWidget(self.fetch)
+        self.check_button = QPushButton("Check")
+        self.check_button.setToolTip("Send a tiny test request to make sure the service, model and key work")
+        self.check_button.clicked.connect(self.check)
+        model_line.addWidget(self.check_button)
+        form.addRow("Model", model_row)
+        self.note = hint("")
+        form.addRow("", self.note)
+        self.problem = ""
         self.choice.currentIndexChanged.connect(self._show)
+        self.model.editTextChanged.connect(self._model_typed)
         self._show()
 
     def selected(self) -> str:
@@ -72,19 +93,19 @@ class AIServiceBox(QWidget):
     def _show(self) -> None:
         key = self.selected()
         on = key != OFF
-        self.model.setEnabled(on)
+        for widget in (self.model, self.fetch, self.check_button):
+            widget.setEnabled(on)
+        self._say("")
         if not on:
             self.model.clear()
-            self.model.setPlaceholderText("")
             self.key.setEnabled(False)
             self.forget.setEnabled(False)
             self.how_to.setText("SortZen sorts everything by itself and asks you about the rest.")
             self.changed.emit()
             return
         info = SERVICES[key]
-        saved = self.service.model(key)
-        self.model.setText("" if saved == info.default_model else saved)
-        self.model.setPlaceholderText(info.default_model)
+        self._fill_models(key, self.service.model(key))
+        self.fetch.setText(f"Get the list from {info.name}")
         self.key.setEnabled(info.needs_key)
         self.key.clear()
         has = info.needs_key and self.service.has_api_key(key)
@@ -93,6 +114,84 @@ class AIServiceBox(QWidget):
         self.forget.setEnabled(has)
         self.how_to.setText(info.how_to)
         self.changed.emit()
+
+    def _fill_models(self, key: str, current: str) -> None:
+        self.model.blockSignals(True)
+        self.model.clear()
+        default = SERVICES[key].default_model
+        for name in self.service.model_choices(key):
+            self.model.addItem(f"{name}  (usual)" if name == default else name, name)
+        self.model.setEditText(current)
+        self.model.blockSignals(False)
+
+    def model_name(self) -> str:
+        """The model chosen or typed; the service's usual model when the box is empty."""
+        text = self.model.currentText().strip()
+        index = self.model.findText(text)
+        if index >= 0 and self.model.itemData(index):
+            text = self.model.itemData(index)
+        key = self.selected()
+        return text or (SERVICES[key].default_model if key != OFF else "")
+
+    def _say(self, text: str, problem: bool = False) -> None:
+        self.note.setText(text)
+        self.note.setStyleSheet(f"color: {theme.WARN_TEXT};" if problem else "")
+
+    def _model_typed(self, _text: str) -> None:
+        key = self.selected()
+        if key == OFF:
+            return
+        known = self.service.model_choices(key)
+        name = self.model_name()
+        if len(known) > 2 and name not in known:
+            self._say(f"“{name}” isn't in {SERVICES[key].name}'s list. Check the spelling, or click "
+                      "“Check” to try it.", problem=True)
+        else:
+            self._say("")
+        self.changed.emit()
+
+    def _busy(self, text: str):
+        self._say(text)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+    def fetch_models(self) -> None:
+        key = self.selected()
+        if key == OFF:
+            return
+        name = SERVICES[key].name
+        current = self.model_name()
+        self._busy(f"Getting the list from {name}…")
+        try:
+            models = self.service.fetch_models(key, self.key.text())
+        except AIProblem as exc:
+            self._say(str(exc), problem=True)
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._fill_models(key, current)
+        self._say(f"{name} offers {len(models):,} models. Pick one from the list, or type a name.")
+        if self.isVisible():
+            self.model.showPopup()
+
+    def check(self) -> bool:
+        """A tiny test request with what's on screen. Shows the result; True when it worked."""
+        key = self.selected()
+        if key == OFF:
+            return False
+        name, model = SERVICES[key].name, self.model_name()
+        self._busy(f"Checking {name} with “{model}”…")
+        try:
+            self.service.check_ai(key, model, self.key.text())
+        except AIProblem as exc:
+            self.problem = str(exc)
+            self._say(self.problem, problem=True)
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.problem = ""
+        self._say(f"✓ {name} answered using “{model}”.")
+        return True
 
     def _forget(self) -> None:
         self.service.clear_api_key(self.selected())
@@ -104,7 +203,7 @@ class AIServiceBox(QWidget):
         if key == OFF:
             return
         self.service.set_ai_service(key)
-        self.service.set_model(self.model.text(), key)
+        self.service.set_model(self.model_name(), key)
         if self.key.text().strip():
             self.service.save_api_key(self.key.text().strip(), key)
             self.key.clear()
