@@ -94,6 +94,8 @@ Inno Setup; unittest.
 - The interface follows SPEC §4.
 
 ## Builds and releases
+- Builds are made only when asked. Changes are committed and pushed; the version bump,
+  README and the Windows build wait until a build is asked for.
 - A build is published by pushing a tag `vX.Y.Z` (or running "Windows build" by hand with
   `release_tag`); the workflow puts `SortZen-Setup-X.Y.Z.exe` and README.txt on the
   repository's Releases page as a pre-release.
