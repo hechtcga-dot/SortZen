@@ -187,8 +187,6 @@ SortZen learns only from choices made inside SortZen. It does not watch Explorer
   example and weighted towards similar files from then on. One correction nudges;
   repeated corrections outweigh other signals.
 - **Accepted suggestions** also count, with a lighter weight.
-- **Rule suggestions**: after a few matching corrections, SortZen offers a rule, e.g.
-  "Resumes always go to Personal. Make this a rule?"
 - The AI receives the closest past choices with each batch, so it follows the same
   pattern.
 - Learned preferences can be viewed and cleared.
@@ -214,7 +212,6 @@ Explained in plain language at first setup (what leaves the PC and when), and al
 available in Settings:
 - **How much of a file the AI may see**:
   - Name only: most private, least accurate.
-  - A random sample of words from across the file: reveals little of any one passage.
   - The beginning of the file, up to about 1,000 words: most accurate.
 - **Always name only**: folders and words listed in Settings (e.g. "tax", "bank",
   "passport").
@@ -237,6 +234,8 @@ available in Settings:
   delete the original.
 - Every run is logged. **Undo** puts back the whole run, chosen files, or a whole folder.
 - Subfolders emptied by "sort the inside" are deleted; Undo recreates them.
+- The plan can be exported to Excel: every file and folder with its destination,
+  percentage and reasons.
 
 ## 12. Renaming
 - A separate button and screen, offered after sorting is done, and skippable.
@@ -249,6 +248,12 @@ available in Settings:
   install ("More info → Run anyway").
 - An in-app updater installs new versions without that warning appearing again.
 
-## 14. Not in the alpha
-Renaming (§12), the in-app updater (§13), reading scanned PDFs (OCR), removing duplicates
-(the alpha groups and flags copies but keeps them all), sorting on a schedule.
+## 14. Alpha versions
+- **0.1, plan only**: scanning, the overview, questions and the full plan with every
+  percentage and its reasons. Nothing is moved; corrections are still learned.
+- **0.2**: files and folders move after the plan is confirmed, with Undo.
+- Not in the alpha: removing duplicates (copies are grouped and flagged but all kept),
+  renaming (§12), the in-app updater (§13), rule suggestions (SortZen offering "Make this
+  a rule?" after repeated corrections), a privacy option that sends a random sample of
+  words, new folders more than one level deep (questions can still choose deeper ones),
+  reading scanned PDFs (OCR), sorting on a schedule.
