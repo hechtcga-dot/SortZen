@@ -146,7 +146,7 @@ class ScannerTest(unittest.TestCase):
         self.assertGreaterEqual(len(google), 10)
         forms = next(r for r in google if r.name == "Blank Quiz.gform")
         self.assertEqual((forms.kind, forms.details, forms.text), ("form", {"google": "Google Forms"}, ""))
-        sheet = next(r for r in google if r.name == "Seed_Catalog_Final.gsheet")
+        sheet = next(r for r in google if r.name == "Overview of Human Digestive System.gsheet")
         self.assertEqual(sheet.kind, "spreadsheet")
         self.assertFalse(any("@" in str(r.details) + r.text for r in google))       # the account email is not kept
 

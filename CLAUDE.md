@@ -24,8 +24,8 @@ src/sortzen/
   ui/                  PySide6 window, theme, fonts (OFL), icon
 packaging/launcher.py  runs the program from source; packaged entry point
 tests/                 unittest suites (window tests run offscreen)
-  fixtures/            make_test_folders.py: made-up Downloads and My Drive (about 370 files
-                       and 29 subfolders to sort), sorted folders, answer key;
+  fixtures/            make_test_folders.py: made-up Downloads and My Drive (about 440 files
+                       and 37 subfolders to sort, topics), sorted folders, answer key;
                        shared_test_folders() builds them once per test run
 .github/workflows/     tests.yml: tests and self-test on Windows
 ```

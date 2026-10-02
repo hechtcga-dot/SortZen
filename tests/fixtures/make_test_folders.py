@@ -16,9 +16,13 @@ Layout of OUTPUT_FOLDER:
     answer_key.json
 
 answer_key.json:
-    "files":   {"path of a file to sort": "destination folder" or null (belongs in Review)}
+    "files":   {"path of a file to sort": expected}, expected is the destination folder (the
+               file's own folder when it should stay), null (belongs in Review) or
+               "together: <topic>"
     "folders": {"path of a subfolder": outcome}, outcome is "sort inside", "stays",
-               "review" or "keep together: <destination folder>"
+               "review", "keep together: <destination folder>" or "together: <topic>"
+    "topics":  {"topic": [paths of files and folders]}: each topic must end up in one
+               folder, or SortZen must ask about it
 Paths use "/" and are relative to OUTPUT_FOLDER.
 
 Office files hold only what SortZen reads (text and properties); Office may not open the
@@ -237,6 +241,11 @@ class Builder:
         self.rng = random.Random(seed)
         self.files: dict[str, str | None] = {}
         self.folders: dict[str, str] = {}
+        self.topics: dict[str, list[str]] = {}
+        self.written: list[str] = []
+
+    def together(self, topic: str) -> str:
+        return f"together: {topic}"
 
     # one file ----------------------------------------------------------------
     def _target(self, rel: str) -> Path:
@@ -255,8 +264,11 @@ class Builder:
         stamp = calendar.timegm((y, m, d, self.rng.randint(7, 18), self.rng.randint(0, 59), 0))
         os.utime(path, (stamp, stamp))
         rel = path.relative_to(self.root).as_posix()
+        self.written.append(rel)
         if expect is not EXAMPLE:
             self.files[rel] = expect
+            if isinstance(expect, str) and expect.startswith("together: "):
+                self.topics.setdefault(expect.split(": ", 1)[1], []).append(rel)
         return rel
 
     def doc(self, rel, text, title="", author=ME, expect=EXAMPLE, when=None):
@@ -330,6 +342,8 @@ class Builder:
     def outcome(self, rel, outcome):
         (self.root / rel).mkdir(parents=True, exist_ok=True)
         self.folders[rel] = outcome
+        if outcome.startswith("together: "):
+            self.topics.setdefault(outcome.split(": ", 1)[1], []).append(rel)
 
     def clock(self) -> str:
         return f"{self.rng.randint(7, 22):02d}{self.rng.randint(0, 59):02d}{self.rng.randint(0, 59):02d}"
@@ -591,6 +605,7 @@ def _my_drive(b: Builder) -> None:
         "Elmhurst Property": lambda f: [b.pdf(f"{f}/{PROPERTY_MANAGER} lease 2022.pdf",
                                               [PROPERTY_MANAGER, "Elmhurst Property", "Lease agreement"])],
         RELATIVE: lambda f: [b.pdf(f"{f}/{RELATIVE} passport renewal.pdf", ["Passport renewal", RELATIVE])],
+        "Projects": lambda f: [b.doc(f"{f}/Radio schedule notes.docx", "Radio schedule project notes")],
         "AI Prompts": lambda f: [b.google(f"{f}/Prompt - meeting summary.gdoc"), b.google(f"{f}/Prompt - budget memo.gdoc")],
         "Cheque Run Clandar": lambda f: [b.sheet(f"{f}/Cheque run calendar 2023.xlsx", [["Date", "Run"], ["Sep 8", "EFT"]])],
         "Grant Reconciliation": lambda f: [b.sheet(f"{f}/Grant rec 2023.xlsx", [["Grant", "Balance"], ["Literacy", "0"]])],
@@ -621,9 +636,10 @@ def _my_drive(b: Builder) -> None:
     b.google(f"{md}/RSVP (1).gform", expect=dest["Forms"])
     b.pdf(f"{md}/AUg 2023 ADJ entries backup.pdf", [DIVISION, "Adjusting entries August 2023"], expect=None)  # 2023, no folder
     b.pdf(f"{md}/Aug 2023 TB backupo.pdf", [DIVISION, "Trial balance August 2023"], expect=None)
-    b.google(f"{md}/Garden Planner Alpha1.0.gdoc", expect=None)               # side project with no folder yet
-    b.google(f"{md}/Seed Catalog Image Batch Processing.gdoc", expect=None)
-    b.google(f"{md}/Seed_Catalog_Final.gsheet", expect=None)
+    garden = b.together("Garden Planner")                     # a program built for Owen Sample
+    b.google(f"{md}/Garden Planner Alpha1.0.gdoc", expect=garden)
+    b.google(f"{md}/Garden Planner Image Batch Processing.gdoc", expect=garden)
+    b.google(f"{md}/Garden Planner UI Recommendations & Code Fixes.gdoc", expect=garden)
     b.sheet(f"{md}/Board of Trustees Expense Sep-Feb 2025.xlsx", [["Trustee", "Mileage"]], expect=dest["Budget & Cash Flow"])
     b.sheet(f"{md}/Projected Cash Flow Dec-Aug 2023.xlsx", [["Month", "Inflow"]], expect=dest["Budget & Cash Flow"])
     b.sheet(f"{md}/Proposed GL Format - WIP.xlsx", [["Account", "Description"]], expect=None)
@@ -656,6 +672,19 @@ def _my_drive(b: Builder) -> None:
     b.picture(f"{md}/telescope.jpg", expect=personal)
     b.doc(f"{md}/Mortgage renewal offer 2026.docx", f"{BANK}\nMortgage renewal offer\n{ME}", expect=dest["mortgage docs"])
 
+    _person_folder(b, f"{md}/{RELATIVE}", garden)
+    b.outcome(f"{md}/Projects/Garden Planner files", garden)
+    b.doc(f"{md}/Projects/Garden Planner files/Garden Planner requirements.docx",
+          f"Garden Planner\nRequirements from {RELATIVE}\nPlanting calendar, seed catalog", when=(2026, 8, 30))
+    b.doc(f"{md}/Projects/Garden Planner files/Garden Planner test plan.docx", "Garden Planner\nTest plan",
+          when=(2026, 9, 1))
+
+    # Misplaced files inside organised folders.
+    b.random_file(f"{md}/Payroll backup", "statement", dest["Maplestone Bank"])
+    b.random_file(f"{md}/Forms", "applicant", dest["Staffing"])
+    b.doc(f"{md}/Staffing/Water cycle worksheet - Taylor.docx", f"Water cycle\nName: {KID}", author=KID,
+          expect=f"{personal}/Kids School")
+
     # Messy folders: their files belong in the organised folders above.
     backup = f"{md}/{ME.split()[0]}'s OneDrive backup"
     b.outcome(backup, "sort inside")
@@ -682,6 +711,33 @@ def _my_drive(b: Builder) -> None:
     b.doc(f"{restored}/Personal/Vacation request.docx", f"Vacation request\n{PREVIOUS}", expect=None)
 
 
+def _person_folder(b: Builder, f: str, garden: str) -> None:
+    """A relative's folder: their own papers stay; the program built for them is a topic."""
+    b.doc(f"{f}/Cover letter.docx", f"{RELATIVE}\nDear hiring manager,\nI am applying for the warehouse lead role.",
+          author=RELATIVE, when=(2026, 2, 18))
+    b.pdf(f"{f}/Resume - Updated.pdf", [RELATIVE, "Warehouse lead", "Forklift certified"], when=(2026, 2, 12))
+    b.doc(f"{f}/Resume - Updated.docx", f"{RELATIVE}\nWarehouse lead\nForklift certified", author=RELATIVE,
+          when=(2026, 2, 12))
+    for minor in range(7):
+        b.archive(f"{f}/GardenPlanner_1.{minor}.zip", [f"GardenPlanner_1.{minor}/main.py", "README.md"],
+                  expect=garden, when=(2026, 9, 23))
+    b.archive(f"{f}/Seed_Catalog_Agent_Alpha_1.3.zip", ["agent.py", "README.md"], expect=garden, when=(2026, 9, 22))
+    b.pdf(f"{f}/Garden Planner Admin Console _ Categories.pdf", ["Garden Planner", "Admin console", "Categories"],
+          expect=garden, when=(2026, 9, 3))
+    for stamp in ("20260922T180019Z", "20260922T175817Z", "20260922T175313Z"):
+        b.archive(f"{f}/drive-download-{stamp}-1-001.zip", ["IMG_0001.jpg", "IMG_0002.jpg"], expect=None,
+                  when=(2026, 9, 22))
+    b.picture(f"{f}/1040_2.jpg", expect=None, when=(2026, 2, 20))
+    b.picture(f"{f}/9517afef-ad23-46d6-bc8b-06d1f0605127.jfif", expect=None, when=(2026, 2, 19))
+    b.blob(f"{f}/suitcase.html", 512, expect=None, when=(2026, 2, 4))
+    b.sheet(f"{f}/New Microsoft Excel Worksheet.xlsx", [], expect=None, when=(2026, 2, 4))
+    for folder in ("GardenPlanner", "GardenPlanner-windows", "GardenPlanner-windows (1)", "GardenPlanner-windows (4)",
+                   "GardenPlanner-1.7.3", "GardenPlanner-release-1.3"):
+        b.outcome(f"{f}/{folder}", garden)
+        b.text(f"{f}/{folder}/main.py", "# Garden Planner\nprint('garden planner')\n", when=(2026, 10, 1))
+        b.text(f"{f}/{folder}/README.md", "Garden Planner\nA planting calendar app.", when=(2026, 10, 1))
+
+
 def build(output: Path, seed: int = 7) -> Path:
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -689,11 +745,18 @@ def build(output: Path, seed: int = 7) -> Path:
     _sorted_examples(b)
     _downloads(b)
     _my_drive(b)
-    # Files inside a folder with an outcome other than "sort inside" are not sorted one by one.
-    held = [rel for rel, outcome in b.folders.items() if outcome != "sort inside"]
+    # Files in organised folders that stay are expected to stay unless set otherwise; files
+    # in folders that move whole or wait for users are not sorted one by one.
+    for rel in b.written:
+        parent = rel.rsplit("/", 1)[0]
+        if rel not in b.files and any(parent == f or parent.startswith(f + "/")
+                                      for f, o in b.folders.items() if o == "stays"):
+            b.files[rel] = parent
+    held = [rel for rel, outcome in b.folders.items() if outcome not in ("sort inside", "stays")]
     files = {rel: dest for rel, dest in b.files.items()
              if not any(rel.startswith(folder + "/") for folder in held)}
-    key = {"files": dict(sorted(files.items())), "folders": dict(sorted(b.folders.items()))}
+    key = {"files": dict(sorted(files.items())), "folders": dict(sorted(b.folders.items())),
+           "topics": {t: sorted(m) for t, m in sorted(b.topics.items())}}
     (output / "answer_key.json").write_text(json.dumps(key, indent=2), encoding="utf-8")
     return output
 
@@ -705,7 +768,8 @@ def main() -> None:
     args = parser.parse_args()
     out = build(Path(args.output), args.seed)
     key = json.loads((out / "answer_key.json").read_text(encoding="utf-8"))
-    print(f"Built test folders in {out}: {len(key['files'])} files and {len(key['folders'])} subfolders to sort")
+    print(f"Built test folders in {out}: {len(key['files'])} files and {len(key['folders'])} subfolders to sort, "
+          f"{len(key['topics'])} topics")
 
 
 if __name__ == "__main__":

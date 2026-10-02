@@ -8,12 +8,13 @@ KINDS = {
     "presentation": {".pptx", ".ppt", ".odp", ".gslides"},
     "form": {".gform"},
     "text": {".txt", ".md", ".log", ".json", ".xml", ".ini", ".cfg"},
-    "image": {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif", ".svg"},
+    "image": {".jpg", ".jpeg", ".jfif", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif", ".svg"},
     "video": {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".m4v", ".webm"},
     "audio": {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma"},
     "archive": {".zip", ".7z", ".rar", ".tar", ".gz", ".tgz"},
     "installer": {".exe", ".msi", ".msix", ".appx"},
     "ebook": {".epub", ".mobi"},
+    "web page": {".html", ".htm", ".mhtml"},
     "shortcut": {".lnk", ".url"},
 }
 _BY_EXT = {ext: kind for kind, exts in KINDS.items() for ext in exts}

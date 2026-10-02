@@ -43,14 +43,21 @@ decision; when the code and this file disagree, this file wins until it is chang
 
 ## 5. Folder access
 - SortZen only reads and moves inside folders users add:
-  - **Source folders**: the messy folders to sort (e.g. Downloads).
+  - **Source folders**: the messy folders to sort. Each is added in one of two ways:
+    - **Sort into other folders** (e.g. Downloads): its files and subfolders go to the
+      destination folders.
+    - **Tidy this folder** (e.g. a cloud drive): it is its own destination. Its organised
+      subfolders stay where they are and receive files; loose files and messy subfolders
+      are sorted into them (and into any other destination folders).
   - **Destination folders**: where files may go (e.g. Documents, Pictures, Videos, Music,
     or any other folder), including all their subfolders.
 - First run offers the standard Windows folders as a starting template, located through
   Windows so that folders moved to OneDrive are found correctly.
 - Folders can be added or removed at any time. Nothing outside them is read.
-- **Subfolders inside a source folder** each get one of three outcomes, with a percentage
+- **Subfolders inside a source folder** each get one of these outcomes, with a percentage
   and reasons like files (§7):
+  - **Stays** (tidy this folder only): an organised folder that stays where it is. Files
+    inside it that clearly belong elsewhere are still suggested to move out.
   - **Keep together**: the folder moves as one item with everything inside, structure
     unchanged, to a destination chosen like a file's (e.g. a folder of "Project 1" files
     that mention Example Co. → Documents/Work/Project 1).
@@ -101,9 +108,46 @@ decision; when the code and this file disagree, this file wins until it is chang
   history when it is moved or renamed.
 
 ## 7. How SortZen decides
+SortZen looks at everything first, then decides file by file.
+
+### 1. Overview
+Before suggesting any move, SortZen scans every added folder at every level and builds an
+overview of what is there:
+- **Topics**: groups of related files and folders wherever they are, found from shared
+  distinctive words in names and contents, people's names, version series
+  (`Name_1.0.zip` … `Name_1.6.zip`), copies (`name (1)`, `folder (4)`), and what is
+  stored together. For example: "Garden Planner" files in My Drive, in My Drive/Owen
+  Sample and in Documents/Projects are one topic, a program built for Owen Sample.
+- **A home for each topic**: the existing folder where most of it already lives or whose
+  name matches, or a **new folder** when nothing fits, nested where it belongs (e.g.
+  Projects/Programming/Owen Sample/Garden Planner). New folders are part of the plan:
+  created only when the plan is confirmed, and removed by Undo.
+- **Misplaced files**: files inside organised folders that clearly belong to another
+  topic are suggested to move out ("Move out of Payroll backup"), held to the autonomy
+  level like any other move.
+- **Default names and empty files** ("New Microsoft Excel Worksheet.xlsx", "Untitled
+  document") go to Review, marked "looks empty" when they have no contents.
+- When AI is on, it receives the folder tree and the topic summaries once per run
+  (names only, as the privacy settings allow) to suggest homes and structure.
+
+### 2. Questions
+When the overview can't settle something on its own, SortZen asks before showing the plan,
+most important first and at most 10 per run. Each question names what was found and
+offers choices, e.g.:
+
+> "Garden Planner" files are in 3 places: My Drive (3), My Drive/Owen Sample (14 files
+> and 7 folders) and Documents/Projects (2). What is it?
+> ○ A project I'm working on for Owen Sample → Projects/Programming/Owen Sample/Garden Planner
+> ○ Owen Sample's own files → My Drive/Owen Sample
+> ○ Something else: choose a folder…
+
+Answers become rules (§8). Anything still unsettled goes to Review.
+
+### 3. File by file
 For each file, in this order, stopping at the first confident answer:
-1. **Rules** written or approved by users, e.g. "Resume → Personal, even if it mentions
-   Example Co." Exceptions beat general rules.
+1. **Rules** written or approved by users, including answers to questions, e.g.
+   "Resume → Personal, even if it mentions Example Co." Exceptions beat general rules.
+   A topic's home from the overview counts as strong evidence.
 2. **Learned examples** (§8): already-sorted files that look like this one, by file type,
    words in the name and words inside the file.
 3. **AI** (§9), for what is left, when AI is turned on.
@@ -206,5 +250,5 @@ available in Settings:
 - An in-app updater installs new versions without that warning appearing again.
 
 ## 14. Not in the alpha
-Renaming (§12), the in-app updater (§13), reading scanned PDFs (OCR), finding duplicates,
-sorting on a schedule.
+Renaming (§12), the in-app updater (§13), reading scanned PDFs (OCR), removing duplicates
+(the alpha groups and flags copies but keeps them all), sorting on a schedule.
