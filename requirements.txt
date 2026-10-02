@@ -4,3 +4,4 @@ google-genai>=1,<2
 keyring>=25,<26
 pillow>=10,<13
 pypdf>=5,<7
+openpyxl>=3.1,<4

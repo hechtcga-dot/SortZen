@@ -273,6 +273,17 @@ available in Settings:
 ## 14. Alpha versions
 - **0.1, plan only**: scanning, the overview, questions and the full plan with every
   percentage and its reasons. Nothing is moved; corrections are still learned.
+  - Folders are added from the toolbar, the File menu, the folder tree (right-click) or the
+    Start tab, which also offers the standard Windows folders as destinations.
+  - The **Questions** tab lists what SortZen couldn't settle; answers are saved and the plan
+    is updated.
+  - The **Plan** tab groups everything into Ready, Review, Staying and "Sorted from the
+    inside" (messy folders), with the autonomy level and "Ask me about everything" at the
+    top; changing them regroups the plan at once. Selecting a row shows how its
+    percentage was worked out.
+  - "Change destination…" and "Leave it where it is" (buttons and right-click, for one or
+    several files) are remembered at once; "Update plan" lets SortZen learn from them for
+    similar files. Every change can be undone (Ctrl+Z).
 - **0.2**: files and folders move after the plan is confirmed, with Undo.
 - Not in the alpha: removing duplicates (copies are grouped and flagged but all kept),
   renaming (§12), the in-app updater (§13), rule suggestions (SortZen offering "Make this

@@ -1,28 +1,37 @@
-"""The workspace window: folder tree on the left, tabs on the right."""
+"""The workspace window: folder tree on the left; Start, Questions and Plan tabs on the right."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QColor, QKeySequence
+import os
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QSplitter, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
+    QSplitter, QTabWidget, QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..config import APP_NAME, APP_TAGLINE, APP_VERSION
+from ..engine.planner import SORT_OUT, TIDY
 from ..services import AppService
+from ..services.app_service import FolderError
 from ..tasks import JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
+from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
 from .icons import app_icon
+from .plan_page import PlanPage
+from .questions_page import QuestionsPage
 
 STEPS = (
     ("Add folders", "Choose the messy folders to sort and the folders files may go to. "
                     "SortZen reads nothing outside them."),
-    ("Scan", "SortZen reads the files on this PC and learns from the folders you've already sorted."),
+    ("Make a plan", "SortZen reads the files on this PC, learns from the folders you've already sorted, and asks "
+                    "about anything it can't settle."),
     ("Check the plan", "Every file and folder gets a destination and a percentage showing how sure "
                        "SortZen is, with the reasons. Anything below your chosen level waits in Review."),
-    ("Move", "Nothing moves until you confirm the plan. Every run can be undone."),
+    ("Move", "Not in this version: the plan shows what SortZen would do, and nothing is moved."),
 )
+FOLDER = Qt.ItemDataRole.UserRole
 
 
 class MainWindow(QMainWindow):
@@ -31,9 +40,12 @@ class MainWindow(QMainWindow):
         self.service = service or AppService()
         self.bridge = EventBridge(self)
         self.bridge.event.connect(self._on_job_event)
+        self.plan = None
+        self.progress: QProgressDialog | None = None
+        self.undo_stack: list[tuple[str, object]] = []
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
-        self.resize(1100, 720)
+        self.resize(1200, 760)
 
         body = QWidget(objectName="ground")
         layout = QVBoxLayout(body)
@@ -46,14 +58,25 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self._tree_panel())
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.addTab(self._start_page(), "Start")
+        self.start_page = self._start_page()
+        self.tabs.addTab(self.start_page, "Start")
+        self.questions_page = QuestionsPage()
+        self.questions_page.save.connect(self.save_answers)
+        self.plan_page = PlanPage(self.service)
+        self.plan_page.change_destination.connect(self.change_destination)
+        self.plan_page.leave_in_place.connect(self.leave_in_place)
+        self.plan_page.forget_choice.connect(self.forget_choice)
+        self.plan_page.open_folder.connect(self.open_folder)
+        self.plan_page.update_plan.connect(self.make_plan)
+        self.plan_page.export.connect(self.export_plan)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([260, 840])
+        self.splitter.setSizes([280, 920])
         layout.addWidget(self.splitter, 1)
         self.setCentralWidget(body)
 
-        self._menus()
+        self._actions()
+        self.refresh_folders()
         self.statusBar().showMessage("Ready")
 
     # ---------------------------------------------------------------- layout
@@ -65,39 +88,37 @@ class MainWindow(QMainWindow):
         icon.setPixmap(app_icon().pixmap(26, 26))
         row.addWidget(icon)
         row.addWidget(QLabel(APP_NAME, objectName="appName"))
-        row.addWidget(QLabel(f"{APP_VERSION} alpha", objectName="versionPill"))
+        row.addWidget(QLabel(f"{APP_VERSION} alpha · plan only", objectName="versionPill"))
         row.addStretch(1)
         return header
 
     def _tree_panel(self) -> QFrame:
         panel = QFrame(objectName="tree")
+        panel.setMinimumWidth(230)
         col = QVBoxLayout(panel)
         col.setContentsMargins(8, 10, 8, 10)
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.sources_item = self._tree_group("Source folders", "Messy folders to sort")
         self.destinations_item = self._tree_group("Destination folders", "Where files may go")
         col.addWidget(self.tree, 1)
-        footer = QLabel("SortZen only reads the folders listed here.", objectName="treeFooter")
+        footer = QLabel("SortZen only reads the folders listed here. Right-click to add, change or remove.",
+                        objectName="treeFooter")
         footer.setWordWrap(True)
         col.addWidget(footer)
         return panel
 
     def _tree_group(self, title: str, hint: str) -> QTreeWidgetItem:
         item = QTreeWidgetItem(self.tree, [title])
-        item.setFont(0, self._bold(item.font(0)))
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
         item.setToolTip(0, hint)
-        empty = QTreeWidgetItem(item, ["No folders added yet"])
-        empty.setFlags(Qt.ItemFlag.NoItemFlags)
-        empty.setForeground(0, QColor(theme.MUTED))
         item.setExpanded(True)
         return item
-
-    @staticmethod
-    def _bold(font):
-        font.setBold(True)
-        return font
 
     def _start_page(self) -> QWidget:
         page = QWidget()
@@ -107,9 +128,8 @@ class MainWindow(QMainWindow):
         title = QLabel("Sort a messy folder", objectName="pageTitle")
         title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         col.addWidget(title)
-        intro = QLabel("SortZen moves files from folders like Downloads into the right place, "
-                       "learns how you sort, and only asks an AI service about files it can't place by itself.",
-                       objectName="muted")
+        intro = QLabel("SortZen moves files from folders like Downloads into the right place, learns how you sort, "
+                       "and only asks an AI service about files it can't place by itself.", objectName="muted")
         intro.setWordWrap(True)
         intro.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         col.addWidget(intro)
@@ -131,26 +151,279 @@ class MainWindow(QMainWindow):
             row.addLayout(words, 1)
             steps.addLayout(row)
         col.addWidget(card)
+        buttons = QHBoxLayout()
+        add_source = QPushButton("Add a folder to sort…")
+        add_source.clicked.connect(self.add_source)
+        add_destination = QPushButton("Add a destination folder…")
+        add_destination.clicked.connect(self.add_destination)
+        self.windows_button = QPushButton("Use my Windows folders")
+        self.windows_button.setToolTip("Adds Documents, Pictures, Music and Videos as destination folders")
+        self.windows_button.clicked.connect(self.add_windows_folders)
+        self.plan_button = QPushButton("Make a plan", objectName="primary")
+        self.plan_button.clicked.connect(self.make_plan)
+        for b in (add_source, add_destination, self.windows_button):
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        buttons.addWidget(self.plan_button)
+        col.addLayout(buttons)
+        self.start_hint = QLabel(objectName="hint")
+        self.start_hint.setWordWrap(True)
+        col.addWidget(self.start_hint)
         col.addStretch(1)
         return page
 
-    def _menus(self) -> None:
-        file_menu = self.menuBar().addMenu("&File")
-        quit_action = QAction("E&xit", self, shortcut=QKeySequence.StandardKey.Quit, triggered=self.close)
-        file_menu.addAction(quit_action)
+    def _actions(self) -> None:
+        def action(text, slot, shortcut=None, tip=""):
+            a = QAction(text, self, triggered=slot)
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            if tip:
+                a.setToolTip(tip)
+                a.setStatusTip(tip)
+            return a
 
+        self.add_source_action = action("Add folder to sort…", self.add_source, "Ctrl+O",
+                                        "Add a messy folder, like Downloads")
+        self.add_destination_action = action("Add destination folder…", self.add_destination, "Ctrl+D",
+                                             "Add a folder files may go to, like Documents")
+        self.plan_action = action("Make a plan", self.make_plan, "F5", "Read the folders and plan where everything goes")
+        self.export_action = action("Export plan to Excel…", self.export_plan, "Ctrl+E",
+                                    "Save the plan as an Excel workbook")
+        self.undo_action = action("Undo", self.undo, QKeySequence.StandardKey.Undo, "Undo the last change")
+        self.export_action.setEnabled(False)
+        self.undo_action.setEnabled(False)
+
+        toolbar = QToolBar("Main")
+        toolbar.setMovable(False)
+        for a in (self.add_source_action, self.add_destination_action, self.plan_action, self.export_action,
+                  self.undo_action):
+            toolbar.addAction(a)
+        self.addToolBar(toolbar)
+
+        file_menu = self.menuBar().addMenu("&File")
+        for a in (self.add_source_action, self.add_destination_action):
+            file_menu.addAction(a)
+        file_menu.addSeparator()
+        file_menu.addAction(self.export_action)
+        file_menu.addSeparator()
+        file_menu.addAction(QAction("E&xit", self, shortcut=QKeySequence.StandardKey.Quit, triggered=self.close))
+        edit_menu = self.menuBar().addMenu("&Edit")
+        edit_menu.addAction(self.undo_action)
+        plan_menu = self.menuBar().addMenu("&Plan")
+        plan_menu.addAction(self.plan_action)
         view_menu = self.menuBar().addMenu("&View")
         self.tree_action = QAction("Show folder tree", self, checkable=True, checked=True)
         self.tree_action.toggled.connect(lambda on: self.splitter.widget(0).setVisible(on))
         view_menu.addAction(self.tree_action)
-
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction(QAction(f"About {APP_NAME}", self, triggered=self.show_about))
 
     def show_about(self) -> None:
         QMessageBox.about(self, f"About {APP_NAME}",
-                          f"<b>{APP_NAME} {APP_VERSION}</b> (alpha)<br>{APP_TAGLINE}<br><br>"
-                          "Sorts messy folders into the right place. Local first; AI is optional.")
+                          f"<b>{APP_NAME} {APP_VERSION}</b> (alpha, plan only)<br>{APP_TAGLINE}<br><br>"
+                          "Sorts messy folders into the right place. Local first; AI is optional. "
+                          "This version shows the plan and moves nothing.")
+
+    # ---------------------------------------------------------------- folders
+    def refresh_folders(self) -> None:
+        for group in (self.sources_item, self.destinations_item):
+            group.takeChildren()
+        muted = QColor(theme.MUTED)
+        for f in self.service.source_folders():
+            mode = "tidy" if f["mode"] == TIDY else "sort out"
+            item = QTreeWidgetItem(self.sources_item, [f"{os.path.basename(f['path']) or f['path']}  ·  {mode}"])
+            item.setToolTip(0, f"{f['path']}\n{MODE_TEXT[f['mode']][1]}")
+            item.setData(0, FOLDER, ("source", f["path"]))
+        for d in self.service.destination_folders():
+            item = QTreeWidgetItem(self.destinations_item, [os.path.basename(d) or d])
+            item.setToolTip(0, d)
+            item.setData(0, FOLDER, ("destination", d))
+        for group, empty in ((self.sources_item, "No folders added yet"), (self.destinations_item, "No folders added yet")):
+            if not group.childCount():
+                hint = QTreeWidgetItem(group, [empty])
+                hint.setFlags(Qt.ItemFlag.NoItemFlags)
+                hint.setForeground(0, muted)
+        has_sources = bool(self.service.source_folders())
+        suggested = self.service.suggested_destinations()
+        self.windows_button.setVisible(bool(suggested))
+        self.plan_button.setEnabled(has_sources)
+        self.plan_action.setEnabled(has_sources)
+        if not has_sources:
+            self.start_hint.setText("Start by adding a folder to sort, such as Downloads.")
+        elif not self.service.destination_folders():
+            self.start_hint.setText("Add destination folders too, or tidy a folder in place. "
+                                    "“Use my Windows folders” adds Documents, Pictures, Music and Videos.")
+        else:
+            self.start_hint.setText("Ready to make a plan. Nothing is moved in this version.")
+
+    def _tree_menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        menu = QMenu(self)
+        data = item.data(0, FOLDER) if item else None
+        if data:
+            kind, path = data
+            if kind == "source":
+                current = next((f["mode"] for f in self.service.source_folders() if f["path"] == path), SORT_OUT)
+                for mode, (title, _) in MODE_TEXT.items():
+                    a = menu.addAction(title, lambda m=mode: self.set_mode(path, m))
+                    a.setCheckable(True)
+                    a.setChecked(mode == current)
+                menu.addSeparator()
+            menu.addAction("Open in Explorer", lambda: self.open_folder(path))
+            menu.addAction("Remove from SortZen", lambda: self.remove_folder(path))
+        else:
+            menu.addAction(self.add_source_action)
+            menu.addAction(self.add_destination_action)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def add_source(self, folder: str | None = None, mode: str | None = None) -> None:
+        folder = folder or QFileDialog.getExistingDirectory(self, "Choose a folder to sort")
+        if not folder:
+            return
+        if mode is None:
+            guess = SORT_OUT if "download" in os.path.basename(folder).lower() else TIDY
+            dialog = ModeDialog(self, folder, guess)
+            if not dialog.exec():
+                return
+            mode = dialog.mode()
+        self._try(lambda: self.service.add_source(folder, mode), f"Remove {os.path.basename(folder)}",
+                  lambda path: self.service.remove_folder(path))
+
+    def add_destination(self, folder: str | None = None) -> None:
+        folder = folder or QFileDialog.getExistingDirectory(self, "Choose a destination folder")
+        if folder:
+            self._try(lambda: self.service.add_destination(folder), f"Remove {os.path.basename(folder)}",
+                      lambda path: self.service.remove_folder(path))
+
+    def add_windows_folders(self) -> None:
+        added = []
+        for folder in self.service.suggested_destinations():
+            added.append(self.service.add_destination(folder))
+        if added:
+            self._push_undo("Add Windows folders", lambda: [self.service.remove_folder(p) for p in added])
+        self.refresh_folders()
+
+    def _try(self, work, undo_text, undo) -> None:
+        try:
+            path = work()
+        except FolderError as exc:
+            QMessageBox.information(self, APP_NAME, str(exc))
+            return
+        self._push_undo(undo_text, lambda: undo(path))
+        self.refresh_folders()
+
+    def set_mode(self, path: str, mode: str) -> None:
+        before = next((f["mode"] for f in self.service.source_folders() if f["path"] == path), mode)
+        self.service.set_source_mode(path, mode)
+        self._push_undo("Change how a folder is sorted", lambda: self.service.set_source_mode(path, before))
+        self.refresh_folders()
+
+    def remove_folder(self, path: str) -> None:
+        source = next((f for f in self.service.source_folders() if f["path"] == path), None)
+        self.service.remove_folder(path)
+        if source:
+            self._push_undo("Remove folder", lambda: self.service.add_source(path, source["mode"]))
+        else:
+            self._push_undo("Remove folder", lambda: self.service.add_destination(path))
+        self.refresh_folders()
+
+    def open_folder(self, path: str) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    # ---------------------------------------------------------------- the plan
+    def make_plan(self) -> None:
+        if self.service.jobs.busy:
+            return
+        if not self.service.source_folders():
+            QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
+            return
+        self.progress = QProgressDialog("Reading your folders…", "Stop safely", 0, 0, self)
+        self.progress.setWindowTitle("Making the plan")
+        self.progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress.setMinimumDuration(300)
+        self.progress.canceled.connect(self.service.stop_job)
+        self.run_job("plan", self.service.make_plan)
+
+    def show_plan(self, plan) -> None:
+        self.plan = plan
+        self.export_action.setEnabled(True)
+        self.plan_page.set_plan(plan)
+        if self.tabs.indexOf(self.plan_page) < 0:
+            self.tabs.addTab(self.plan_page, "Plan")
+        open_questions = [q for q in plan.questions if q.answer is None]
+        self.questions_page.set_questions(plan.questions)
+        if plan.questions and self.tabs.indexOf(self.questions_page) < 0:
+            self.tabs.insertTab(1, self.questions_page, "Questions")
+        if plan.questions:
+            self.tabs.setTabText(self.tabs.indexOf(self.questions_page),
+                                 f"Questions ({len(open_questions)})" if open_questions else "Questions")
+        self.tabs.setCurrentWidget(self.questions_page if open_questions else self.plan_page)
+
+    def save_answers(self, answers: dict) -> None:
+        before = {k: self.service.answers().get(k) for k in answers}
+        self.service.save_answers(answers)
+        self._push_undo("Answers", lambda: self.service.save_answers(before))
+        self.make_plan()
+
+    def export_plan(self) -> None:
+        if self.plan is None:
+            return
+        target, _ = QFileDialog.getSaveFileName(self, "Export the plan", "SortZen plan.xlsx", "Excel workbook (*.xlsx)")
+        if target:
+            try:
+                self.service.export_plan(self.plan, target)
+            except OSError as exc:
+                QMessageBox.warning(self, APP_NAME, f"The plan couldn't be saved: {exc}")
+                return
+            self.statusBar().showMessage(f"Plan saved to {target}", 6000)
+
+    # ---------------------------------------------------------------- corrections
+    def change_destination(self, rows) -> None:
+        if not rows:
+            return
+        dialog = DestinationDialog(self, self.service.destination_choices(self.plan), self.service.display)
+        if dialog.exec() and dialog.chosen:
+            self.correct(rows, dialog.chosen)
+
+    def leave_in_place(self, rows) -> None:
+        for row in rows:
+            self.correct([row], row.current)
+
+    def forget_choice(self, rows) -> None:
+        if rows:
+            previous = self.service.correct([r.path for r in rows], None)
+            self._push_undo("Forget choice", lambda: self.service.restore_corrections(previous))
+            self.statusBar().showMessage("Choice forgotten. Update the plan to see SortZen's own suggestion.", 6000)
+
+    def correct(self, rows, destination: str) -> None:
+        from ..engine.plan import Reason
+
+        previous = self.service.correct([r.path for r in rows], destination)
+        changed = {os.path.normcase(r.path) for r in rows}
+        for s in self.plan.files if self.plan else []:
+            if os.path.normcase(s.path) in changed:
+                s.destination, s.percent, s.new_folder = destination, 100, not os.path.isdir(destination)
+                s.reasons = [Reason(True, "You chose this folder")]
+        self._push_undo("Change destination", lambda: self.service.restore_corrections(previous))
+        self.plan_page.refresh()
+        self.statusBar().showMessage("Remembered. Update the plan to let SortZen learn from it for similar files.",
+                                     6000)
+
+    # ---------------------------------------------------------------- undo
+    def _push_undo(self, text: str, undo) -> None:
+        self.undo_stack.append((text, undo))
+        self.undo_action.setEnabled(True)
+        self.undo_action.setText(f"Undo {text.lower()}")
+
+    def undo(self) -> None:
+        if not self.undo_stack:
+            return
+        text, undo = self.undo_stack.pop()
+        undo()
+        self.refresh_folders()
+        self.undo_action.setEnabled(bool(self.undo_stack))
+        self.undo_action.setText(f"Undo {self.undo_stack[-1][0].lower()}" if self.undo_stack else "Undo")
+        self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     # ---------------------------------------------------------------- background jobs
     def run_job(self, name: str, work):
@@ -159,12 +432,33 @@ class MainWindow(QMainWindow):
 
     def _on_job_event(self, event) -> None:
         if isinstance(event, Status):
-            self.statusBar().showMessage(f"{event.primary} {event.detail}".strip())
+            text = f"{event.primary} {event.detail}".strip()
+            self.statusBar().showMessage(text)
+            if self.progress:
+                self.progress.setLabelText(text + "…")
         elif isinstance(event, Progress):
             self.statusBar().showMessage(f"{event.done} of {event.total}")
+            if self.progress:
+                self.progress.setMaximum(event.total)
+                self.progress.setValue(event.done)
         elif isinstance(event, Log):
             self.statusBar().showMessage(event.message, 5000)
         elif isinstance(event, JobFinished):
+            self._close_progress()
             self.statusBar().showMessage("Ready")
+            if event.name == "plan":
+                if event.result is None:
+                    self.statusBar().showMessage("Stopped. Nothing was changed.", 6000)
+                else:
+                    self.show_plan(event.result)
         elif isinstance(event, JobFailed):
+            self._close_progress()
             self.statusBar().showMessage(f"Stopped: {event.message}")
+            if event.name == "plan":
+                QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
+
+    def _close_progress(self) -> None:
+        if self.progress:
+            self.progress.canceled.disconnect()
+            self.progress.close()
+            self.progress = None

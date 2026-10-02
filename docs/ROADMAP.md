@@ -15,7 +15,7 @@ Files move from alpha 0.2.
 | 1 | Synthetic test folders; scanner and file readers with remembered results | **Done** |
 | 2a | Sorting engine, file by file: folder profiles, suggestions with a percentage and how it was worked out, runner-up, misplaced files in organised folders | **Done** |
 | 2b | Sorting engine, the overview: subfolder outcomes (stays, keep together, sort the inside, Review), topics and their homes, one-level new folders, questions | **Done** |
-| 3 | Plan screen (read-only): add folders (sort into other folders or tidy this folder), scan, questions, plan with Ready and Review, percentage breakdowns, corrections, export the plan to Excel | To do |
+| 3 | Plan screen (read-only): add folders (sort into other folders or tidy this folder), scan, questions, plan with Ready and Review, percentage breakdowns, corrections, export the plan to Excel | **Done** |
 | 4 | **Alpha 0.1 build**: program folder and per-user installer from the Windows build workflow; plan only | To do |
 | 5 | AI step: service drop-down, key storage, privacy settings (name only, beginning of file), two passes, batches, cost estimate and cap | To do |
 | 6 | Mover: whole-folder moves, new folders, removing emptied folders, name clashes, cross-drive copy and check, Google link files kept in their drive, run log, Undo | To do |

@@ -25,8 +25,11 @@ src/sortzen/
                        Topic, Question, Plan)
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
                        file_index.py (SQLite: remembered scan results)
-  services/            AppService: the only API the window uses
-  ui/                  PySide6 window, theme, fonts (OFL), icon
+  services/            AppService: the only API the window uses (folders, autonomy, answers,
+                       corrections, make_plan); plan_view.py (Ready/Review/Staying rows,
+                       display paths, Excel export)
+  ui/                  PySide6 window (main_window.py), plan_page.py, questions_page.py,
+                       dialogs.py, theme, fonts (OFL), icon
 packaging/launcher.py  runs the program from source; packaged entry point
 tests/                 unittest suites (window tests run offscreen)
   fixtures/            make_test_folders.py: made-up Downloads and My Drive (about 440 files
