@@ -30,6 +30,18 @@ GENERIC_TOPIC_WORDS = {"drive", "onedrive", "google", "sorted", "folder", "file"
                        "photo", "picture", "document", "report", "statement", "receipt", "invoice", "resume", "letter",
                        "form", "template", "note", "list", "draft", "update", "updated", "personal", "work"}
 MAX_QUESTIONS = 10
+PROGRAM_MARKERS = {"setup.py", "pyproject.toml", "requirements.txt", "requirements-dev.txt", "package.json",
+                   "cargo.toml", "go.mod", "pom.xml", "build.gradle", "cmakelists.txt", "makefile", "gemfile",
+                   "composer.json"}
+PROGRAM_MARKER_EXTS = {".sln", ".csproj", ".vcxproj", ".spec", ".iss"}
+CODE_EXTS = {".py", ".pyw", ".js", ".ts", ".jsx", ".tsx", ".java", ".cs", ".cpp", ".cc", ".c", ".h", ".hpp", ".go",
+             ".rs", ".rb", ".php", ".swift", ".kt", ".ipynb", ".vb", ".lua", ".dart"}
+CODE_SHARE = 0.4            # share of code files that makes a folder a program
+FAMILY_PERCENT = 90         # versions and copies of one thing, gathered into one folder
+_COPY_END = re.compile(r"\s*\(\d+\)$")
+_VERSION_END = re.compile(r"[-_ .]+v?\d+(?:\.\d+)*[a-z]?$", re.I)
+_EDITION_END = re.compile(r"[-_ ]+(?:release|windows|win|win32|win64|x64|x86|amd64|portable|setup|installer|"
+                          r"final|copy|backup|old|new|latest|master|main|build|dist|stable|beta|alpha)$", re.I)
 CLEAR_HOME = 70             # a file this sure of a folder elsewhere has a clear home there
 MESSY_SHARE = 0.6           # share of a folder's files with clear homes elsewhere that makes it messy
 NAME_SHARE = 0.5            # share of files mentioning the folder's name that keeps it together
@@ -78,11 +90,99 @@ def _folder_choices(mode: str) -> list[Choice]:
     return choices
 
 
+# ---------------------------------------------------------------- programs and families
+def is_program(p, folder: str) -> str:
+    """Why a folder is a program (code, setup files, or a built program with its parts); "" when it isn't."""
+    files = [p.records[i] for i in p.files_under.get(folder, [])]
+    if not files:
+        return ""
+    names = {r.name.lower() for r in files}
+    exts = Counter(r.ext for r in files)
+    marker = sorted(names & PROGRAM_MARKERS) or sorted(r.name for r in files if r.ext in PROGRAM_MARKER_EXTS)
+    if marker:
+        return f"Looks like a program: it has “{marker[0]}”"
+    code = sum(n for e, n in exts.items() if e in CODE_EXTS)
+    if code >= 5 and code >= CODE_SHARE * len(files):
+        return f"Looks like a program: {code} of its {len(files)} files are code"
+    if exts.get(".exe") and (exts.get(".dll") or exts.get(".pyd")):
+        return "Looks like a program: a .exe with the parts it needs"
+    return ""
+
+
+def family_base(name: str, is_file: bool = False) -> str:
+    """A name without version and copy endings: "AuctionZen-windows (4)" and "AuctionZen-1.7.3" give "AuctionZen"."""
+    base = os.path.splitext(name)[0] if is_file else name
+    while True:
+        trimmed = _COPY_END.sub("", base)
+        trimmed = _VERSION_END.sub("", trimmed)
+        trimmed = _EDITION_END.sub("", trimmed).strip(" -_.")
+        if trimmed == base or not trimmed:
+            return base
+        base = trimmed
+
+
+def _family_key(name: str, is_file: bool = False) -> str:
+    return re.sub(r"[^a-z0-9]", "", family_base(name, is_file).lower())
+
+
+def gather_families(p, plan: Plan) -> dict[str, tuple[str, list[Reason]]]:
+    """Sibling folders that are versions or copies of one thing go together into one new folder.
+
+    Returns the zips and installers beside them that join their family: path -> (folder, reasons).
+    """
+    decided = {path_key(f.path): f for f in plan.folders}
+    sorted_inside = [s.root for s in p.sources] + [f.path for f in plan.folders if f.outcome == SORT_INSIDE]
+    joining: dict[str, tuple[str, list[Reason]]] = {}
+    for parent in sorted_inside:
+        groups: dict[str, list[str]] = defaultdict(list)
+        for child in sorted(p.children.get(parent, ())):
+            answered = folder_key(child) in p.answers
+            if p.is_left_out(child) or answered or any(_inside(child, u) and path_key(child) != path_key(u)
+                                                       for u in p.units):
+                continue
+            key = _family_key(os.path.basename(child))
+            if len(key) >= 3:
+                groups[key].append(child)
+        taken = {os.path.basename(c).lower() for c in p.children.get(parent, ())}
+        for key, members in groups.items():
+            if len(members) < 2:
+                continue
+            base = family_base(min((os.path.basename(m) for m in members), key=len))
+            program = next((why for m in members if (why := is_program(p, m))), "")
+            name = f"{base} Program" if program else f"{base} (all copies)"
+            n = 2
+            while name.lower() in taken:
+                name, n = f"{base} {'Program' if program else '(all copies)'} {n}", n + 1
+            home = os.path.join(parent, name)
+            why = [Reason(True, f"{len(members)} folders are versions or copies of “{base}”: "
+                                f"{', '.join(os.path.basename(m) for m in members[:4])}"
+                                + (" …" if len(members) > 4 else ""))]
+            if program:
+                why.append(Reason(True, program))
+            for m in members:
+                f = decided.get(path_key(m))
+                if f is None:
+                    f = FolderSuggestion(m, KEEP_TOGETHER, FAMILY_PERCENT, files=len(p.files_under[m]))
+                    plan.folders.append(f)
+                    decided[path_key(m)] = f
+                f.outcome, f.destination, f.percent, f.reasons = KEEP_TOGETHER, home, FAMILY_PERCENT, list(why)
+                p.units.add(m)
+            plan.folders[:] = [f for f in plan.folders
+                               if not any(_inside(f.path, m) and path_key(f.path) != path_key(m) for m in members)]
+            for i in p.direct.get(parent, []):
+                r = p.records[i]
+                if r.kind in ("archive", "installer") and _family_key(r.name, True) == key:
+                    joining[r.path] = (home, why[:1] + [Reason(True, f"“{r.name}” is part of the same family")])
+            plan.new_folders.append(home)
+    return joining
+
+
 # ---------------------------------------------------------------- subfolders
 def decide_folders(p) -> list[FolderSuggestion]:
     """Clear cases first (names, zips, shared names); then, in rounds, folders whose files clearly
     belong in several organised folders elsewhere, comparing only with folders not already found messy."""
     p.children, p.files_under = _tree(p)
+    p.units = set()             # programs and families: always moved or left whole
     p.direct = defaultdict(list)
     for i, folder in enumerate(p.folder):
         p.direct[folder].append(i)
@@ -145,6 +245,10 @@ def _decide_clear(p, folder: str, source) -> FolderSuggestion | None:
         why = "A restored copy of another drive" if "restored" in name_words \
             else f"Looks like a holding folder (“{name}”)"
         return result(FOLDER_REVIEW, 60, Reason(False, why), Reason(False, "Only you know whether it should stay"))
+    program = is_program(p, folder)
+    if program:
+        p.units.add(folder)
+        return result(keep, 95, Reason(True, program), Reason(True, "A program is kept whole"))
     messy = sorted(MESSY_WORDS & set(name_words))
     if messy:
         return result(SORT_INSIDE, 90, Reason(True, f"Generic name “{name}”"))
@@ -314,7 +418,8 @@ def find_topics(p, plan: Plan) -> None:
                 items[s.path] = (False, s.current_folder, s.destination or s.current_folder)
         for folder in p.files_under:
             if not _inside(folder, source.root) or any(_inside(folder, h) and path_key(folder) != path_key(h)
-                                                       for h in p.held):
+                                                       for h in p.held) \
+                    or any(_inside(folder, u) for u in p.units):
                 continue
             decided = folder_plan.get(path_key(folder))
             if decided and decided.outcome in (SORT_INSIDE, FOLDER_REVIEW):

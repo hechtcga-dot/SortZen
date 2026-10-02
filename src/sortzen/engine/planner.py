@@ -165,21 +165,28 @@ class Planner:
         self.home = [self.corrections.get(path_key(r.path), f) for r, f in zip(self.records, self.folder)]
         self._prepare()
         plan = Plan(folders=overview.decide_folders(self))
+        joining = overview.gather_families(self, plan)
         self.excluded = [f.path for f in plan.folders if f.outcome != STAYS]
-        self.held = [f.path for f in plan.folders if f.outcome in (KEEP_TOGETHER, FOLDER_REVIEW)]
+        self.held = [f.path for f in plan.folders if f.outcome in (KEEP_TOGETHER, FOLDER_REVIEW)] + sorted(self.units)
         self._prepare()
         overview.place_kept_folders(self, plan)
         for i, record in enumerate(self.records):
             if (self._source_of(record.path) and not any(_inside(record.path, h) for h in self.held)
                     and not self.is_left_out(record.path)):
-                plan.files.append(self._suggest(i))
+                if record.path in joining and path_key(record.path) not in self.corrections:
+                    home, reasons = joining[record.path]
+                    plan.files.append(Suggestion(record.path, self.folder[i], home, overview.FAMILY_PERCENT,
+                                                 reasons, new_folder=not os.path.isdir(home)))
+                else:
+                    plan.files.append(self._suggest(i))
         overview.find_topics(self, plan)
         overview.ask_about_folders(self, plan)
         overview.apply_answers(self, plan)
         plan.files.sort(key=lambda s: s.path.lower())
         plan.folders.sort(key=lambda f: f.path.lower())
         plan.new_folders = sorted({s.destination for s in plan.files if s.new_folder}
-                                  | {t.home for t in plan.topics if t.new_folder})
+                                  | {t.home for t in plan.topics if t.new_folder}
+                                  | {f for f in plan.new_folders if not os.path.isdir(f)})
         return plan
 
     def _prepare(self) -> None:

@@ -292,3 +292,77 @@ class RulesTest(unittest.TestCase):
         narrower = suggest_rule(examples, "/s/Invoices", others + [("/d/invoice photo.jpg", "/s/Photos", 97)], [],
                                 set())
         self.assertEqual(narrower.rule, Rule("invoice", "/s/Invoices", ".pdf"))      # avoids the sure picture
+
+
+class ProgramsAndFamiliesTest(unittest.TestCase):
+    """Versions and copies of one thing go into one folder; programs are never picked apart."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        from sortzen.config import AppPaths
+        from sortzen.engine.planner import TIDY
+        from sortzen.repositories.api_keys import ApiKeyStore
+        from sortzen.services import AppService
+        from tests.test_repositories import FakeKeyring
+
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.root = base / "Older stuff"
+        files = {}
+        for version in ("TideLog", "TideLog-1.7.3", "TideLog-release-1.3"):
+            files[f"{version}/requirements.txt"] = "pyside6"
+            for part in ("services", "label", "school", "main"):
+                files[f"{version}/src/tidelog/{part}.py"] = f"def {part}(): pass"
+                files[f"{version}/tests/test_{part}.py"] = f"def test_{part}(): pass"
+        for copy in ("TideLog-windows", "TideLog-windows (1)", "TideLog-windows (4)"):
+            files[f"{copy}/TideLog-Setup-1.5.exe"] = "MZ installer"
+            files[f"{copy}/README.txt"] = "TideLog readme"
+        files["TideLog-windows.zip"] = "PK"
+        for copy in ("Hanlon", "Hanlon (1)"):
+            files[f"{copy}/Hanlon site plan.pdf"] = "site plan for the hanlon renovation"
+            files[f"{copy}/Hanlon quote.docx"] = "quote for the hanlon renovation"
+        files["Recipes/Lemon tart.txt"] = "lemon tart recipe"
+        files["Recipes/Apple pie.txt"] = "apple pie recipe"
+        files["School label service notes.txt"] = "notes about the school label service"
+        for rel, text in files.items():
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / rel).write_text(text, encoding="utf-8")
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.root), TIDY)
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def folder(self, name):
+        return next(f for f in self.plan.folders if os.path.basename(f.path) == name)
+
+    def test_versions_and_copies_gathered_into_one_new_folder(self):
+        from sortzen.engine.overview import family_base
+        from sortzen.engine.plan import KEEP_TOGETHER
+
+        self.assertEqual(family_base("TideLog-windows (4)"), "TideLog")
+        self.assertEqual(family_base("TideLog-release-1.3"), "TideLog")
+        self.assertEqual(family_base("TideLog-Setup-1.5.exe", is_file=True), "TideLog")
+        program = str(self.root / "TideLog Program")
+        for name in ("TideLog", "TideLog-1.7.3", "TideLog-release-1.3", "TideLog-windows", "TideLog-windows (1)",
+                     "TideLog-windows (4)"):
+            f = self.folder(name)
+            self.assertEqual((f.outcome, f.destination, f.percent), (KEEP_TOGETHER, program, 90))
+        self.assertIn("versions or copies of “TideLog”", self.folder("TideLog").reasons[0].text)
+        zipped = self.plan.for_path(str(self.root / "TideLog-windows.zip"))
+        self.assertEqual(zipped.destination, program)
+        copies = str(self.root / "Hanlon (all copies)")
+        self.assertEqual({self.folder("Hanlon").destination, self.folder("Hanlon (1)").destination}, {copies})
+        self.assertIn(program, self.plan.new_folders)
+        self.assertNotEqual(self.folder("Recipes").outcome, KEEP_TOGETHER)
+
+    def test_nothing_inside_a_program_is_sorted_or_asked_about(self):
+        inside = [s.path for s in self.plan.files if "src" in s.path.split(os.sep) or "tests" in s.path.split(os.sep)]
+        self.assertEqual(inside, [])
+        self.assertFalse(any("tidelog" in m.lower() and os.sep + "src" + os.sep in m
+                             for t in self.plan.topics for m in t.members))
+        self.assertFalse(any(os.sep + "tests" in a for q in self.plan.questions for a in q.about))
