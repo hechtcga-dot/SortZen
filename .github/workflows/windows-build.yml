@@ -2,12 +2,12 @@ name: Windows build
 
 # Runs every test on Windows, builds SortZen with PyInstaller, self-tests the program,
 # builds and install-tests the installer, and uploads the installer and README.txt.
-# Pushing a tag like v0.1.0, or running it by hand with "release_tag" filled in, also
-# publishes them on the repository's Releases page.
+# Runs when a tag like v0.1.0 is pushed, or by hand ("Run workflow" on the Actions page, choosing
+# the build's branch); with "release_tag" filled in it also publishes the installer and README
+# on the repository's Releases page.
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
