@@ -13,6 +13,7 @@ import urllib.request
 from .provider import AIProvider, AIResponse, ContentPart, ImagePayload, TokenUsage
 
 TIMEOUT = 300
+LIST_TIMEOUT = 20
 MAX_OUTPUT_TOKENS = 8000
 
 
@@ -33,6 +34,24 @@ def _post(url, body, headers, service):
         raise AIServiceError(f"{service} error {exc.code}: {detail}")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AIServiceError(f"Couldn't reach {service} (unavailable): {exc}")
+
+
+def _get(url, headers, service):
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=LIST_TIMEOUT) as reply:
+            return json.loads(reply.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:300]
+        if exc.code in (401, 403):
+            raise AIServiceError(f"{service} refused the API key ({exc.code}). {detail}")
+        raise AIServiceError(f"{service} error {exc.code}: {detail}")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise AIServiceError(f"Couldn't reach {service} (unavailable): {exc}")
+
+
+_NOT_CHAT = ("embedding", "tts", "whisper", "dall-e", "audio", "realtime", "moderation", "image", "transcribe",
+             "search", "davinci", "babbage")
 
 
 def _b64(image: ImagePayload) -> str:
@@ -62,6 +81,12 @@ class ClaudeProvider(AIProvider):
         u = data.get("usage") or {}
         i, o = int(u.get("input_tokens") or 0), int(u.get("output_tokens") or 0)
         return AIResponse(text=text, usage=TokenUsage(i, o, i + o))
+
+
+    def list_models(self) -> list[str]:
+        data = _get("https://api.anthropic.com/v1/models?limit=100",
+                    {"x-api-key": self.api_key, "anthropic-version": "2023-06-01"}, "Claude")
+        return [m["id"] for m in data.get("data") or [] if m.get("id")]
 
 
 class OpenAICompatibleProvider(AIProvider):
@@ -95,13 +120,27 @@ class OpenAICompatibleProvider(AIProvider):
         return AIResponse(text=text, usage=TokenUsage(i, o, int(u.get("total_tokens") or i + o)))
 
 
+    def list_models(self) -> list[str]:
+        data = _get(self.url.rsplit("/chat/completions", 1)[0] + "/models",
+                    {"Authorization": f"Bearer {self.api_key}"}, self.provider_name)
+        ids = [m["id"] for m in data.get("data") or [] if m.get("id")]
+        ids = [i for i in ids if not any(word in i.lower() for word in _NOT_CHAT)]
+        return sorted(ids, key=lambda i: (not i.endswith(":free"), i)) if self.provider_name == "OpenRouter" \
+            else sorted(ids)
+
+
 class OllamaProvider(AIProvider):
     """Ollama runs the model on this PC: no key, no cost, nothing leaves the computer."""
 
     provider_name = "Ollama"
 
     def __init__(self, url: str = "http://localhost:11434"):
-        self.url = (url or "http://localhost:11434").rstrip("/") + "/api/chat"
+        self.base = (url or "http://localhost:11434").rstrip("/")
+        self.url = self.base + "/api/chat"
+
+    def list_models(self) -> list[str]:
+        data = _get(self.base + "/api/tags", {}, "Ollama")
+        return [m["name"] for m in data.get("models") or [] if m.get("name")]
 
     def generate_json(self, model: str, contents: list[ContentPart]) -> AIResponse:
         # Ollama attaches images to messages, so each text keeps the images that follow it.

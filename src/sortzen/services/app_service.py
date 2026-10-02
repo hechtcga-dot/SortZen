@@ -8,6 +8,7 @@ import time
 from typing import Callable
 
 from ..ai import privacy
+from ..ai.errors import AIProblem, explain
 from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
 from ..ai.sorter import AIFile, AIFolder, AIRun, AISorter
 from ..config import COST_CAP_PER_1000_FILES, AppPaths, default_paths
@@ -126,6 +127,46 @@ class AppService:
         else:
             models.pop(service, None)
         self.settings.set("ai_models", models)
+
+    def model_choices(self, service: str | None = None) -> list[str]:
+        """Models for the drop-down: the usual one, the list last fetched from the service, and the one in use."""
+        service = service or self.ai_service()
+        fetched = (self.settings.get("ai_model_lists") or {}).get(service) or []
+        found = [SERVICES[service].default_model, *fetched, self.model(service)]
+        return list(dict.fromkeys(m for m in found if m))
+
+    def fetch_models(self, service: str | None = None, key: str = "") -> list[str]:
+        """Ask the service which models it offers (needs the key, except for OpenRouter's list and Ollama).
+
+        Raises AIProblem with a plain explanation when it can't."""
+        service = service or self.ai_service()
+        name = SERVICES[service].name
+        try:
+            models = self._make_provider(service, key, listing=True).list_models()
+        except Exception as exc:
+            raise AIProblem(explain(exc, name, "")) from exc
+        if not models:
+            raise AIProblem(f"{name} didn't list any models for this key.")
+        lists = dict(self.settings.get("ai_model_lists") or {})
+        lists[service] = models
+        self.settings.set("ai_model_lists", lists)
+        return models
+
+    def check_ai(self, service: str | None = None, model: str | None = None, key: str = "") -> None:
+        """A tiny request that proves the service, model and key work. Raises AIProblem when they don't."""
+        service = service or self.ai_service()
+        model = (model or "").strip() or self.model(service)
+        try:
+            self._make_provider(service, key).generate_json(model, ['Reply with this JSON only: {"ok": true}'])
+        except Exception as exc:
+            raise AIProblem(explain(exc, SERVICES[service].name, model)) from exc
+
+    def _make_provider(self, service: str, key: str = "", listing: bool = False):
+        info = SERVICES[service]
+        key = (key or "").strip() or self.api_key(service)
+        if info.needs_key and not key and not (listing and service == "openrouter"):    # its list is public
+            raise AIProblem(f"Paste your {info.name} API key first.")
+        return make_provider(service, key or "list-only", self.ollama_url())
 
     def ollama_url(self) -> str:
         return str(self.settings.get("ollama_url") or OLLAMA_URL)
@@ -565,7 +606,10 @@ class AppService:
         folders, files, _ = self._ai_request(plan)
         if not files:
             return AIRun()
-        sorter = self._sorter(provider)
+        try:
+            sorter = self._sorter(provider)
+        except Exception as exc:
+            raise AIProblem(explain(exc, SERVICES[self.ai_service()].name, self.model())) from exc
         _, run = sorter.run(folders, files, self._ai_cap(), emit, token, on_answers=self.ai_answers.save)
         self._add_spent(run.spent)
         return run

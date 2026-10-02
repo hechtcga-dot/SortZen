@@ -38,6 +38,10 @@ class AIProvider:
     def generate_json(self, model: str, contents: list[ContentPart]) -> AIResponse:
         raise NotImplementedError
 
+    def list_models(self) -> list[str]:
+        """The model names this service offers to this key."""
+        raise NotImplementedError
+
 
 def is_transient_api_error(exc: Exception) -> bool:
     text = f"{type(exc).__name__}: {exc}".lower()

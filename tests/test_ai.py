@@ -233,3 +233,66 @@ class AIServiceStepTest(unittest.TestCase):
         files = self.service._ai_request(again)[1]
         self.assertTrue(any(f.text for f in files))
         self.assertFalse(any(f.text for f in files if "resume" in f.path.lower()))
+
+
+class ErrorsAndModelsTest(unittest.TestCase):
+    def test_plain_explanations(self):
+        from sortzen.ai.errors import explain
+
+        self.assertIn("can't find the model “gemini-x”",
+                      explain(RuntimeError("404 NOT_FOUND models/gemini-x is not found"), "Gemini", "gemini-x"))
+        self.assertIn("didn't accept the API key",
+                      explain(web_providers.AIServiceError("Claude refused the API key (401)"), "Claude", "m"))
+        self.assertIn("can't reach Ollama",
+                      explain(web_providers.AIServiceError("Couldn't reach Ollama (unavailable): refused"),
+                              "Ollama", "llama3.2"))
+        self.assertIn("busy", explain(RuntimeError("429 RESOURCE_EXHAUSTED"), "Gemini", "m"))
+        self.assertIn("returned an error: odd", explain(RuntimeError("odd"), "Gemini", "m"))
+
+    def test_sorter_stops_with_the_explanation(self):
+        class Missing(FakeProvider):
+            def generate_json(self, model, contents):
+                raise RuntimeError("404 model not found")
+
+        files = [AIFile("k", "/d/a.pdf", "a.pdf", "Downloads")]
+        _, run = AISorter(Missing(), "gemini", "gemini-typo").run([AIFolder("/s", "Sorted")], files, 1.0)
+        self.assertTrue(run.failed)
+        self.assertIn("Gemini can't find the model “gemini-typo”", run.stopped)
+
+    def test_model_lists_from_each_service(self):
+        replies = {
+            "https://api.anthropic.com/v1/models?limit=100": {"data": [{"id": "claude-a"}]},
+            "https://x/v1/models": {"data": [{"id": "gpt-small"}, {"id": "text-embedding-3"}, {"id": "a:free"}]},
+            "http://localhost:11434/api/tags": {"models": [{"name": "llama3.2"}]},
+        }
+        with mock.patch.object(web_providers, "_get", lambda url, headers, service: replies[url]):
+            self.assertEqual(web_providers.ClaudeProvider("k").list_models(), ["claude-a"])
+            self.assertEqual(web_providers.OpenAICompatibleProvider("k", "https://x/v1", "OpenRouter").list_models(),
+                             ["a:free", "gpt-small"])
+            self.assertEqual(web_providers.OllamaProvider().list_models(), ["llama3.2"])
+        models = [SimpleNamespace(name="models/gemini-a", supported_actions=["generateContent"]),
+                  SimpleNamespace(name="models/text-embedding-004", supported_actions=["embedContent"])]
+        client = SimpleNamespace(models=SimpleNamespace(list=lambda: models))
+        self.assertEqual(GeminiAIProvider("k", client=client, types_module=SimpleNamespace()).list_models(),
+                         ["gemini-a"])
+
+    def test_service_check_fetch_and_choices(self):
+        from sortzen.ai.errors import AIProblem
+        from sortzen.config import AppPaths
+        from sortzen.repositories.api_keys import ApiKeyStore
+        from sortzen.services import AppService
+        from tests.test_repositories import FakeKeyring
+
+        with tempfile.TemporaryDirectory() as folder:
+            service = AppService(AppPaths(Path(folder)), ApiKeyStore(FakeKeyring()))
+            with self.assertRaises(AIProblem) as no_key:
+                service.check_ai("gemini")
+            self.assertIn("Paste your Gemini API key", str(no_key.exception))
+            provider = FakeProvider()
+            provider.list_models = lambda: ["gemini-b", "gemini-c"]
+            with mock.patch("sortzen.services.app_service.make_provider", lambda *a: provider):
+                service.check_ai("gemini", "gemini-b", key="typed")
+                self.assertEqual(service.fetch_models("gemini", key="typed"), ["gemini-b", "gemini-c"])
+            service.set_model("my-own-model", "gemini")
+            self.assertEqual(service.model_choices("gemini"),
+                             [SERVICES["gemini"].default_model, "gemini-b", "gemini-c", "my-own-model"])

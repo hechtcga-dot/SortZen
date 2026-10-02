@@ -14,7 +14,9 @@ from ..config import AI_BATCH_SIZE, TRANSIENT_BACKOFFS
 from ..repositories.ai_answers import AIAnswer
 from ..tasks import Progress, Status
 from .costs import cost, tokens
+from .errors import explain
 from .parsing import extract_json
+from .services import SERVICES
 from .privacy import image_preview
 from .provider import ImagePayload, is_transient_api_error
 
@@ -58,6 +60,7 @@ class AIRun:
     output_tokens: int = 0
     spent: float = 0.0
     stopped: str = ""               # why it stopped early, if it did
+    failed: bool = False            # stopped by an error from the service (not the cap or Stop safely)
 
 
 class AISorter:
@@ -140,7 +143,9 @@ class AISorter:
                 try:
                     reply = self._ask(self.request(folders, batch, with_content), token)
                 except Exception as exc:
-                    run.stopped = str(exc) or type(exc).__name__
+                    run.stopped = explain(exc, SERVICES[self.service].name if self.service in SERVICES
+                                          else self.service, self.model)
+                    run.failed = True
                     return finish()
                 run.input_tokens += reply.usage.input_tokens
                 run.output_tokens += reply.usage.output_tokens

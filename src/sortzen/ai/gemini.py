@@ -39,3 +39,16 @@ class GeminiAIProvider(AIProvider):
             total_tokens=int(getattr(meta, "total_token_count", 0) or 0),
         )
         return AIResponse(text=response.text, usage=usage)
+
+    def list_models(self) -> list[str]:
+        """Gemini models that can answer requests like SortZen's."""
+        found = []
+        for m in self.client.models.list():
+            actions = getattr(m, "supported_actions", None) or []
+            if actions and "generateContent" not in actions:
+                continue
+            name = str(getattr(m, "name", "") or "")
+            name = name.split("/", 1)[1] if name.startswith("models/") else name
+            if name and not any(w in name for w in ("embedding", "imagen", "veo", "aqa", "tts", "image")):
+                found.append(name)
+        return sorted(found)
