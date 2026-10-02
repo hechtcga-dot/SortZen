@@ -239,7 +239,10 @@ def _decide_clear(p, folder: str, source) -> FolderSuggestion | None:
 
     answer = p.answers.get(folder_key(folder))
     choices = _folder_choices(source.mode)
-    if answer is not None and 0 <= answer < len(choices):
+    if isinstance(answer, str):             # users named a folder for it
+        return FolderSuggestion(folder, KEEP_TOGETHER, 100, [Reason(True, "Your answer")], destination=answer,
+                                files=n)
+    if isinstance(answer, int) and 0 <= answer < len(choices):
         return FolderSuggestion(folder, choices[answer].outcome, 100, [Reason(True, "Your answer")], files=n)
     if name.lower().startswith(HOLDING_PREFIXES) or HOLDING_WORDS & set(name_words):
         why = "A restored copy of another drive" if "restored" in name_words \
@@ -549,9 +552,14 @@ def apply_answers(p, plan: Plan) -> None:
     del plan.questions[MAX_QUESTIONS:]
     for q in plan.questions:
         answer = p.answers.get(q.key)
-        if answer is None or not 0 <= answer < len(q.choices) or not q.key.startswith("topic:"):
+        if isinstance(answer, str) and answer:          # users named a folder
+            q.choices.insert(len(q.choices) - 1, Choice(f"Together in {p.label(answer)}", answer))
+            answer = len(q.choices) - 2
+        if not isinstance(answer, int) or not 0 <= answer < len(q.choices):
             continue
         q.answer = answer
+        if not q.key.startswith("topic:"):
+            continue
         chosen = q.choices[answer].destination
         about = {path_key(m) for m in q.about}
         for s in plan.files:

@@ -366,3 +366,47 @@ class ProgramsAndFamiliesTest(unittest.TestCase):
         self.assertFalse(any("tidelog" in m.lower() and os.sep + "src" + os.sep in m
                              for t in self.plan.topics for m in t.members))
         self.assertFalse(any(os.sep + "tests" in a for q in self.plan.questions for a in q.about))
+
+
+class GroupsTest(unittest.TestCase):
+    def test_groups_by_name_shape_then_shared_word(self):
+        from sortzen.engine.groups import find_groups
+        from sortzen.engine.plan import Suggestion
+
+        unsure = [Suggestion(f"/d/{n}.pdf", "/d", None, 0) for n in (48213, 99120, 1203, 77)]
+        unsure += [Suggestion(f"/d/IMG_{n}.jpg", "/d", "/s/Photos", 60) for n in (2041, 2042, 2050)]
+        unsure += [Suggestion(f"/d/Northgate {w}.docx", "/d", None, 0) for w in ("letter", "memo", "notes")]
+        unsure += [Suggestion("/d/odd one.txt", "/d", None, 0), Suggestion("/d/55.docx", "/d", None, 0)]
+        groups = find_groups(unsure)
+        self.assertEqual([g.title for g in groups], ["4 PDFs whose names are only numbers",
+                                                     "3 pictures named like “IMG_2041.jpg”",
+                                                     "3 files with “northgate” in the name"])
+        self.assertEqual(groups[1].suggestion, "/s/Photos")
+        self.assertIsNone(groups[0].suggestion)
+        rule = groups[0].rule("/s/Scans")
+        self.assertTrue(rule.matches("31337.pdf"))
+        self.assertFalse(rule.matches("31337.docx"))
+        self.assertFalse(rule.matches("Scan 31337.pdf"))
+        self.assertIn("Names that are only numbers (PDF files) go to /s/Scans", rule.describe())
+        self.assertTrue(groups[2].rule("/s/Work").matches("Northgate invoice.pdf"))
+
+    def test_a_typed_folder_answers_a_question(self):
+        from sortzen.engine.overview import apply_answers
+        from sortzen.engine.plan import Choice, Plan, Question, Suggestion
+
+        plan = Plan(files=[Suggestion("/d/a.pdf", "/d", "/d", 70)],
+                    questions=[Question("topic:/d:a", "Where?", [Choice("Together in d", "/d"),
+                                                                 Choice("Leave them where they are", None)],
+                                        ["/d/a.pdf"])])
+
+        class P:
+            answers = {"topic:/d:a": "/s/Typed"}
+
+            @staticmethod
+            def label(folder):
+                return os.path.basename(folder)
+
+        apply_answers(P, plan)
+        self.assertEqual(plan.questions[0].choices[1].label, "Together in Typed")
+        self.assertEqual(plan.questions[0].answer, 1)
+        self.assertEqual((plan.files[0].destination, plan.files[0].percent), ("/s/Typed", 100))

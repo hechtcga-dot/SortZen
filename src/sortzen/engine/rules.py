@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass
 
@@ -19,23 +20,36 @@ MIN_EXAMPLES = 2            # files sent to the same folder before a rule is sug
 SURE_ELSEWHERE = 90         # a suggestion this sure is never overruled by a suggested rule
 
 
+def name_shape(name: str) -> str:
+    """A name with its numbers as #: "IMG_2041.jpg" and "IMG_77.jpg" both give "img_#"."""
+    stem = os.path.splitext(name)[0].lower()
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", stem)).strip()
+
+
 @dataclass(frozen=True)
 class Rule:
-    word: str                   # a name word, as the engine reads it (lower case, singular)
+    word: str                   # a name word, as the engine reads it (lower case, singular); "" with a shape
     destination: str
     ext: str = ""               # ".pdf"; "" for any type
+    shape: str = ""             # a name shape ("#", "img_#"); "" for a word rule
+    example: str = ""           # a name it was made from, for describing it
 
     def matches(self, name: str) -> bool:
         if self.ext and os.path.splitext(name)[1].lower() != self.ext:
             return False
+        if self.shape:
+            return name_shape(name) == self.shape
         return self.word in words(stem_of(name))
 
     @property
     def key(self) -> str:
-        return f"{self.word}|{self.ext}|{os.path.normcase(os.path.abspath(self.destination))}"
+        return f"{self.word}|{self.ext}|{self.shape}|{os.path.normcase(os.path.abspath(self.destination))}"
 
     def describe(self, display=lambda p: p) -> str:
         kind = f" ({self.ext.lstrip('.').upper()} files)" if self.ext else ""
+        if self.shape:
+            what = "Names that are only numbers" if self.shape == "#" else f"Names like “{self.example or self.shape}”"
+            return f"{what}{kind} go to {display(self.destination)}"
         return f"Names with “{self.word}”{kind} go to {display(self.destination)}"
 
 
@@ -48,7 +62,7 @@ class RuleSuggestion:
 
 def _ordered(rules: list[Rule]) -> list[Rule]:
     """The most specific rules first (a word and a type before a word alone); later rules before earlier."""
-    return sorted(reversed(rules), key=lambda r: not r.ext)
+    return sorted(reversed(rules), key=lambda r: (not r.shape, not r.ext))
 
 
 def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lambda p: p) -> int:
