@@ -409,8 +409,27 @@ and when):
   - "Change destination…" and "Leave it where it is" (buttons and right-click, for one or
     several files) are remembered at once; "Update plan" lets SortZen learn from them for
     similar files. Every change can be undone (Ctrl+Z).
-- Not in the alpha: renaming (§12), the in-app updater (§13), rule suggestions (SortZen
-  offering "Make this a rule?" after repeated corrections), a privacy option that sends a
+- **0.3**: everything in 0.2, plus:
+  - **Recently chosen folders**: the 20 folders most recently chosen as destinations are
+    remembered. They head the "Change destination" window, and right-click › "Move to"
+    sends the selected files to one of them in one click.
+  - **New folder…** in the "Change destination" window names a new folder inside the
+    selected one; it is made when the files move.
+  - **Renaming folders**: "Rename…" in the "Change destination" window, and right-click ›
+    "Rename its destination folder…". A folder SortZen only plans to make is renamed in
+    the plan, and the name is remembered for later plans. A folder that exists is renamed
+    on disk after confirmation, logged like a move so Undo puts the old name back. Choices,
+    rules and recent folders that point into it follow the new name.
+  - **Rules**: a rule sends files whose names contain a word (optionally of one file type)
+    to a folder, at 100%. When users send two or more files with a word in common to the
+    same folder, SortZen offers a rule ("Names with “invoice” go to Work/Accounts
+    Payable? 12 more files in this plan match"), but only when the rule would place other
+    files and never when it would overrule a suggestion SortZen is at least 90% sure of.
+    "Make a rule and update the plan", "Not now" or "Don't suggest this again". The most
+    specific rule wins (a word and a type before a word alone); files users placed
+    themselves keep their choice. Rules are listed, and can be removed, in Settings ›
+    Rules, are saved in profiles, and making one can be undone.
+- Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned
   PDFs (OCR), sorting on a schedule.

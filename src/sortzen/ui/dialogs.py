@@ -5,8 +5,8 @@ import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QFileDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QPushButton, QRadioButton, QVBoxLayout,
+    QButtonGroup, QDialog, QDialogButtonBox, QFileDialog, QInputDialog, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QVBoxLayout,
 )
 
 from ..engine.planner import SORT_OUT, TIDY
@@ -53,40 +53,113 @@ class ModeDialog(QDialog):
 
 
 class DestinationDialog(QDialog):
-    """Pick a destination from the folders SortZen knows, or browse for another."""
+    """Pick a destination: a recently chosen folder, any folder SortZen knows, a new folder, or another one.
 
-    def __init__(self, parent, choices: list[str], display, title: str = "Choose a destination"):
+    ``rename(folder)`` renames a folder and returns its new path (None when nothing changed).
+    """
+
+    def __init__(self, parent, choices: list[str], display, title: str = "Choose a destination",
+                 recent: list[str] = (), rename=None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(560, 520)
+        self.resize(600, 600)
         self.chosen: str | None = None
+        self.display = display
+        self.rename = rename
         col = QVBoxLayout(self)
         col.addWidget(_hint("SortZen remembers your choice and learns from it for similar files. Nothing moves "
                             "until you use “Move ticked…” and confirm."))
+        self.recent = QListWidget()
+        if recent:
+            col.addWidget(QLabel("Recently chosen", objectName="cardTitle"))
+            self._fill(self.recent, recent)
+            self.recent.setMaximumHeight(min(170, 26 * len(recent) + 8))
+            self.recent.itemDoubleClicked.connect(lambda item: self._pick(item))
+            self.recent.itemClicked.connect(lambda _: self.list.clearSelection())
+            col.addWidget(self.recent)
+            col.addWidget(QLabel("All folders", objectName="cardTitle"))
         self.search = QLineEdit(placeholderText="Type to filter folders")
         col.addWidget(self.search)
         self.list = QListWidget()
-        for folder in choices:
-            item = QListWidgetItem(display(folder))
-            item.setData(Qt.ItemDataRole.UserRole, folder)
-            item.setToolTip(folder)
-            self.list.addItem(item)
-        self.list.itemDoubleClicked.connect(lambda _: self.accept())
+        self._fill(self.list, choices)
+        self.list.itemDoubleClicked.connect(lambda item: self._pick(item))
+        self.list.itemClicked.connect(lambda _: self.recent.clearSelection())
         col.addWidget(self.list, 1)
         self.search.textChanged.connect(self._filter)
+        new = QPushButton("New folder…")
+        new.setToolTip("A new folder inside the selected one; it is made when the files move")
+        new.clicked.connect(self._new_folder)
+        rename_button = QPushButton("Rename…")
+        rename_button.setToolTip("Give the selected folder a new name")
+        rename_button.clicked.connect(self._rename)
+        rename_button.setVisible(rename is not None)
         browse = QPushButton("Another folder…")
         browse.clicked.connect(self._browse)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        box.addButton(browse, QDialogButtonBox.ButtonRole.ActionRole)
+        for button in (new, rename_button, browse):
+            box.addButton(button, QDialogButtonBox.ButtonRole.ActionRole)
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
         col.addWidget(box)
+
+    def _fill(self, widget: QListWidget, folders) -> None:
+        widget.clear()
+        for folder in folders:
+            item = QListWidgetItem(self.display(folder) + ("" if os.path.isdir(folder) else "  (new folder)"))
+            item.setData(Qt.ItemDataRole.UserRole, folder)
+            item.setToolTip(folder)
+            widget.addItem(item)
 
     def _filter(self, text: str) -> None:
         text = text.lower()
         for i in range(self.list.count()):
             item = self.list.item(i)
             item.setHidden(text not in item.text().lower())
+
+    def selected_folder(self) -> str | None:
+        for widget in (self.recent, self.list):
+            item = widget.currentItem()
+            if item is not None and item.isSelected() and not item.isHidden():
+                return item.data(Qt.ItemDataRole.UserRole)
+        return None
+
+    def _pick(self, item) -> None:
+        self.chosen = item.data(Qt.ItemDataRole.UserRole)
+        super().accept()
+
+    def _new_folder(self) -> None:
+        parent = self.selected_folder()
+        if parent is None:
+            QMessageBox.information(self, self.windowTitle(), "Select the folder to make the new folder in first.")
+            return
+        name, ok = QInputDialog.getText(self, "New folder", f"Name of the new folder inside “{os.path.basename(parent)}”:")
+        name = (name or "").strip().rstrip(". ")
+        if not ok or not name:
+            return
+        if set(name) & set('\\/:*?"<>|'):
+            QMessageBox.warning(self, "New folder", 'Folder names can\'t contain \\ / : * ? " < > |')
+            return
+        self.chosen = os.path.join(parent, name)
+        super().accept()
+
+    def _rename(self) -> None:
+        folder = self.selected_folder()
+        if folder is None:
+            QMessageBox.information(self, self.windowTitle(), "Select the folder to rename first.")
+            return
+        new = self.rename(folder)
+        if not new:
+            return
+        for widget in (self.recent, self.list):
+            for i in range(widget.count()):
+                item = widget.item(i)
+                old = item.data(Qt.ItemDataRole.UserRole)
+                if os.path.normcase(old) == os.path.normcase(folder) or \
+                        os.path.normcase(old).startswith(os.path.normcase(folder) + os.sep):
+                    path = new + old[len(folder):]
+                    item.setData(Qt.ItemDataRole.UserRole, path)
+                    item.setText(self.display(path) + ("" if os.path.isdir(path) else "  (new folder)"))
+                    item.setToolTip(path)
 
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Choose a folder")
@@ -95,9 +168,9 @@ class DestinationDialog(QDialog):
             super().accept()
 
     def accept(self) -> None:
-        item = self.list.currentItem()
-        if item is not None and not item.isHidden():
-            self.chosen = item.data(Qt.ItemDataRole.UserRole)
+        folder = self.selected_folder()
+        if folder:
+            self.chosen = folder
             super().accept()
 
 

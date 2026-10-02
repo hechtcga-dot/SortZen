@@ -31,11 +31,18 @@ moves files after the plan is confirmed.
 | 12 | Settings window (General, AI, Privacy, Advanced), save and load a profile, Help: activity log and diagnostic info, uninstall option to remove settings | **Done** |
 | 13 | **Alpha 0.2 build**: program folder and per-user installer from the Windows build workflow | **Done** |
 
+### Alpha 0.3
+| # | Phase | Status |
+|---|-------|--------|
+| 14 | Quicker choosing: recently chosen folders, "Move to", new folders by name, renaming planned and existing folders | **Done** |
+| 15 | Rules: suggested from repeated choices, applied in every plan, listed in Settings | **Done** |
+| 16 | **Alpha 0.3 build** | To do |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is
    private).
-3. Rule suggestions, the random-word privacy option, deeper new-folder structures,
+3. The random-word privacy option, deeper new-folder structures,
    permanently deleting queued files from inside SortZen.
 4. Reading scanned PDFs (OCR), sorting on a schedule.
 

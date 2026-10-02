@@ -24,7 +24,8 @@ src/sortzen/
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
                        reasons, corrections), overview.py (subfolders, kept-together folders,
                        topics, questions, answers), duplicates.py (exact copies, the copy
-                       kept and why), ai_evidence.py (AI answers as evidence), plan.py (Suggestion, FolderSuggestion, Topic, Question,
+                       kept and why), ai_evidence.py (AI answers as evidence), rules.py (rules
+                       users make, rule suggestions, renamed planned folders), plan.py (Suggestion, FolderSuggestion, Topic, Question,
                        Plan)
   mover/               moves confirmed files and folders (never decides): no overwriting,
                        copy and check across drives, step-by-step run log, Undo

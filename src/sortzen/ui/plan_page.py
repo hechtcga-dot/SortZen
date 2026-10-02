@@ -51,6 +51,8 @@ class PlanPage(QWidget):
     export = Signal()
     move_ticked = Signal(list)               # rows to move
     ask_ai = Signal()
+    move_to = Signal(list, str)              # rows, a recently chosen folder
+    rename_folder = Signal(str)
 
     def __init__(self, service):
         super().__init__()
@@ -400,6 +402,14 @@ class PlanPage(QWidget):
         movable = [r for r in rows if r.moves]
         menu = QMenu(self)
         change = menu.addAction("Change destination…", lambda: self.change_destination.emit(files))
+        recent = self.service.recent_destinations(self.plan)
+        quick = menu.addMenu("Move to")
+        for folder in recent:
+            label = self.service.display(folder) + ("" if os.path.isdir(folder) else "  (new folder)")
+            quick.addAction(label, lambda f=folder: self.move_to.emit(files, f))
+        quick.setEnabled(bool(files and recent))
+        if not recent:
+            quick.setTitle("Move to (folders you choose appear here)")
         stay = menu.addAction("Leave it where it is", lambda: self.leave_in_place.emit(files))
         corrected = [r for r in files if os.path.normcase(r.path) in
                      {os.path.normcase(p) for p in self.service.corrections()}]
@@ -413,6 +423,10 @@ class PlanPage(QWidget):
         tick.setEnabled(bool(movable))
         untick.setEnabled(bool(movable))
         menu.addSeparator()
+        destination = rows[0].destination if rows[0].destination and rows[0].moves else None
+        rename = menu.addAction("Rename its destination folder…",
+                                lambda: self.rename_folder.emit(destination))
+        rename.setEnabled(bool(destination))
         menu.addAction("Open the folder it is in", lambda: self.open_folder.emit(rows[0].current))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 

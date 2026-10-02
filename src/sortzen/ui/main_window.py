@@ -7,7 +7,7 @@ import os
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QApplication, QFileDialog, QFrame, QInputDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
     QSplitter, QTabWidget, QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -92,6 +92,8 @@ class MainWindow(QMainWindow):
         self.plan_page.export.connect(self.export_plan)
         self.plan_page.move_ticked.connect(self.move_rows)
         self.plan_page.ask_ai.connect(self.ask_ai)
+        self.plan_page.move_to.connect(self.correct)
+        self.plan_page.rename_folder.connect(self.rename_folder)
         self.copies_page = CopiesPage(self.service)
         self.copies_page.queue.connect(self.queue_copies)
         self.copies_page.open_folder.connect(self.open_folder)
@@ -530,13 +532,14 @@ class MainWindow(QMainWindow):
     def change_destination(self, rows) -> None:
         if not rows:
             return
-        dialog = DestinationDialog(self, self.service.destination_choices(self.plan), self.service.display)
+        dialog = DestinationDialog(self, self.service.destination_choices(self.plan), self.service.display,
+                                   recent=self.service.recent_destinations(self.plan), rename=self.rename_folder)
         if dialog.exec() and dialog.chosen:
             self.correct(rows, dialog.chosen)
 
     def leave_in_place(self, rows) -> None:
         for row in rows:
-            self.correct([row], row.current)
+            self.correct([row], row.current, suggest=False)
 
     def forget_choice(self, rows) -> None:
         if rows:
@@ -544,9 +547,11 @@ class MainWindow(QMainWindow):
             self._push_undo("Forget choice", lambda: self.service.restore_corrections(previous))
             self.statusBar().showMessage("Choice forgotten. Update the plan to see SortZen's own suggestion.", 6000)
 
-    def correct(self, rows, destination: str) -> None:
+    def correct(self, rows, destination: str, suggest: bool = True) -> None:
         from ..engine.plan import Reason
 
+        if suggest:
+            self.service.note_destination(destination)
         previous = self.service.correct([r.path for r in rows], destination)
         changed = {os.path.normcase(r.path) for r in rows}
         for s in self.plan.files if self.plan else []:
@@ -558,6 +563,61 @@ class MainWindow(QMainWindow):
         self.plan_page.refresh()
         self.statusBar().showMessage("Remembered. Update the plan to let SortZen learn from it for similar files.",
                                      6000)
+        if suggest and self.plan is not None:
+            suggestion = self.service.suggest_rule(self.plan, destination)
+            if suggestion:
+                self.offer_rule(suggestion)
+
+    def offer_rule(self, suggestion, answer=None) -> None:
+        """Offer to make a rule from a pattern in the destinations chosen; ``answer`` skips the question."""
+        n = len(suggestion.matches)
+        text = (f"{self.service.describe_rule(suggestion.rule)}?\n\nYou sent {suggestion.examples} files with this "
+                f"in their name there. {n:,} more file{'s' if n != 1 else ''} in this plan match"
+                f"{'es' if n == 1 else ''}. A rule places them, and similar files in future plans, at 100%. "
+                "Nothing moves until you confirm. Rules are listed in Edit › Settings › Rules.")
+        if answer is None:
+            box = QMessageBox(QMessageBox.Icon.Question, "Make this a rule?", text, parent=self)
+            make = box.addButton("Make a rule and update the plan", QMessageBox.ButtonRole.AcceptRole)
+            box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
+            never = box.addButton("Don't suggest this again", QMessageBox.ButtonRole.DestructiveRole)
+            box.exec()
+            answer = "make" if box.clickedButton() is make else "never" if box.clickedButton() is never else "no"
+        if answer == "never":
+            self.service.decline_rule(suggestion.rule)
+        elif answer == "make":
+            before = self.service.add_rule(suggestion.rule)
+            self._push_undo("Make a rule", lambda: self.service.restore_rules(before))
+            self.make_plan()
+
+    def rename_folder(self, folder: str, new_name: str | None = None, confirm: bool = True) -> str | None:
+        """Give a folder a new name: in the plan if it is still to be made, on disk (with Undo) if it exists."""
+        if not folder or self._moving():
+            return None
+        old_name = os.path.basename(folder)
+        if new_name is None:
+            new_name, ok = QInputDialog.getText(self, "Rename folder", f"New name for “{old_name}”:", text=old_name)
+            if not ok:
+                return None
+        exists = os.path.isdir(folder)
+        if exists and confirm and QMessageBox.question(
+                self, "Rename folder", f"Rename the folder “{old_name}” to “{new_name.strip()}” now?\n\nThe files in "
+                "it stay as they are, and Edit › Undo puts the old name back.") != QMessageBox.StandardButton.Yes:
+            return None
+        try:
+            run = self.service.rename_folder(self.plan, folder, new_name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Rename folder", str(exc))
+            return None
+        new_path = os.path.join(os.path.dirname(os.path.abspath(folder)), new_name.strip().rstrip(". "))
+        if run is not None:
+            self._push_undo("Rename folder", lambda: self.service.undo_move(run.log))
+            self.refresh_folders()
+            self.make_plan()
+        else:
+            self._push_undo("Rename folder", lambda: self.service.rename_folder(self.plan, new_path, old_name))
+            self.plan_page.refresh()
+        self.statusBar().showMessage(f"Renamed “{old_name}” to “{os.path.basename(new_path)}”.", 6000)
+        return new_path
 
     # ---------------------------------------------------------------- moving
     def move_rows(self, rows, confirm: bool = True) -> None:

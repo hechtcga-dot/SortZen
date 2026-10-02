@@ -1,9 +1,10 @@
 """Settings: General, AI, Privacy and Advanced. Changes are saved when OK is pressed."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QSpinBox,
-    QTabWidget, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from .ai_widgets import AIServiceBox, PrivacyListsBox, PrivacyModeBox, hint
@@ -77,6 +78,29 @@ class SettingsWindow(QDialog):
         holder.setLayout(row)
         self.tabs.addTab(_page(self.privacy_mode, self.privacy_lists, holder), "Privacy")
 
+        rules = QWidget()
+        r = QVBoxLayout(rules)
+        r.setContentsMargins(0, 0, 0, 0)
+        r.addWidget(hint("Rules place every matching file at 100%. SortZen suggests a rule when you send several "
+                         "files with a word in common to the same folder. Files you place yourself keep your choice."))
+        self.rules = QListWidget()
+        self.rules.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        for rule in service.rules():
+            item = QListWidgetItem(service.describe_rule(rule))
+            item.setData(Qt.ItemDataRole.UserRole, rule)
+            self.rules.addItem(item)
+        if not self.rules.count():
+            self.rules.addItem("No rules yet.")
+            self.rules.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+        r.addWidget(self.rules, 1)
+        row = QHBoxLayout()
+        remove_rule = QPushButton("Remove")
+        remove_rule.clicked.connect(lambda: [self.rules.takeItem(self.rules.row(i)) for i in self.rules.selectedItems()])
+        row.addWidget(remove_rule)
+        row.addStretch(1)
+        r.addLayout(row)
+        self.tabs.addTab(_page(rules), "Rules")
+
         advanced = QWidget()
         a = QVBoxLayout(advanced)
         a.setContentsMargins(0, 0, 0, 0)
@@ -115,4 +139,6 @@ class SettingsWindow(QDialog):
         self.ai_box.apply()
         self.privacy_mode.apply()
         self.privacy_lists.apply()
+        kept = [self.rules.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.rules.count())]
+        self.service.restore_rules([{"word": x.word, "ext": x.ext, "destination": x.destination} for x in kept if x])
         super().accept()

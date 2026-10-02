@@ -319,6 +319,60 @@ class MainWindowTest(unittest.TestCase):
             self.window._asked(failed)
         self.assertIn("can't find the model", warned.call_args.args[2])
 
+    def test_recent_folders_rules_and_renaming(self):
+        import shutil
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.ui.dialogs import DestinationDialog
+        from sortzen.ui.settings_window import SettingsWindow
+
+        root = Path(self.dir.name) / "folders"
+        for name in ("Downloads", "Sorted"):
+            shutil.copytree(shared_test_folders() / name, root / name)
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        rows = [r for r in self.service.plan_rows(self.window.plan)["Review"] if not r.is_folder][:3]
+        target = str(root / "Sorted" / "Archives")
+        with mock.patch.object(type(self.window), "offer_rule"):
+            self.window.correct(rows[:1], target)
+            self.window.correct(rows[1:2], str(root / "Sorted" / "Music"))
+        self.assertEqual(self.service.recent_destinations()[:2], [str(root / "Sorted" / "Music"), target])
+        dialog = DestinationDialog(self.window, self.service.destination_choices(self.window.plan),
+                                   self.service.display, recent=self.service.recent_destinations(), rename=lambda f: None)
+        self.assertEqual(dialog.recent.count(), 2)
+        dialog.recent.setCurrentRow(1)
+        dialog.accept()
+        self.assertEqual(dialog.chosen, target)
+
+        # a rule is offered after two files with a word in common go to one folder
+        from sortzen.engine.rules import Rule, RuleSuggestion
+        suggestion = RuleSuggestion(Rule("invoice", target), 2, ["x"])
+        with mock.patch.object(self.window, "make_plan") as replanned:
+            self.window.offer_rule(suggestion, answer="make")
+        replanned.assert_called_once()
+        self.assertEqual(self.service.rules(), [Rule("invoice", target)])
+        settings = SettingsWindow(self.window, self.service, "Rules")
+        self.assertIn("Names with “invoice” go to", settings.rules.item(0).text())
+        self.window.undo()
+        self.assertEqual(self.service.rules(), [])
+        settings.close()
+
+        # renaming a folder that exists: on disk, with Undo
+        with mock.patch.object(self.window, "make_plan"):
+            new = self.window.rename_folder(str(root / "Sorted" / "Music"), "Songs", confirm=False)
+        self.assertTrue(os.path.isdir(new))
+        self.assertFalse(os.path.exists(root / "Sorted" / "Music"))
+        self.assertEqual(self.service.recent_destinations()[0], new)
+        self.window.undo()
+        self.assertTrue(os.path.isdir(root / "Sorted" / "Music"))
+        with mock.patch.object(QMessageBox, "warning") as warned:
+            self.assertIsNone(self.window.rename_folder(str(root / "Sorted" / "Music"), "Bad/Name", confirm=False))
+        self.assertIn("can't contain", warned.call_args.args[2])
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview
