@@ -6,7 +6,7 @@ import os
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
     QSplitter, QTabWidget, QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -20,6 +20,7 @@ from .bridge import EventBridge
 from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
 from .folders_page import FoldersPage
 from .icons import app_icon
+from .move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
 from .questions_page import QuestionsPage
@@ -31,7 +32,8 @@ STEPS = (
                     "about anything it can't settle."),
     ("Check the plan", "Every file and folder gets a destination and a percentage showing how sure "
                        "SortZen is, with the reasons. Anything below your chosen level waits in Review."),
-    ("Move", "Not in this version: the plan shows what SortZen would do, and nothing is moved."),
+    ("Move", "Tick what should move and confirm. Every move is written down, so Edit › Undo puts everything "
+             "back."),
 )
 FOLDER = Qt.ItemDataRole.UserRole
 
@@ -82,6 +84,7 @@ class MainWindow(QMainWindow):
         self.plan_page.open_folder.connect(self.open_folder)
         self.plan_page.update_plan.connect(self.make_plan)
         self.plan_page.export.connect(self.export_plan)
+        self.plan_page.move_ticked.connect(self.move_rows)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([280, 920])
@@ -101,7 +104,7 @@ class MainWindow(QMainWindow):
         icon.setPixmap(app_icon().pixmap(26, 26))
         row.addWidget(icon)
         row.addWidget(QLabel(APP_NAME, objectName="appName"))
-        row.addWidget(QLabel(f"{APP_VERSION} alpha · plan only", objectName="versionPill"))
+        row.addWidget(QLabel(f"{APP_VERSION} alpha", objectName="versionPill"))
         row.addStretch(1)
         return header
 
@@ -203,6 +206,7 @@ class MainWindow(QMainWindow):
         self.export_action = action("Export plan to Excel…", self.export_plan, "Ctrl+E",
                                     "Save the plan as an Excel workbook")
         self.undo_action = action("Undo", self.undo, QKeySequence.StandardKey.Undo, "Undo the last change")
+        self.runs_action = action("Undo a move…", self.show_runs, tip="Put back the files from an earlier move")
         self.export_action.setEnabled(False)
         self.undo_action.setEnabled(False)
 
@@ -222,6 +226,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(QAction("E&xit", self, shortcut=QKeySequence.StandardKey.Quit, triggered=self.close))
         edit_menu = self.menuBar().addMenu("&Edit")
         edit_menu.addAction(self.undo_action)
+        edit_menu.addAction(self.runs_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.plan_action)
         view_menu = self.menuBar().addMenu("&View")
@@ -233,9 +238,9 @@ class MainWindow(QMainWindow):
 
     def show_about(self) -> None:
         QMessageBox.about(self, f"About {APP_NAME}",
-                          f"<b>{APP_NAME} {APP_VERSION}</b> (alpha, plan only)<br>{APP_TAGLINE}<br><br>"
+                          f"<b>{APP_NAME} {APP_VERSION}</b> (alpha)<br>{APP_TAGLINE}<br><br>"
                           "Sorts messy folders into the right place. Local first; AI is optional. "
-                          "This version shows the plan and moves nothing.")
+                          "Nothing moves until you confirm, and every move can be undone.")
 
     # ---------------------------------------------------------------- folders
     def count_folders(self) -> None:
@@ -285,7 +290,7 @@ class MainWindow(QMainWindow):
             self.start_hint.setText("Add destination folders too, or tidy a folder in place. "
                                     "“Use my Windows folders” adds Documents, Pictures, Music and Videos.")
         else:
-            self.start_hint.setText("Ready to make a plan. Nothing is moved in this version.")
+            self.start_hint.setText("Ready to make a plan. Making one moves nothing: you see the plan first.")
 
     def _tree_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -443,6 +448,68 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Remembered. Update the plan to let SortZen learn from it for similar files.",
                                      6000)
 
+    # ---------------------------------------------------------------- moving
+    def move_rows(self, rows, confirm: bool = True) -> None:
+        """Show what will move; after confirmation move it in the background."""
+        if not rows or self.plan is None or self.service.jobs.busy:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            preview = self.service.move_preview(self.plan, rows)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not preview.items:
+            return
+        if confirm and not ConfirmMoveDialog(self, preview, self.service.display).exec():
+            return
+        plan = self.plan
+        self.progress = ProgressWindow(self, "Moving files", estimate=max(2.0, preview.items / 50))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("move", lambda emit, token: self.service.move(plan, rows, emit, token))
+
+    def show_runs(self) -> None:
+        dialog = RunsDialog(self, self.service.move_runs())
+        if dialog.exec() and dialog.chosen:
+            self.undo_run(dialog.chosen, confirm=False)
+
+    def undo_run(self, log: str, confirm: bool = True) -> None:
+        """Put everything from one move back where it was, in the background."""
+        if self.service.jobs.busy and self.service.jobs.current.name == "count":
+            self.service.jobs.current.join(30)          # counting is quick; let it finish
+        if self.service.jobs.busy:
+            QMessageBox.information(self, APP_NAME, "SortZen is still working. Try again when it has finished.")
+            return
+        run = next((r for r in self.service.move_runs() if r["log"] == log), None)
+        if run is None or run["undone"]:
+            self.statusBar().showMessage("That move has already been put back.", 6000)
+            return
+        if confirm and QMessageBox.question(
+                self, APP_NAME, f"Put back the {run['moved']:,} items from this move?") != QMessageBox.StandardButton.Yes:
+            return
+        self.progress = ProgressWindow(self, "Putting files back", estimate=max(2.0, run["moved"] / 50))
+        self.progress.stop_button.setEnabled(False)
+        self.progress.show()
+        self.run_job("undo-move", lambda emit, token: self.service.undo_move(log, emit, token))
+
+    def _moved(self, result, undoing: bool) -> None:
+        if not undoing and result.moved:
+            self._push_undo("Move", lambda: self.undo_run(result.log))
+        self.result_dialog = MoveResultDialog(self, result, self.service.display, undoing)
+        self.result_dialog.finished.connect(lambda _: self._after_move(result))
+        self.result_dialog.open()
+
+    def _after_move(self, result) -> None:
+        if self.result_dialog.undo_requested:
+            if self.undo_stack and self.undo_stack[-1][0] == "Move":
+                self.undo_stack.pop()
+                self._sync_undo_action()
+            self.undo_run(result.log, confirm=False)
+            return
+        self.refresh_folders()
+        if self.service.source_folders():
+            self.make_plan()            # the plan is made again from where everything is now
+
     # ---------------------------------------------------------------- undo
     def _push_undo(self, text: str, undo) -> None:
         self.undo_stack.append((text, undo))
@@ -452,13 +519,23 @@ class MainWindow(QMainWindow):
     def undo(self) -> None:
         if not self.undo_stack:
             return
+        if self._moving():
+            return
         text, undo = self.undo_stack.pop()
         undo()
+        self._sync_undo_action()
+        if self._moving():                  # a move is being put back; its own window reports
+            return
         self.refresh_folders()
         self.folders_page.refresh_ticks()
+        self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
+
+    def _moving(self) -> bool:
+        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move")
+
+    def _sync_undo_action(self) -> None:
         self.undo_action.setEnabled(bool(self.undo_stack))
         self.undo_action.setText(f"Undo {self.undo_stack[-1][0].lower()}" if self.undo_stack else "Undo")
-        self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     # ---------------------------------------------------------------- background jobs
     def run_job(self, name: str, work):
@@ -478,7 +555,13 @@ class MainWindow(QMainWindow):
                 self.progress.estimate = event.seconds
         elif isinstance(event, Log):
             self.statusBar().showMessage(event.message, 5000)
-        elif isinstance(event, JobFinished):
+        elif isinstance(event, (JobFinished, JobFailed)):
+            if self.service.jobs.current:
+                self.service.jobs.current.join(5)    # the job reports just before its thread ends
+            self._job_ended(event)
+
+    def _job_ended(self, event) -> None:
+        if isinstance(event, JobFinished):
             self._close_progress()
             self.statusBar().showMessage("Ready")
             if event.name == "count":
@@ -486,6 +569,8 @@ class MainWindow(QMainWindow):
                 if self._plan_waiting:
                     self._plan_waiting = False
                     self.make_plan()
+            if event.name in ("move", "undo-move"):
+                self._moved(event.result, event.name == "undo-move")
             if event.name == "plan":
                 if event.result is None:
                     self.statusBar().showMessage("Stopped. Nothing was changed.", 6000)
@@ -499,6 +584,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
+            if event.name in ("move", "undo-move"):
+                QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
+                                    "is written down; Edit › Undo a move puts it back.")
 
     def _close_progress(self) -> None:
         if self.progress:

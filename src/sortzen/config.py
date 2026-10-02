@@ -38,6 +38,10 @@ class AppPaths:
     def logs_dir(self) -> Path:
         return self.storage / "logs"
 
+    @property
+    def runs_dir(self) -> Path:
+        return self.storage / "runs"
+
 
 def _default_storage() -> Path:
     override = os.getenv("SORTZEN_DATA_DIR", "").strip()

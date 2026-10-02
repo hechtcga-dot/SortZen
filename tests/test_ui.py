@@ -139,6 +139,61 @@ class MainWindowTest(unittest.TestCase):
         names = [group.child(i).text(0) for i in range(group.childCount())]
         self.assertEqual(names, sorted(names, key=natural))
 
+    def test_move_ticked_then_undo(self):
+        import shutil
+
+        source = shared_test_folders()
+        root = Path(self.dir.name) / "folders"
+        for name in ("Downloads", "Sorted"):
+            shutil.copytree(source / name, root / name)
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        ticked = self.window.plan_page.ticked_rows()[:5]
+        before = sorted(str(p) for p in root.rglob("*"))
+        self.window.move_rows(ticked, confirm=False)
+        self.assertTrue(wait_until(self.app, lambda: getattr(self.window, "result_dialog", None) is not None))
+        self.assertTrue(all(not os.path.exists(r.path) for r in ticked))
+        self.assertIn("Moved 5 items", self.window.result_dialog.findChild(type(self.window.start_hint)).text())
+        self.assertEqual(self.window.undo_action.text(), "Undo move")
+        self.window.plan = None
+        self.window.result_dialog.accept()                  # closing it makes the plan again
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        self.assertFalse({r.path for r in ticked} & {s.path for s in self.window.plan.files})
+        from PySide6.QtWidgets import QMessageBox
+        from unittest import mock
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.window.undo()
+        self.assertTrue(wait_until(self.app, lambda: all(os.path.exists(r.path) for r in ticked)))
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))
+        self.assertEqual(sorted(str(p) for p in root.rglob("*")), before)
+        self.assertTrue(self.service.move_runs()[0]["undone"])
+
+    def test_confirm_and_runs_windows(self):
+        from sortzen.mover import RunResult
+        from sortzen.services.moving import MovePreview
+        from sortzen.ui.move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
+
+        preview = MovePreview(files=3, folders=1, files_in_folders=12,
+                              destinations=[("/x/Sorted/Work", 3, False), ("/x/Sorted/Trips", 1, True)],
+                              renamed=["notes.txt"], emptied=["/x/Downloads/older"])
+        dialog = ConfirmMoveDialog(self.window, preview, lambda p: p)
+        self.assertEqual(dialog.move_button.text(), "Move 4")
+        self.assertEqual(dialog.table.topLevelItem(0).text(1), "3")
+        result = MoveResultDialog(self.window, RunResult("log", moved=2, failed=[("/x/a.docx", "It's open")]),
+                                  lambda p: p)
+        result.close()
+        runs = RunsDialog(self.window, [{"log": "a", "kind": "move", "time": 2, "moved": 4, "undone": False},
+                                        {"log": "b", "kind": "move", "time": 1, "moved": 2, "undone": True}])
+        runs.table.setCurrentItem(runs.table.topLevelItem(1))
+        self.assertFalse(runs.put_back.isEnabled())         # already put back
+        runs.table.setCurrentItem(runs.table.topLevelItem(0))
+        self.assertTrue(runs.put_back.isEnabled())
+        runs.accept()
+        self.assertEqual(runs.chosen, "a")
+        dialog.close()
+
     def test_folders_tab_counts_drill_down_and_tick_boxes(self):
         from PySide6.QtCore import Qt
 

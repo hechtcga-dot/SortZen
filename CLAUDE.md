@@ -23,13 +23,17 @@ src/sortzen/
                        reasons, corrections), overview.py (subfolders, kept-together folders,
                        topics, questions, answers), plan.py (Suggestion, FolderSuggestion,
                        Topic, Question, Plan)
+  mover/               moves confirmed files and folders (never decides): no overwriting,
+                       copy and check across drives, step-by-step run log, Undo
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
                        file_index.py (SQLite: remembered scan results)
   services/            AppService: the only API the window uses (folders, autonomy, answers,
-                       corrections, make_plan); plan_view.py (Ready/Review/Staying rows,
-                       display paths, Excel export)
+                       corrections, make_plan, move, undo); plan_view.py (Ready/Review/
+                       Staying rows, problems, display paths, Excel export); moving.py
+                       (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
                        questions_page.py, progress_window.py (+ tips.py), dialogs.py,
+                       move_dialogs.py (confirm, result, undo a move),
                        sortable.py (click-to-sort columns), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt

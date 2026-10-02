@@ -61,8 +61,8 @@ class DestinationDialog(QDialog):
         self.resize(560, 520)
         self.chosen: str | None = None
         col = QVBoxLayout(self)
-        col.addWidget(_hint("SortZen remembers your choice and learns from it for similar files. "
-                            "Nothing moves in this version."))
+        col.addWidget(_hint("SortZen remembers your choice and learns from it for similar files. Nothing moves "
+                            "until you use “Move ticked…” and confirm."))
         self.search = QLineEdit(placeholderText="Type to filter folders")
         col.addWidget(self.search)
         self.list = QListWidget()

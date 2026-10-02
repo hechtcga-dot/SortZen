@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from ..mover.mover import free_name
 from ..engine.plan import (FOLDER_REVIEW, KEEP_TOGETHER, MOVE, REVIEW, SORT_INSIDE, STAY, STAYS, Plan, Reason)
 from ..scanning.file_types import kind_of
 
@@ -94,8 +95,8 @@ def problems(row: PlanRow) -> list[str]:
     if len(target) > MAX_PATH:
         found.append(f"The new path would be too long for Windows ({len(target)} characters)")
     if os.path.exists(target) and os.path.normcase(target) != os.path.normcase(row.path):
-        stem, ext = os.path.splitext(row.name)
-        found.append(f"“{row.name}” is already there: this one would be saved as “{stem} (2){ext}”")
+        found.append(f"“{row.name}” is already there: this one would be saved as "
+                     f"“{free_name(row.destination, row.name, row.is_folder)}”")
     existing = row.destination
     while existing and not os.path.isdir(existing) and os.path.dirname(existing) != existing:
         existing = os.path.dirname(existing)

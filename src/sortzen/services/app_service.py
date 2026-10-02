@@ -13,10 +13,11 @@ from ..repositories.settings import SettingsRepository
 from ..engine import Planner, Source
 from ..engine.plan import Plan
 from ..engine.planner import SORT_OUT, TIDY
+from ..mover import Mover, RunResult
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
-from . import plan_view
+from . import moving, plan_view
 
 AUTONOMY_DEFAULT = 90
 DEFAULTS = {                    # settings with on/off values, and their defaults
@@ -77,6 +78,7 @@ class AppService:
         self.jobs = JobRunner()
         self.index = FileIndex(self.paths.database_path)
         self.scanner = Scanner(self.index)
+        self.mover = Mover(self.paths.runs_dir)
 
     # ---------------------------------------------------------------- AI service
     def ai_service(self) -> str:
@@ -406,6 +408,42 @@ class AppService:
         if plan:
             found.update(plan.new_folders)
         return sorted(found, key=lambda f: self.display(f).lower())
+
+    # ---------------------------------------------------------------- moving
+    def move_preview(self, plan: Plan, rows: list[plan_view.PlanRow]) -> moving.MovePreview:
+        """What a move of these rows would do, for the confirmation window. Touches nothing."""
+        return moving.preview(plan, rows, self.all_roots())
+
+    def move(self, plan: Plan, rows: list[plan_view.PlanRow], emit=None, token=None) -> RunResult:
+        """Move the ticked rows after users confirmed them; emptied "sort inside" folders are removed."""
+        requests = moving.requests(rows)
+        emptied = moving.emptied_folders(plan, requests, self.all_roots())
+        with gentle(self.option("gentle")):
+            result = self.mover.run(requests, emptied, emit, token)
+        self._carry_index(result)
+        return result
+
+    def move_runs(self) -> list[dict]:
+        """Past moves, newest first, for Undo."""
+        return self.mover.runs()
+
+    def undo_move(self, log: str, emit=None, token=None) -> RunResult:
+        """Put everything from one move back where it was."""
+        result = self.mover.undo(log, emit)
+        self._carry_index(result)
+        return result
+
+    def _carry_index(self, result: RunResult) -> None:
+        if result.moves:
+            self.index.moved(result.moves, self._root_of)
+
+    def _root_of(self, path: str) -> tuple[str, str] | None:
+        """The added folder holding a path, and its role ("source" or "destination")."""
+        key = path_key(path)
+        roots = [(f["path"], "source") for f in self.source_folders()] + \
+                [(d, "destination") for d in self.destination_folders()]
+        inside = [(r, role) for r, role in roots if _inside(key, path_key(r))]
+        return max(inside, key=lambda x: len(x[0])) if inside else None
 
     # ---------------------------------------------------------------- background jobs
     def run_job(self, name: str, work: Callable, on_event: Callable):

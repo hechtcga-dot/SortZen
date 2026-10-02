@@ -94,6 +94,29 @@ class FileIndex:
         conn.executemany("DELETE FROM files WHERE key = ?", [(k,) for k in gone])
         return len(gone)
 
+    def moved(self, moves: list[tuple[str, str]], root_of) -> None:
+        """Carry remembered results along with moved files and folders, so they aren't read again.
+
+        ``root_of(path)`` gives the added folder and role a new path belongs to, or None.
+        """
+        with self.session() as conn:
+            for old, new in moves:
+                old_key = path_key(old)
+                rows = conn.execute(f"SELECT key, {', '.join(_COLUMNS)} FROM files WHERE key = ? OR key LIKE ?",
+                                    (old_key, old_key.rstrip(os.sep) + os.sep + "%")).fetchall()
+                for row in rows:
+                    record = _record(row[1:])
+                    if row[0] != old_key and not row[0].startswith(old_key.rstrip(os.sep) + os.sep):
+                        continue
+                    conn.execute("DELETE FROM files WHERE key = ?", (row[0],))
+                    record.path = new + record.path[len(old):] if row[0] != old_key else new
+                    place = root_of(record.path)
+                    if place is None:
+                        continue
+                    record.root, record.role = path_key(place[0]), place[1]
+                    record.name = os.path.basename(record.path)
+                    self.save(conn, record)
+
     def records(self, root) -> list[FileRecord]:
         with self.session() as conn:
             return sorted(self.known(conn, path_key(root)).values(), key=lambda r: r.path.lower())

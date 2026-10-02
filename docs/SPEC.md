@@ -259,12 +259,27 @@ available in Settings:
   - Every row shows its percentage and how it was worked out; a kept-together folder is
     one row ("Project 1, 214 files").
   - Destinations change by drop-down or drag; anything can be ticked or unticked.
-  - Moving starts only when users confirm the plan.
-- Files are never overwritten: a name clash becomes `name (2).ext`.
-- On the same drive, a normal move. To another drive: copy, check the copy matches, then
-  delete the original.
-- Every run is logged. **Undo** puts back the whole run, chosen files, or a whole folder.
-- Subfolders emptied by "sort the inside" are deleted; Undo recreates them.
+  - Moving starts only when users confirm: "Move ticked…" first shows a confirmation window
+  with the number of files and kept-together folders, every destination (new folders
+  marked), names already taken, folders that will be left empty and removed, and rows
+  with problems.
+- Files are never overwritten: a name clash becomes `name (2).ext`; a name that already
+  ends in a number counts on (`name (2).ext` becomes `name (3).ext`).
+- On the same drive, a normal move. To another drive: copy under a temporary name, check
+  every copied file matches the original byte for byte, give the copy its real name, then
+  delete the original. If a check fails, the original stays.
+- Google link files only move within their own drive.
+- A file that can't be moved (open in another program, no permission, gone) is skipped;
+  the rest carry on, and the result window lists what was skipped and why. Stop safely
+  finishes the current file and leaves the rest where they are.
+- Every run is logged step by step as it happens, so even an interrupted run can be put
+  back. **Undo** (Ctrl+Z, "Undo this move" in the result window, or Edit › Undo a move…
+  for any earlier run) puts back a whole run: files return under their original names,
+  new folders the run made are removed again, and removed folders are recreated. A
+  file whose old name has been taken since gets a number added; nothing is overwritten.
+- Subfolders emptied by "sort the inside" are removed once no files are left in them.
+- After a move the plan is made again from where everything is now; moved files are
+  remembered at their new place, so they aren't read again.
 - The plan can be exported to Excel: every file and folder with its destination,
   percentage and reasons.
 

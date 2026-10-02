@@ -241,3 +241,60 @@ class ProblemsTest(unittest.TestCase):
             self.assertIn("too long for Windows", " ".join(problems(long_row)))
             staying = PlanRow(os.path.join(d, "x.pdf"), False, d, d, 95, "Stay")
             self.assertEqual(problems(staying), [])
+
+
+class MoveServiceTest(unittest.TestCase):
+    """Moving ticked rows of a real plan on a copy of the test folders, then putting them back."""
+
+    def setUp(self):
+        import shutil
+
+        from tests.fixtures import shared_test_folders
+
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name) / "folders"
+        for name in ("Downloads", "Sorted"):
+            shutil.copytree(shared_test_folders() / name, self.root / name)
+        self.service = AppService(AppPaths(Path(self.dir.name) / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.root / "Downloads"))
+        self.service.add_destination(str(self.root / "Sorted"))
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def snapshot(self):
+        return sorted(str(p.relative_to(self.root)) for p in self.root.rglob("*"))
+
+    def test_preview_move_remember_and_undo(self):
+        ready = self.service.plan_rows(self.plan)["Ready"]
+        before = self.snapshot()
+        preview = self.service.move_preview(self.plan, ready)
+        self.assertEqual(preview.items, len(ready))
+        self.assertEqual(sum(n for _, n, _ in preview.destinations), preview.items)
+        self.assertEqual(self.snapshot(), before)                  # the preview touches nothing
+        result = self.service.move(self.plan, ready)
+        self.assertEqual((result.moved, result.failed), (len(ready), []))
+        for row in ready:
+            self.assertFalse(os.path.exists(row.path))
+            self.assertTrue(os.path.isdir(row.destination))
+        self.assertEqual(self.service.move_runs()[0]["moved"], len(ready))
+        remembered = {r.path for r in self.service.index.records(self.root / "Sorted")}
+        self.assertTrue(all(target in remembered for _, target in result.moves if os.path.isfile(target)))
+        again = self.service.make_plan()                           # moved files are remembered, not read again
+        self.assertNotIn(ready[0].path, {s.path for s in again.files})
+        undone = self.service.undo_move(result.log)
+        self.assertEqual((undone.moved, undone.failed), (len(ready), []))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_files_inside_a_moving_folder_go_with_it(self):
+        from sortzen.services import moving
+        from sortzen.services.plan_view import PlanRow
+
+        folder = self.root / "Downloads" / "Kestrel bid"
+        (folder / "a.txt").parent.mkdir(parents=True, exist_ok=True)
+        (folder / "a.txt").write_text("x")
+        rows = [PlanRow(str(folder), True, str(folder.parent), str(self.root / "Sorted"), 95, "Keep together"),
+                PlanRow(str(folder / "a.txt"), False, str(folder), str(self.root / "Sorted"), 95, "Move")]
+        self.assertEqual([r.path for r in moving.requests(rows)], [str(folder)])
