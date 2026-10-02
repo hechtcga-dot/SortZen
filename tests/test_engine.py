@@ -237,3 +237,18 @@ class LeftOutTest(unittest.TestCase):
         self.assertIsNone(held.destination)
         self.assertIn("which is left out", held.reasons[0].text)
         self.assertEqual(plan.for_path(cake.path).destination, os.path.join(docs, "Recipes"))
+
+
+class CopiesEngineTest(unittest.TestCase):
+    def test_copy_marks_and_keep_instead(self):
+        from sortzen.engine.duplicates import Copy, CopyGroup, has_copy_mark
+
+        self.assertTrue(has_copy_mark("report (2).pdf"))
+        self.assertTrue(has_copy_mark("report - Copy.pdf"))
+        self.assertTrue(has_copy_mark("Copy of report.pdf"))
+        self.assertFalse(has_copy_mark("Report 2024.pdf"))
+        group = CopyGroup("f", 10, [Copy("/a/x.pdf", "/a", 1, keep=True), Copy("/a/y.pdf", "/a", 2, ticked=True),
+                                    Copy("/a/p/z.pdf", "/a", 3, note="Inside a folder that is kept together")])
+        group.keep_instead("/a/y.pdf")
+        self.assertEqual(group.kept.path, "/a/y.pdf")
+        self.assertEqual([(c.path, c.ticked) for c in group.extras], [("/a/x.pdf", True), ("/a/p/z.pdf", False)])

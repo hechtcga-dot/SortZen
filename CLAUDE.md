@@ -21,8 +21,9 @@ src/sortzen/
   engine/              sorting engine (never touches files): features.py (clues from names,
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
                        reasons, corrections), overview.py (subfolders, kept-together folders,
-                       topics, questions, answers), plan.py (Suggestion, FolderSuggestion,
-                       Topic, Question, Plan)
+                       topics, questions, answers), duplicates.py (exact copies, the copy
+                       kept and why), plan.py (Suggestion, FolderSuggestion, Topic, Question,
+                       Plan)
   mover/               moves confirmed files and folders (never decides): no overwriting,
                        copy and check across drives, step-by-step run log, Undo
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
@@ -33,7 +34,7 @@ src/sortzen/
                        (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
                        questions_page.py, progress_window.py (+ tips.py), dialogs.py,
-                       move_dialogs.py (confirm, result, undo a move),
+                       move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        sortable.py (click-to-sort columns), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt

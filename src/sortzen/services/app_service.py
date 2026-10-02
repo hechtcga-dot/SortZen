@@ -11,9 +11,12 @@ from ..repositories.api_keys import ApiKeyStore
 from ..repositories.file_index import FileIndex, path_key
 from ..repositories.settings import SettingsRepository
 from ..engine import Planner, Source
+from ..engine.duplicates import CopyGroup, find_copies
 from ..engine.plan import Plan
 from ..engine.planner import SORT_OUT, TIDY
-from ..mover import Mover, RunResult
+from ..mover import Mover, MoveRequest, RunResult
+from ..mover.mover import same_contents
+from ..scanning.file_types import QUEUE_FOLDER, is_queue_folder
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
@@ -321,6 +324,7 @@ class AppService:
                           [c.root for c in counts[len(sources):]],
                           answers=self.answers(), corrections=self.corrections(), left_out=self.left_out())
         plan = planner.plan()
+        plan.copies = find_copies(records, plan, self.is_left_out)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
         return plan
@@ -403,7 +407,7 @@ class AppService:
         found = set()
         for root in roots:
             for folder, dirs, _ in os.walk(root):
-                dirs[:] = [d for d in dirs if not d.startswith((".", "$"))]
+                dirs[:] = [d for d in dirs if not d.startswith((".", "$")) and not is_queue_folder(d)]
                 found.add(folder)
         if plan:
             found.update(plan.new_folders)
@@ -421,6 +425,49 @@ class AppService:
         with gentle(self.option("gentle")):
             result = self.mover.run(requests, emptied, emit, token)
         self._carry_index(result)
+        return result
+
+    def queue_folder(self, path: str) -> str:
+        """Where a copy goes: a dated "Queued for deletion" folder inside its added folder, keeping its
+        subfolders, so it is easy to find and put back by hand."""
+        place = self._root_of(path)
+        root = place[0] if place else os.path.dirname(path)
+        relative = os.path.relpath(os.path.dirname(os.path.abspath(path)), root)
+        queue = os.path.join(root, f"{QUEUE_FOLDER} {time.strftime('%Y-%m-%d')}")
+        return os.path.normpath(os.path.join(queue, relative)) if relative != "." else queue
+
+    def queue_copies(self, groups: list[CopyGroup], emit=None, token=None) -> RunResult:
+        """Move the ticked extra copies into "Queued for deletion" folders. Nothing is deleted.
+
+        Right before each one moves, it is checked byte for byte against the copy kept; anything that
+        is no longer an exact copy stays where it is.
+        """
+        emit = emit or (lambda event: None)
+        requests, skipped = [], []
+        ticked = [(g, c) for g in groups for c in g.extras if c.ticked]
+        with gentle(self.option("gentle")):
+            for done, (group, copy) in enumerate(ticked, start=1):
+                if token is not None and token.cancelled:
+                    break
+                emit(Status("Checking copies", copy.name))
+                kept = group.kept.path
+                if not os.path.isfile(kept):
+                    skipped.append((copy.path, f"The copy to keep (“{group.kept.name}”) is no longer there"))
+                elif not os.path.isfile(copy.path):
+                    skipped.append((copy.path, "It's no longer there"))
+                elif not same_contents(kept, copy.path):
+                    skipped.append((copy.path, f"It's no longer an exact copy of “{group.kept.name}”"))
+                else:
+                    requests.append(MoveRequest(copy.path, self.queue_folder(copy.path)))
+                emit(Progress(done, len(ticked) * 2))
+            stages = len(ticked)
+
+            def moving(event):
+                emit(Progress(stages + event.done, stages * 2) if isinstance(event, Progress) else event)
+
+            result = self.mover.run(requests, (), moving, token, kind="duplicates")
+        result.failed = skipped + result.failed
+        result.cancelled = result.cancelled or bool(token is not None and token.cancelled)
         return result
 
     def move_runs(self) -> list[dict]:

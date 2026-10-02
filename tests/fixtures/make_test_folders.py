@@ -37,6 +37,7 @@ import io
 import json
 import os
 import random
+import re
 import zipfile
 from pathlib import Path
 
@@ -103,6 +104,7 @@ def _core_xml(title: str, author: str) -> str:
 
 def _write_zip(path: Path, files: dict[str, str | bytes]) -> None:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.comment = re.sub(r" \(\d+\)$", "", path.stem).encode("utf-8")   # differently named files differ
         for name, content in files.items():
             archive.writestr(zipfile.ZipInfo(name, FIXED_DATE), content)
 
@@ -168,7 +170,8 @@ def write_pptx(path: Path, title: str, author: str, slides: list[list[str]]) -> 
     _write_zip(path, files)
 
 
-def write_pdf(path: Path, lines: list[str], title: str = "") -> None:
+def write_pdf(path: Path, lines: list[str], title: str = "", salt: str = "") -> None:
+    """A one-page PDF. ``salt`` goes in a PDF comment, so differently named files never match byte for byte."""
     def escape(s: str) -> str:
         return s.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
@@ -186,6 +189,8 @@ def write_pdf(path: Path, lines: list[str], title: str = "") -> None:
     ]
     out = io.BytesIO()
     out.write(b"%PDF-1.4\n")
+    if salt:
+        out.write(b"%" + salt.encode("latin-1", "replace") + b"\n")
     offsets = []
     for number, body in enumerate(objects, start=1):
         offsets.append(out.tell())
@@ -288,7 +293,7 @@ class Builder:
 
     def pdf(self, rel, lines, title="", expect=EXAMPLE, when=None):
         path = self._target(rel)
-        write_pdf(path, lines, title)
+        write_pdf(path, lines, title, salt=re.sub(r" \(\d+\)$", "", path.stem))
         return self._done(path, expect, when)
 
     def scan(self, rel, expect=EXAMPLE, when=None):

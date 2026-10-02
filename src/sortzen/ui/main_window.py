@@ -17,12 +17,14 @@ from ..services.app_service import FolderError
 from ..tasks import Estimate, JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
+from .copies_page import CopiesPage
 from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
 from .folders_page import FoldersPage
 from .icons import app_icon
 from .move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
+from .sortable import human_size
 from .questions_page import QuestionsPage
 
 STEPS = (
@@ -85,6 +87,9 @@ class MainWindow(QMainWindow):
         self.plan_page.update_plan.connect(self.make_plan)
         self.plan_page.export.connect(self.export_plan)
         self.plan_page.move_ticked.connect(self.move_rows)
+        self.copies_page = CopiesPage(self.service)
+        self.copies_page.queue.connect(self.queue_copies)
+        self.copies_page.open_folder.connect(self.open_folder)
         self.splitter.addWidget(self.tabs)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([280, 920])
@@ -229,6 +234,10 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.runs_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.plan_action)
+        self.copies_action = action("Copies…", lambda: self.tabs.setCurrentWidget(self.copies_page),
+                                    tip="Exact copies found while making the plan")
+        self.copies_action.setEnabled(False)
+        plan_menu.addAction(self.copies_action)
         view_menu = self.menuBar().addMenu("&View")
         self.tree_action = QAction("Show folder tree", self, checkable=True, checked=True)
         self.tree_action.toggled.connect(lambda on: self.splitter.widget(0).setVisible(on))
@@ -395,6 +404,14 @@ class MainWindow(QMainWindow):
         if plan.questions:
             self.tabs.setTabText(self.tabs.indexOf(self.questions_page),
                                  f"Questions ({len(open_questions)})" if open_questions else "Questions")
+        if plan.copies:
+            if self.tabs.indexOf(self.copies_page) < 0:
+                self.tabs.insertTab(self.tabs.indexOf(self.plan_page) + 1, self.copies_page, "Copies")
+            self.tabs.setTabText(self.tabs.indexOf(self.copies_page), f"Copies ({len(plan.copies):,})")
+        elif self.tabs.indexOf(self.copies_page) >= 0:
+            self.tabs.removeTab(self.tabs.indexOf(self.copies_page))
+        self.copies_page.set_copies(plan.copies)
+        self.copies_action.setEnabled(bool(plan.copies))
         self.tabs.setCurrentWidget(self.questions_page if open_questions else self.plan_page)
 
     def save_answers(self, answers: dict) -> None:
@@ -468,6 +485,25 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.run_job("move", lambda emit, token: self.service.move(plan, rows, emit, token))
 
+    def queue_copies(self, groups, confirm: bool = True) -> None:
+        """Move the ticked extra copies into "Queued for deletion" folders after confirmation."""
+        ticked = [(g, c) for g in groups for c in g.extras if c.ticked]
+        if not ticked or self.service.jobs.busy:
+            return
+        size = human_size(sum(g.size for g, _ in ticked))
+        if confirm and QMessageBox.question(
+                self, "Queue copies for deletion?",
+                f"Move {len(ticked):,} extra cop{'y' if len(ticked) == 1 else 'ies'} ({size}) into folders named "
+                "“Queued for deletion” with today's date, inside the folders they are in now?\n\n"
+                "Each one is checked byte for byte against the copy kept just before it moves. Nothing is "
+                "deleted: delete those folders yourself when you're sure. Edit › Undo puts the copies back.") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        self.progress = ProgressWindow(self, "Queuing copies for deletion", estimate=max(2.0, len(ticked) / 30))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("queue", lambda emit, token: self.service.queue_copies(groups, emit, token))
+
     def show_runs(self) -> None:
         dialog = RunsDialog(self, self.service.move_runs())
         if dialog.exec() and dialog.chosen:
@@ -492,16 +528,16 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.run_job("undo-move", lambda emit, token: self.service.undo_move(log, emit, token))
 
-    def _moved(self, result, undoing: bool) -> None:
+    def _moved(self, result, undoing: bool, queued: bool = False) -> None:
         if not undoing and result.moved:
-            self._push_undo("Move", lambda: self.undo_run(result.log))
-        self.result_dialog = MoveResultDialog(self, result, self.service.display, undoing)
+            self._push_undo("Queue copies" if queued else "Move", lambda: self.undo_run(result.log))
+        self.result_dialog = MoveResultDialog(self, result, self.service.display, undoing, queued)
         self.result_dialog.finished.connect(lambda _: self._after_move(result))
         self.result_dialog.open()
 
     def _after_move(self, result) -> None:
         if self.result_dialog.undo_requested:
-            if self.undo_stack and self.undo_stack[-1][0] == "Move":
+            if self.undo_stack and self.undo_stack[-1][0] in ("Move", "Queue copies"):
                 self.undo_stack.pop()
                 self._sync_undo_action()
             self.undo_run(result.log, confirm=False)
@@ -531,7 +567,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     def _moving(self) -> bool:
-        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move")
+        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move", "queue")
 
     def _sync_undo_action(self) -> None:
         self.undo_action.setEnabled(bool(self.undo_stack))
@@ -569,8 +605,8 @@ class MainWindow(QMainWindow):
                 if self._plan_waiting:
                     self._plan_waiting = False
                     self.make_plan()
-            if event.name in ("move", "undo-move"):
-                self._moved(event.result, event.name == "undo-move")
+            if event.name in ("move", "undo-move", "queue"):
+                self._moved(event.result, event.name == "undo-move", event.name == "queue")
             if event.name == "plan":
                 if event.result is None:
                     self.statusBar().showMessage("Stopped. Nothing was changed.", 6000)
@@ -584,7 +620,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
-            if event.name in ("move", "undo-move"):
+            if event.name in ("move", "undo-move", "queue"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
                                     "is written down; Edit › Undo a move puts it back.")
 

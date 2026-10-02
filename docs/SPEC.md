@@ -283,6 +283,25 @@ available in Settings:
 - The plan can be exported to Excel: every file and folder with its destination,
   percentage and reasons.
 
+### Copies
+- While making the plan, SortZen finds exact copies: files with the same size and contents
+  (by fingerprint), wherever they are in the added folders. Left-out files, cloud-only
+  files, Google link files and empty files are never counted.
+- The Copies tab lists each set of copies with its folder, date and size; columns sort by
+  clicking, and a search box filters names and folders.
+- One copy of each set is kept, and the tab says why. The copy kept is the one in an
+  organised place (a destination folder, then a subfolder that stays or is kept
+  together), then one without a copy number in its name ("name (1)", "name - Copy"), then
+  the oldest, then the one with the shortest path. Right-click › "Keep this copy instead"
+  chooses another. One copy of every set is always kept.
+- Extras are ticked, except copies inside a folder that is kept together. "Queue ticked for
+  deletion…" confirms first, then moves the ticked extras into a folder named "Queued for
+  deletion YYYY-MM-DD" inside the added folder they are in, keeping their subfolders.
+- Right before each extra moves, it is checked byte for byte against the copy kept;
+  anything that is no longer an exact copy stays where it is and is listed.
+- Nothing is deleted: users delete the "Queued for deletion" folders themselves when they
+  are sure. Those folders are never read or sorted. Undo puts the copies back.
+
 ## 12. Renaming
 - A separate button and screen, offered after sorting is done, and skippable.
 - Suggested names (e.g. `2026-10-02 Invoice - Example Co.pdf`) are shown first; nothing is

@@ -170,6 +170,35 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual(sorted(str(p) for p in root.rglob("*")), before)
         self.assertTrue(self.service.move_runs()[0]["undone"])
 
+    def test_copies_tab_keep_instead_and_queue(self):
+        import shutil
+
+        from PySide6.QtCore import Qt
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        self.service.add_source(str(root / "Downloads"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        tabs = [self.window.tabs.tabText(i) for i in range(self.window.tabs.count())]
+        self.assertTrue(any(t.startswith("Copies (") for t in tabs))
+        page = self.window.copies_page
+        group = page.groups[0]
+        extra = group.extras[0]
+        page.keep_instead(extra)
+        self.assertTrue(extra.keep)
+        heading = page.tree.topLevelItem(0)
+        child = next(heading.child(i) for i in range(heading.childCount())
+                     if heading.child(i).checkState(0) == Qt.CheckState.Checked)
+        child.setCheckState(0, Qt.CheckState.Unchecked)
+        ticked = page.ticked()
+        self.assertIn(f"Queue {len(ticked):,} ticked", page.queue_button.text())
+        self.window.queue_copies(page.groups, confirm=False)
+        self.assertTrue(wait_until(self.app, lambda: getattr(self.window, "result_dialog", None) is not None))
+        self.assertTrue(all(not os.path.exists(c.path) for c in ticked))
+        self.assertTrue(extra.path and os.path.exists(extra.path))
+        self.assertEqual(self.window.undo_action.text(), "Undo queue copies")
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview

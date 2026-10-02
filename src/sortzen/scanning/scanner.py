@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..repositories.file_index import FileIndex, path_key
 from ..tasks import Progress, Status
-from .file_types import SKIPPED_FOLDER_NAMES, kind_of, skip_reason
+from .file_types import SKIPPED_FOLDER_NAMES, is_queue_folder, kind_of, skip_reason
 from .fingerprint import fingerprint
 from .readers import read_contents
 from .records import FileRecord, ScanSummary
@@ -193,7 +193,7 @@ class Scanner:
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     key = path_key(entry.path)
-                    if (entry.name.lower() in SKIPPED_FOLDER_NAMES or attrs & REPARSE_POINT
+                    if (entry.name.lower() in SKIPPED_FOLDER_NAMES or is_queue_folder(entry.name) or attrs & REPARSE_POINT
                             or _inside(key, self.protected) or _inside(key, excluded)):
                         summary.skip("excluded folder")
                     elif recursive:

@@ -21,8 +21,8 @@ def _label(text: str, name: str = "hint") -> QLabel:
     return label
 
 
-def _plural(n: int, word: str) -> str:
-    return f"{n:,} {word}{'' if n == 1 else 's'}"
+def _plural(n: int, word: str, many: str = "") -> str:
+    return f"{n:,} {word if n == 1 else many or word + 's'}"
 
 
 def _list(lines: list[str], height: int = 90) -> QPlainTextEdit:
@@ -92,13 +92,14 @@ class ConfirmMoveDialog(QDialog):
 class MoveResultDialog(QDialog):
     """What a move (or putting one back) did, with anything skipped and why."""
 
-    def __init__(self, parent, result, display, undoing: bool = False):
+    def __init__(self, parent, result, display, undoing: bool = False, queued: bool = False):
         super().__init__(parent)
         self.undo_requested = False
-        self.setWindowTitle("Put back" if undoing else "Moved")
+        title = "Put back" if undoing else "Queued for deletion" if queued else "Moved"
+        self.setWindowTitle(title)
         self.resize(600, 420 if result.failed or result.renamed else 220)
         col = QVBoxLayout(self)
-        done = f"Put back {_plural(result.moved, 'item')}" if undoing else f"Moved {_plural(result.moved, 'item')}"
+        done = f"{title} {_plural(result.moved, 'copy', 'copies') if queued else _plural(result.moved, 'item')}"
         if result.cancelled:
             done += ", then stopped safely: the rest stayed where they were"
         if result.removed_folders:
@@ -113,6 +114,10 @@ class MoveResultDialog(QDialog):
             col.addWidget(_list([f"{display(path)}: {reason}" for path, reason in result.failed], 140))
         col.addStretch(1)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        if queued and result.moved:
+            col.insertWidget(1, _label("Nothing has been deleted. The copies are in folders named “Queued for "
+                                       "deletion” with today's date; delete those folders yourself when you're "
+                                       "sure."))
         if not undoing and result.moved:
             undo = QPushButton("Undo this move")
             undo.setToolTip("Put everything from this move back where it was")

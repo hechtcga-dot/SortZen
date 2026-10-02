@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -298,3 +299,60 @@ class MoveServiceTest(unittest.TestCase):
         rows = [PlanRow(str(folder), True, str(folder.parent), str(self.root / "Sorted"), 95, "Keep together"),
                 PlanRow(str(folder / "a.txt"), False, str(folder), str(self.root / "Sorted"), 95, "Move")]
         self.assertEqual([r.path for r in moving.requests(rows)], [str(folder)])
+
+
+class CopiesTest(unittest.TestCase):
+    """Exact copies: found, the right one kept, extras queued in dated folders, Undo."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name) / "folders"
+        self.downloads = self.root / "Downloads"
+        self.sorted = self.root / "Sorted"
+        for path, text, when in (("Sorted/Taxes/2024 T4.pdf", "slip", 100), ("Downloads/2024 T4.pdf", "slip", 50),
+                                 ("Downloads/old/2024 T4 (1).pdf", "slip", 200), ("Downloads/a.txt", "only one", 1),
+                                 ("Downloads/b (1).txt", "twin", 300), ("Downloads/b.txt", "twin", 400)):
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            os.utime(target, (1_700_000_000 + when, 1_700_000_000 + when))
+        self.service = AppService(AppPaths(Path(self.dir.name) / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads))
+        self.service.add_destination(str(self.sorted))
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def group(self, name):
+        return next(g for g in self.plan.copies if any(c.name == name for c in g.copies))
+
+    def test_copies_found_and_the_right_one_kept(self):
+        self.assertEqual(len(self.plan.copies), 2)
+        slip = self.group("2024 T4.pdf")
+        self.assertEqual(slip.kept.path, str(self.sorted / "Taxes" / "2024 T4.pdf"))
+        self.assertIn("It's in an organised folder", slip.kept.reasons)
+        self.assertTrue(all(c.ticked for c in slip.extras))
+        twin = self.group("b.txt")
+        self.assertEqual(twin.kept.name, "b.txt")                     # no copy number beats older
+        self.assertEqual(twin.kept.reasons, ["Its name has no copy number"])
+
+    def test_queue_check_and_undo(self):
+        slip = self.group("2024 T4.pdf")
+        (self.downloads / "old" / "2024 T4 (1).pdf").write_text("changed", encoding="utf-8")
+        result = self.service.queue_copies(self.plan.copies)
+        today = time.strftime("%Y-%m-%d")
+        queue = self.downloads / f"Queued for deletion {today}"
+        self.assertEqual(result.moved, 2)
+        self.assertTrue((queue / "2024 T4.pdf").exists())
+        self.assertTrue((queue / "b (1).txt").exists())
+        self.assertIn("no longer an exact copy", result.failed[0][1])     # changed since: stays
+        self.assertTrue((self.downloads / "old" / "2024 T4 (1).pdf").exists())
+        self.assertTrue(slip.kept.path and os.path.exists(slip.kept.path))
+        again = self.service.make_plan()                                  # queued copies are never read or sorted
+        self.assertFalse(any("Queued for deletion" in s.path for s in again.files))
+        self.assertEqual(self.service.move_runs()[0]["kind"], "duplicates")
+        self.service.undo_move(result.log)
+        self.assertTrue((self.downloads / "2024 T4.pdf").exists())
+        self.assertFalse(any(queue.rglob("*.*")))

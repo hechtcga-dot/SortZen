@@ -54,6 +54,11 @@ def _hash(path: str) -> str:
     return digest.hexdigest()
 
 
+def same_contents(a: str, b: str) -> bool:
+    """True when two files are the same byte for byte."""
+    return os.path.getsize(a) == os.path.getsize(b) and _hash(a) == _hash(b)
+
+
 def free_name(folder: str, name: str, is_folder: bool = False) -> str:
     """The name itself if nothing has it, otherwise "name (2).ext", "name (3).ext" …
 
