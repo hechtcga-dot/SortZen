@@ -424,3 +424,80 @@ class ProfileTest(unittest.TestCase):
         self.assertIn("1 to sort", info)
         self.assertNotIn(str(self.base), info)
         self.assertNotIn("secret-key", info)
+
+
+class RulesRecentsRenameTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.downloads, self.sorted = base / "Downloads", base / "Sorted"
+        files = {"Downloads/Northgate invoice 1.pdf": "invoice from northgate", "Downloads/Prairie invoice 2.pdf":
+                 "invoice from prairie", "Downloads/Clearwater invoice 3.pdf": "invoice from clearwater",
+                 "Downloads/holiday notes.txt": "beach trip", "Sorted/Trips/beach plan.txt": "beach trip plan",
+                 "Sorted/Invoices/readme.txt": "kept here", "Sorted/Other/misc.txt": "misc"}
+        for rel, text in files.items():
+            (base / rel).parent.mkdir(parents=True, exist_ok=True)
+            (base / rel).write_text(text, encoding="utf-8")
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads))
+        self.service.add_destination(str(self.sorted))
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_recent_destinations_newest_first_and_capped(self):
+        for i in range(25):
+            folder = self.sorted / f"Box {i}"
+            folder.mkdir()
+            self.service.note_destination(str(folder))
+        self.service.note_destination(str(self.sorted / "Box 3"))
+        recent = self.service.recent_destinations()
+        self.assertEqual(len(recent), 20)
+        self.assertEqual(os.path.basename(recent[0]), "Box 3")
+        (self.sorted / "Box 24").rmdir()
+        self.assertNotIn(str(self.sorted / "Box 24"), self.service.recent_destinations())
+
+    def test_rule_suggested_made_applied_and_undone(self):
+        invoices = str(self.sorted / "Invoices")
+        self.service.correct([str(self.downloads / "Northgate invoice 1.pdf"),
+                              str(self.downloads / "Prairie invoice 2.pdf")], invoices)
+        suggestion = self.service.suggest_rule(self.plan, invoices)      # the plan on screen when choosing
+        self.assertEqual(suggestion.rule.word, "invoice")
+        self.assertEqual(suggestion.matches, [str(self.downloads / "Clearwater invoice 3.pdf")])
+        before = self.service.add_rule(suggestion.rule)
+        plan = self.service.make_plan()
+        third = plan.for_path(str(self.downloads / "Clearwater invoice 3.pdf"))
+        self.assertEqual((third.destination, third.percent), (invoices, 100))
+        self.assertIn("Your rule", third.reasons[0].text)
+        self.assertIsNone(self.service.suggest_rule(plan, invoices))        # already a rule
+        self.service.restore_rules(before)
+        self.assertEqual(self.service.rules(), [])
+        self.service.decline_rule(suggestion.rule)
+        declined_pdf = suggestion.rule.__class__(suggestion.rule.word, invoices, ".pdf")
+        self.service.decline_rule(declined_pdf)
+        self.assertIsNone(self.service.suggest_rule(self.plan, invoices))
+
+    def test_rename_a_planned_and_an_existing_folder(self):
+        planned = str(self.sorted / "Receipts")
+        self.service.correct([str(self.downloads / "Northgate invoice 1.pdf")], planned)
+        self.service.note_destination(planned)
+        self.assertIsNone(self.service.rename_folder(self.plan, planned, "Bills 2024"))
+        self.assertFalse(os.path.exists(self.sorted / "Bills 2024"))       # nothing made on disk
+        plan = self.service.make_plan()
+        self.assertEqual(plan.for_path(str(self.downloads / "Northgate invoice 1.pdf")).destination,
+                         str(self.sorted / "Bills 2024"))
+        with self.assertRaises(ValueError):
+            self.service.rename_folder(plan, str(self.sorted / "Other"), "Trips")       # name taken
+        with self.assertRaises(ValueError):
+            self.service.rename_folder(plan, str(self.sorted / "Other"), "a/b")
+        self.service.correct([str(self.downloads / "holiday notes.txt")], str(self.sorted / "Other"))
+        run = self.service.rename_folder(plan, str(self.sorted / "Other"), "Odds and ends")
+        self.assertTrue((self.sorted / "Odds and ends" / "misc.txt").exists())
+        self.assertEqual(self.service.corrections()[str(self.downloads / "holiday notes.txt")],
+                         str(self.sorted / "Odds and ends"))
+        self.service.undo_move(run.log)
+        self.assertTrue((self.sorted / "Other" / "misc.txt").exists())
+        self.assertEqual(self.service.corrections()[str(self.downloads / "holiday notes.txt")],
+                         str(self.sorted / "Other"))

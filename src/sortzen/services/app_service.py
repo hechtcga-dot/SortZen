@@ -13,6 +13,7 @@ from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
 from ..ai.sorter import AIFile, AIFolder, AIRun, AISorter
 from ..config import COST_CAP_PER_1000_FILES, AppPaths, default_paths
 from ..engine.ai_evidence import apply_ai
+from ..engine.rules import Rule, RuleSuggestion, apply_rules, rename_planned, suggest_rule
 from ..repositories.ai_answers import AIAnswers, answer_key
 from ..repositories.api_keys import ApiKeyStore
 from ..repositories.file_index import FileIndex, path_key
@@ -46,6 +47,7 @@ AI_DEFAULTS = {                 # what the AI step may send, and how much it may
 }
 AI_MAX_FOLDERS = 300            # folders listed to the AI service (those holding the most files)
 AI_EXAMPLES = 3                 # example file names per folder
+RECENT_DESTINATIONS = 20       # folders remembered for quick choosing
 GENTLE_PAUSE = 0.005
 PLAN_SHARE = 5                  # planning counts as one fifth of the files on the progress bar
 SPEED_DEFAULTS = {"read": 100.0, "remembered": 5000.0, "plan": 1500.0}     # files per second
@@ -328,6 +330,117 @@ class AppService:
                 current[p] = destination
         self.settings.set("corrections", current)
 
+    # ---------------------------------------------------------------- recent destinations
+    def recent_destinations(self, plan: Plan | None = None) -> list[str]:
+        """The folders most recently chosen as destinations, newest first (those that exist or are planned)."""
+        planned = {path_key(f) for f in plan.new_folders} if plan else set()
+        return [f for f in self.settings.get("recent_destinations") or []
+                if os.path.isdir(f) or path_key(f) in planned][:RECENT_DESTINATIONS]
+
+    def note_destination(self, folder: str) -> None:
+        folder = os.path.abspath(folder)
+        recent = [f for f in self.settings.get("recent_destinations") or [] if path_key(f) != path_key(folder)]
+        self.settings.set("recent_destinations", [folder, *recent][:RECENT_DESTINATIONS])
+
+    # ---------------------------------------------------------------- rules
+    def rules(self) -> list[Rule]:
+        found = []
+        for r in self.settings.get("rules") or []:
+            try:
+                found.append(Rule(str(r["word"]), str(r["destination"]), str(r.get("ext") or "")))
+            except (KeyError, TypeError):
+                continue
+        return found
+
+    def add_rule(self, rule: Rule) -> list[dict]:
+        """Save a rule. Returns the rules before, for Undo."""
+        before = list(self.settings.get("rules") or [])
+        self.settings.set("rules", before + [{"word": rule.word, "ext": rule.ext, "destination": rule.destination}])
+        return before
+
+    def remove_rule(self, rule: Rule) -> list[dict]:
+        before = list(self.settings.get("rules") or [])
+        self.settings.set("rules", [r for r in before if Rule(r["word"], r["destination"], r.get("ext") or "").key
+                                    != rule.key])
+        return before
+
+    def restore_rules(self, before: list[dict]) -> None:
+        self.settings.set("rules", list(before))
+
+    def decline_rule(self, rule: Rule) -> None:
+        """Never suggest this rule again."""
+        self.settings.set("declined_rules", list(self.settings.get("declined_rules") or []) + [rule.key])
+
+    def describe_rule(self, rule: Rule) -> str:
+        return rule.describe(self.display)
+
+    def suggest_rule(self, plan: Plan, destination: str) -> RuleSuggestion | None:
+        """A rule for the files users have sent to this folder, when one would also place other files."""
+        target = path_key(destination)
+        corrections = self.corrections()
+        examples = [os.path.basename(p) for p, d in corrections.items() if d and path_key(d) == target]
+        corrected = {path_key(p) for p in corrections}
+        others = [(s.path, s.destination, s.percent) for s in plan.files
+                  if path_key(s.path) not in corrected and s.path in self._records
+                  and self._records[s.path].role == "source" and not self.is_left_out(s.path)]
+        return suggest_rule(examples, os.path.abspath(destination), others, self.rules(),
+                            set(self.settings.get("declined_rules") or []))
+
+    def _apply_rules(self, plan: Plan) -> None:
+        rules = self.rules()
+        if rules:
+            valid = self._ai_valid(plan)
+            apply_rules(plan, rules, lambda f: os.path.isdir(f) or valid(f),
+                        lambda p: p in self._records and self._records[p].role == "source"
+                        and not self.is_left_out(p), self.display)
+
+    # ---------------------------------------------------------------- renaming folders
+    def rename_folder(self, plan: Plan | None, folder: str, new_name: str, emit=None) -> RunResult | None:
+        """Give a folder a new name.
+
+        A folder SortZen only plans to make is renamed in the plan (returns None). A folder that exists
+        is renamed on disk, logged like a move so Undo puts the old name back (returns the run). Every
+        choice, rule and recent folder that points into it follows the new name.
+        """
+        folder = os.path.abspath(folder)
+        new_name = (new_name or "").strip().rstrip(". ")
+        if not new_name:
+            raise FolderError("Type a name for the folder.")
+        bad = sorted(set(new_name) & set('\\/:*?"<>|'))
+        if bad:
+            raise FolderError(f"Folder names can't contain {' '.join(bad)}")
+        if new_name == os.path.basename(folder):
+            raise FolderError("That is already its name.")
+        target = os.path.join(os.path.dirname(folder), new_name)
+        if os.path.lexists(target) and path_key(target) != path_key(folder):
+            raise FolderError(f"There is already a folder called “{new_name}” there.")
+        if path_key(folder) in {path_key(r) for r in self.all_roots()} and not os.path.isdir(folder):
+            raise FolderError("That folder can't be found.")
+        if not os.path.isdir(folder):
+            names = {k: v for k, v in (self.settings.get("folder_names") or {}).items()}
+            original = next((k for k, v in names.items() if path_key(v) == path_key(folder)), folder)
+            names[original] = target
+            self.settings.set("folder_names", names)
+            self._remap_paths(folder, target)
+            if plan is not None:
+                rename_planned(plan, {folder: target})
+            return None
+        result = self.mover.run([MoveRequest(folder, os.path.dirname(folder), new_name)], (), emit, kind="rename")
+        if result.failed:
+            raise FolderError(f"The folder couldn't be renamed: {result.failed[0][1]}")
+        self._carry_index(result)
+        self._remap_paths(folder, target)
+        return result
+
+    def _remap_paths(self, old: str, new: str) -> None:
+        """Choices, rules, recent folders and added folders that point into a renamed folder follow it."""
+        mapping = {old: new}
+        data = self.settings.data
+        for key in ("corrections", "rules", "recent_destinations", "sources", "destinations", "left_out"):
+            if key in data:
+                data[key] = profile.remap(data[key], mapping)
+        self.settings.save()
+
     # ---------------------------------------------------------------- left out
     def left_out(self) -> list[str]:
         """Files and folders left exactly where they are; SortZen still learns from them."""
@@ -411,6 +524,10 @@ class AppService:
         plan = planner.plan()
         plan.copies = find_copies(records, plan, self.is_left_out)
         self._records = {r.path: r for r in records}
+        names = self.settings.get("folder_names") or {}
+        if names:
+            rename_planned(plan, {k: v for k, v in names.items() if not os.path.isdir(k)})
+        self._apply_rules(plan)
         self._apply_ai(plan)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
@@ -679,6 +796,9 @@ class AppService:
         """Put everything from one move back where it was."""
         result = self.mover.undo(log, emit)
         self._carry_index(result)
+        if any(r["log"] == log and r["kind"] == "rename" for r in self.move_runs()):
+            for back_from, back_to in result.moves:
+                self._remap_paths(back_from, back_to)
         return result
 
     def _carry_index(self, result: RunResult) -> None:
