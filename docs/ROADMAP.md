@@ -1,13 +1,13 @@
 # SortZen Roadmap
 
 Each phase ends with its tests passing. Engine behaviour and UI never change in the same
-step. Status: planning, nothing built.
+step.
 
 ## Alpha (versions 0.x, test folders only)
 
 | # | Phase | Status |
 |---|-------|--------|
-| 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | To do |
+| 0 | Repository set-up: package layout, workspace window, AI provider interface, job runner, settings, tests | **Done** |
 | 1 | Synthetic test folders; scanner and file readers with remembered results | To do |
 | 2 | Sorting engine: rules, learning from sorted folders, confidence and reason | To do |
 | 3 | AI step: service drop-down, key storage, privacy settings, two passes, batches, cost estimate and cap | To do |

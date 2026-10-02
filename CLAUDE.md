@@ -10,6 +10,30 @@ files.
 1. `docs/SPEC.md`: what SortZen does; every product decision.
 2. `docs/ROADMAP.md`: phases, the alpha test and what is done.
 
+## Layout
+```
+src/sortzen/
+  config.py            constants, per-user storage paths (SORTZEN_DATA_DIR override)
+  ai/                  provider interface, Gemini and web adapters, service list, JSON parsing
+  tasks/               typed job events, background job runner (cancel token = Stop Safely)
+  repositories/        settings.json, API keys (Windows Credential Manager via keyring)
+  services/            AppService: the only API the window uses
+  ui/                  PySide6 window, theme, fonts (OFL), icon
+packaging/launcher.py  runs the program from source; packaged entry point
+tests/                 unittest suites (window tests run offscreen)
+.github/workflows/     tests.yml: tests and self-test on Windows
+```
+
+## Commands
+```bash
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements-dev.txt
+python -m unittest discover -s tests -t .           # run tests (must stay green)
+python packaging/launcher.py                        # run the program
+python packaging/launcher.py --self-test=out.json   # start, check bundled pieces, exit
+```
+`tests/test_wording.py` enforces the writing rules below.
+
 ## Writing rules (code, comments, docs, commit messages)
 - Describe what the program does, e.g. "SortZen moves files after confirmation", not who
   asked for it or why it was decided.
