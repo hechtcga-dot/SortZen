@@ -223,3 +223,21 @@ class LeftOutServiceTest(unittest.TestCase):
         self.assertEqual(counts[0].files, 121)
         self.assertEqual(counts[0].tree[str(self.down / "Keep me")][0], 120)
         self.assertGreater(self.service.estimate_seconds(counts), 0)
+
+
+class ProblemsTest(unittest.TestCase):
+    def test_problems_found_before_moving(self):
+        from sortzen.services.plan_view import PlanRow, problems
+
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "Work")
+            os.mkdir(dest)
+            Path(dest, "report.pdf").write_text("x")
+            clash = PlanRow(os.path.join(d, "Downloads", "report.pdf"), False, os.path.join(d, "Downloads"),
+                            dest, 95, "Move")
+            self.assertIn("would be saved as “report (2).pdf”", " ".join(problems(clash)))
+            deep = os.path.join(d, *["a long folder name"] * 15)
+            long_row = PlanRow(os.path.join(d, "x.pdf"), False, d, deep, 95, "Move")
+            self.assertIn("too long for Windows", " ".join(problems(long_row)))
+            staying = PlanRow(os.path.join(d, "x.pdf"), False, d, d, 95, "Stay")
+            self.assertEqual(problems(staying), [])

@@ -5,6 +5,13 @@ import os
 from dataclasses import dataclass, field
 
 from ..engine.plan import (FOLDER_REVIEW, KEEP_TOGETHER, MOVE, REVIEW, SORT_INSIDE, STAY, STAYS, Plan, Reason)
+from ..scanning.file_types import kind_of
+
+KIND_NAMES = {"word": "Word", "pdf": "PDF", "spreadsheet": "Spreadsheet", "presentation": "Presentation",
+              "form": "Form", "text": "Text", "image": "Picture", "video": "Video", "audio": "Music",
+              "archive": "Zip", "installer": "Program", "ebook": "E-book", "web page": "Web page",
+              "shortcut": "Shortcut", "other": "Other"}
+MAX_PATH = 259                  # longest full path Windows programs reliably handle
 
 READY, TO_REVIEW, STAYING, SORTED_INSIDE = "Ready", "Review", "Staying", "Sorted from the inside"
 GROUPS = (READY, TO_REVIEW, STAYING, SORTED_INSIDE)
@@ -24,10 +31,21 @@ class PlanRow:
     topic: str = ""
     new_folder: bool = False
     files: int = 0
+    problems: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:
         return os.path.basename(self.path)
+
+    @property
+    def kind(self) -> str:
+        if self.is_folder:
+            return "Folder"
+        return KIND_NAMES.get(kind_of(os.path.splitext(self.path)[1]), "Other")
+
+    @property
+    def moves(self) -> bool:
+        return self.action in ("Move", "Keep together") and bool(self.destination)
 
 
 def rows(plan: Plan, autonomy: int, ask_everything: bool = False) -> dict[str, list[PlanRow]]:
@@ -59,9 +77,31 @@ def rows(plan: Plan, autonomy: int, ask_everything: bool = False) -> dict[str, l
             groups[READY].append(row)
         else:
             groups[TO_REVIEW].append(row)
+    for group in (groups[READY], groups[TO_REVIEW]):
+        for row in group:
+            row.problems = problems(row)
     for group in groups.values():
         group.sort(key=lambda r: (-r.percent, r.path.lower()) if r.action != "Review" else (r.percent, r.path.lower()))
     return groups
+
+
+def problems(row: PlanRow) -> list[str]:
+    """What would stop or change this move, found before anything moves."""
+    if not row.moves:
+        return []
+    found = []
+    target = os.path.join(row.destination, row.name)
+    if len(target) > MAX_PATH:
+        found.append(f"The new path would be too long for Windows ({len(target)} characters)")
+    if os.path.exists(target) and os.path.normcase(target) != os.path.normcase(row.path):
+        stem, ext = os.path.splitext(row.name)
+        found.append(f"“{row.name}” is already there: this one would be saved as “{stem} (2){ext}”")
+    existing = row.destination
+    while existing and not os.path.isdir(existing) and os.path.dirname(existing) != existing:
+        existing = os.path.dirname(existing)
+    if existing and os.path.isdir(existing) and not os.access(existing, os.W_OK):
+        found.append("SortZen can't write to the destination folder")
+    return found
 
 
 def display(path: str | None, roots: list[str]) -> str:
@@ -85,17 +125,17 @@ def export_xlsx(plan: Plan, target: str, roots: list[str], autonomy: int, ask_ev
     book = Workbook()
     sheet = book.active
     sheet.title = "Plan"
-    header = ["Group", "Name", "File or folder", "From", "To", "Action", "Sure %", "New folder", "Topic", "Reasons"]
+    header = ["Group", "Name", "Type", "From", "To", "Action", "Sure %", "New folder", "Topic", "Reasons", "Problems"]
     sheet.append(header)
     for group, items in rows(plan, autonomy, ask_everything).items():
         for r in items:
             reasons = "\n".join(("+ " if x.supports else "- ") + x.text for x in r.reasons)
-            sheet.append([group, r.name, f"Folder ({r.files} files)" if r.is_folder else "File",
+            sheet.append([group, r.name, f"Folder ({r.files} files)" if r.is_folder else r.kind,
                           display(r.current, roots), display(r.destination, roots), r.action, r.percent,
-                          "Yes" if r.new_folder else "", r.topic, reasons])
+                          "Yes" if r.new_folder else "", r.topic, reasons, "\n".join(r.problems)])
     for cell in sheet[1]:
         cell.font = Font(bold=True)
-    for column, width in zip("ABCDEFGHIJ", (14, 40, 18, 40, 40, 14, 8, 11, 18, 80)):
+    for column, width in zip("ABCDEFGHIJK", (14, 40, 14, 40, 40, 14, 8, 11, 18, 80, 50)):
         sheet.column_dimensions[column].width = width
     for row in sheet.iter_rows(min_row=2, min_col=10, max_col=10):
         row[0].alignment = Alignment(wrap_text=True, vertical="top")

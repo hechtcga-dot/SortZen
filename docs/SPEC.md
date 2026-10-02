@@ -310,6 +310,16 @@ available in Settings:
     inside" (messy folders), with the autonomy level and "Ask me about everything" at the
     top; changing them regroups the plan at once. Selecting a row shows how its
     percentage was worked out.
+  - The Plan tab's columns are Name, Type (PDF, Word, Folder …), Sure, From, To and Notes,
+    each sortable. A search box filters by name, folder or topic; a drop-down shows one
+    added folder; "Only rows with problems" shows just those. "Group by" switches between
+    Ready and Review and **Destination folder** ("Work/Payroll (42)").
+  - **Problems before moving**, in Notes and in the explanation: a new path too long for
+    Windows, a file of the same name already there (it would be saved as "name (2)"), and
+    destination folders SortZen can't write to.
+  - An accuracy line: "So far you changed 3 of 312 Ready suggestions (99% right)".
+  - Every row that would move has a tick box: Ready rows start ticked, Review rows
+    unticked (ticked once users choose a destination). "Move ticked…" moves them (§11).
   - "Change destination…" and "Leave it where it is" (buttons and right-click, for one or
     several files) are remembered at once; "Update plan" lets SortZen learn from them for
     similar files. Every change can be undone (Ctrl+Z).

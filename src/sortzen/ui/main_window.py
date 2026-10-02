@@ -438,6 +438,7 @@ class MainWindow(QMainWindow):
                 s.destination, s.percent, s.new_folder = destination, 100, not os.path.isdir(destination)
                 s.reasons = [Reason(True, "You chose this folder")]
         self._push_undo("Change destination", lambda: self.service.restore_corrections(previous))
+        self.plan_page.note_corrections([r.path for r in rows])
         self.plan_page.refresh()
         self.statusBar().showMessage("Remembered. Update the plan to let SortZen learn from it for similar files.",
                                      6000)

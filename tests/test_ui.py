@@ -96,7 +96,7 @@ class MainWindowTest(unittest.TestCase):
         self.assertIn("ready", page.summary.text())
         ready = page.tree.topLevelItem(0)
         self.assertTrue(ready.text(0).startswith("Ready ("))
-        self.assertTrue(ready.child(0).text(1).endswith("%"))
+        self.assertTrue(ready.child(0).text(2).endswith("%"))
         first = ready.child(0)
         page.tree.setCurrentItem(first)
         self.assertIn("% sure", page.details.toPlainText())
@@ -106,8 +106,38 @@ class MainWindowTest(unittest.TestCase):
         self.window.correct([row], target)
         self.assertEqual(self.service.corrections(), {row.path: os.path.abspath(target)})
         self.assertEqual(self.window.plan.for_path(row.path).percent, 100)
+        self.assertIn("changed 1 of", page.accuracy.text())
         self.window.undo()
         self.assertEqual(self.service.corrections(), {})
+
+    def test_plan_search_group_by_destination_and_ticks(self):
+        from PySide6.QtCore import Qt
+
+        from sortzen.ui.sortable import natural
+
+        root = shared_test_folders()
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
+        page = self.window.plan_page
+        ticked = page.ticked_rows()
+        self.assertTrue(ticked and all(r.moves for r in ticked))
+        self.assertIn(f"Move {len(ticked):,} ticked", page.move_button.text())
+        first = page.tree.topLevelItem(0).child(0)
+        first.setCheckState(0, Qt.CheckState.Unchecked)
+        self.assertEqual(len(page.ticked_rows()), len(ticked) - 1)
+        page.search.setText("Autumn_Ellery")
+        visible = [item for _, item in page._rows_items() if not item.isHidden()]
+        self.assertTrue(visible and all("Autumn_Ellery" in i.text(0) for i in visible))
+        page.search.clear()
+        page.group_by.setCurrentIndex(1)
+        headings = [page.tree.topLevelItem(i).text(0) for i in range(page.tree.topLevelItemCount())]
+        self.assertTrue(any(h.startswith("Sorted/Documents/Work/Payroll (") for h in headings))
+        page.tree.sortByColumn(0, Qt.SortOrder.AscendingOrder)
+        group = page.tree.topLevelItem(0)
+        names = [group.child(i).text(0) for i in range(group.childCount())]
+        self.assertEqual(names, sorted(names, key=natural))
 
     def test_folders_tab_counts_drill_down_and_tick_boxes(self):
         from PySide6.QtCore import Qt
