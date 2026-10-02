@@ -110,7 +110,7 @@ def is_program(p, folder: str) -> str:
 
 
 def family_base(name: str, is_file: bool = False) -> str:
-    """A name without version and copy endings: "AuctionZen-windows (4)" and "AuctionZen-1.7.3" give "AuctionZen"."""
+    """A name without version and copy endings: "TideLog-windows (4)" and "TideLog-1.7.3" give "TideLog"."""
     base = os.path.splitext(name)[0] if is_file else name
     while True:
         trimmed = _COPY_END.sub("", base)
