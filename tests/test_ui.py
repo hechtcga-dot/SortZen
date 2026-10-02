@@ -123,3 +123,29 @@ class MainWindowTest(unittest.TestCase):
         page.level.setValue(50)
         self.assertGreater(ready_count(), ready_before)
         self.assertEqual(self.service.autonomy(), 50)
+
+
+@unittest.skipIf(create_app is None, "PySide6 is not installed")
+class ProgressWindowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = create_app([])
+
+    def test_progress_times_tips_and_stop(self):
+        from sortzen.ui.progress_window import ProgressWindow
+
+        window = ProgressWindow(None, "Making the plan", estimate=200)
+        window.set_step("Reading", "Downloads")
+        window.set_progress(50, 100)
+        window.set_progress(10, 100)                 # never goes backwards
+        self.assertEqual(window.bar.value(), 500)
+        self.assertTrue(window.times.text().startswith("50% done"))
+        first = window.tip.text()
+        window._next_tip()
+        self.assertNotEqual(first, window.tip.text())
+        stopped = []
+        window.stop.connect(lambda: stopped.append(True))
+        window.stop_button.click()
+        self.assertEqual(stopped, [True])
+        self.assertFalse(window.stop_button.isEnabled())
+        window.finish()

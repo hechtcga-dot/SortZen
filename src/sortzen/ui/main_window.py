@@ -6,7 +6,7 @@ import os
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
     QSplitter, QTabWidget, QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -14,12 +14,13 @@ from ..config import APP_NAME, APP_TAGLINE, APP_VERSION
 from ..engine.planner import SORT_OUT, TIDY
 from ..services import AppService
 from ..services.app_service import FolderError
-from ..tasks import JobFailed, JobFinished, Log, Progress, Status
+from ..tasks import Estimate, JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
 from .dialogs import MODE_TEXT, DestinationDialog, ModeDialog
 from .icons import app_icon
 from .plan_page import PlanPage
+from .progress_window import ProgressWindow
 from .questions_page import QuestionsPage
 
 STEPS = (
@@ -41,7 +42,7 @@ class MainWindow(QMainWindow):
         self.bridge = EventBridge(self)
         self.bridge.event.connect(self._on_job_event)
         self.plan = None
-        self.progress: QProgressDialog | None = None
+        self.progress: ProgressWindow | None = None
         self.undo_stack: list[tuple[str, object]] = []
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
@@ -337,11 +338,9 @@ class MainWindow(QMainWindow):
         if not self.service.source_folders():
             QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
             return
-        self.progress = QProgressDialog("Reading your folders…", "Stop safely", 0, 0, self)
-        self.progress.setWindowTitle("Making the plan")
-        self.progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress.setMinimumDuration(300)
-        self.progress.canceled.connect(self.service.stop_job)
+        self.progress = ProgressWindow(self, "Making the plan")
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
         self.run_job("plan", self.service.make_plan)
 
     def show_plan(self, plan) -> None:
@@ -432,15 +431,15 @@ class MainWindow(QMainWindow):
 
     def _on_job_event(self, event) -> None:
         if isinstance(event, Status):
-            text = f"{event.primary} {event.detail}".strip()
-            self.statusBar().showMessage(text)
+            self.statusBar().showMessage(f"{event.primary} {event.detail}".strip())
             if self.progress:
-                self.progress.setLabelText(text + "…")
+                self.progress.set_step(event.primary, event.detail)
         elif isinstance(event, Progress):
-            self.statusBar().showMessage(f"{event.done} of {event.total}")
             if self.progress:
-                self.progress.setMaximum(event.total)
-                self.progress.setValue(event.done)
+                self.progress.set_progress(event.done, event.total)
+        elif isinstance(event, Estimate):
+            if self.progress:
+                self.progress.estimate = event.seconds
         elif isinstance(event, Log):
             self.statusBar().showMessage(event.message, 5000)
         elif isinstance(event, JobFinished):
@@ -459,6 +458,5 @@ class MainWindow(QMainWindow):
 
     def _close_progress(self) -> None:
         if self.progress:
-            self.progress.canceled.disconnect()
-            self.progress.close()
+            self.progress.finish()
             self.progress = None

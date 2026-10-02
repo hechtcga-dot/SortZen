@@ -138,7 +138,7 @@ QToolButton#tabClose:hover {{ background: {NEUTRAL_BG}; }}
 QToolButton#tabClose:pressed {{ background: {LINE}; }}
 
 QFrame#card {{ background: {WHITE}; border: 1px solid {LINE}; border-radius: 10px; }}
-QProgressBar {{ background: {NEUTRAL_BG}; border: none; border-radius: 4px; height: 8px; max-height: 8px; text-align: center; }}
+QProgressBar {{ background: {LINE_SOFT}; border: none; border-radius: 4px; height: 8px; max-height: 8px; text-align: center; }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 4px; }}
 
 QTableView {{ background: {WHITE}; border: none; gridline-color: transparent; outline: 0;

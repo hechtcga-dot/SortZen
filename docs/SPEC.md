@@ -284,6 +284,10 @@ available in Settings:
   percentage and its reasons. Nothing is moved; corrections are still learned.
   - Folders are added from the toolbar, the File menu, the folder tree (right-click) or the
     Start tab, which also offers the standard Windows folders as destinations.
+  - While a plan is made, a window shows a small animation, one progress bar across all
+    folders, the current step ("Listing files in older downloads: 850 found"), time so far
+    and a time estimate, rotating tips, and Stop safely. The estimate comes from a quick
+    count of the files (nothing is opened) and from how fast earlier runs were.
   - The **Questions** tab lists what SortZen couldn't settle; answers are saved and the plan
     is updated.
   - The **Plan** tab groups everything into Ready, Review, Staying and "Sorted from the

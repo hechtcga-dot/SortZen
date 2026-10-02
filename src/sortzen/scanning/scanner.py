@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..repositories.file_index import FileIndex, path_key
@@ -22,6 +23,19 @@ HIDDEN, SYSTEM, REPARSE_POINT = 0x2, 0x4, 0x400
 CLOUD_ONLY = 0x1000 | 0x40000 | 0x400000      # offline, recall on open, recall on data access
 COMMIT_EVERY = 200
 PROGRESS_EVERY = 25
+LISTING_EVERY = 500
+
+
+@dataclass
+class FolderCount:
+    root: str
+    files: int
+    new_files: int                          # not read before, or changed since
+    size: int                               # bytes
+    biggest: list[tuple[str, int]]          # the largest files, (path, bytes)
+    busiest: list[tuple[str, int]]          # subfolders holding the most files, (name, files)
+    google_drive: bool                      # on Google Drive for desktop, contents not read
+    listing: tuple = field(default=(), repr=False)
 
 
 class ProtectedFolderError(ValueError):
@@ -62,7 +76,9 @@ class Scanner:
         self.read_google_drive = read_google_drive
         self.pause = 0.0            # seconds to rest after each file read ("Be gentle with my computer")
 
-    def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None) -> ScanSummary:
+    def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None,
+             listing=None) -> ScanSummary:
+        """Read the folder's files (unchanged ones come from the index). ``listing`` reuses one from listing()."""
         root = Path(os.path.abspath(str(root)))
         if not root.is_dir():
             raise FileNotFoundError(f"The folder {root} can't be found.")
@@ -74,9 +90,11 @@ class Scanner:
         excluded = [path_key(p) for p in exclude]
 
         streamed = not self.read_google_drive and on_google_drive(str(root))
-        emit(Status("Listing files", root.name))
-        entries: list[tuple[str, os.stat_result]] = []
-        self._walk(str(root), recursive, excluded, entries, summary)
+        if listing is None:
+            emit(Status("Listing files", root.name))
+            listing = self.listing(root, recursive, exclude, emit)
+        entries, skipped = listing
+        summary.skipped = dict(skipped)
 
         total = len(entries)
         seen: set[str] = set()
@@ -113,7 +131,34 @@ class Scanner:
         summary.files.sort(key=lambda r: r.path.lower())
         return summary
 
-    def _walk(self, folder: str, recursive: bool, excluded, entries, summary) -> None:
+    def listing(self, root, recursive: bool, exclude=(), emit=None):
+        """The folder's sortable files and why others were skipped, without opening any file."""
+        summary = ScanSummary(str(root), "")
+        entries: list[tuple[str, os.stat_result]] = []
+        self._walk(str(root), recursive, [path_key(p) for p in exclude], entries, summary, emit, Path(root).name)
+        return entries, summary.skipped
+
+    def count(self, root, recursive: bool, exclude=()) -> FolderCount:
+        """How many files a folder holds, how many are new since the last scan, and the biggest ones."""
+        root = Path(os.path.abspath(str(root)))
+        entries, skipped = self.listing(root, recursive, exclude)
+        with self.index.session() as conn:
+            known = self.index.known(conn, path_key(root))
+        new = 0
+        per_subfolder: dict[str, int] = {}
+        for path, st in entries:
+            previous = known.get(path_key(path))
+            if not previous or previous.size != st.st_size or previous.modified_ns != st.st_mtime_ns:
+                new += 1
+            rel = os.path.relpath(path, root).split(os.sep)
+            if len(rel) > 1:
+                per_subfolder[rel[0]] = per_subfolder.get(rel[0], 0) + 1
+        biggest = sorted(((p, st.st_size) for p, st in entries), key=lambda x: -x[1])[:20]
+        return FolderCount(str(root), len(entries), new, sum(st.st_size for _, st in entries),
+                           biggest, sorted(per_subfolder.items(), key=lambda x: -x[1])[:10],
+                           not self.read_google_drive and on_google_drive(str(root)), (entries, skipped))
+
+    def _walk(self, folder: str, recursive: bool, excluded, entries, summary, emit=None, name="") -> None:
         try:
             listing = os.scandir(folder)
         except OSError:
@@ -136,7 +181,7 @@ class Scanner:
                             or _inside(key, self.protected) or _inside(key, excluded)):
                         summary.skip("excluded folder")
                     elif recursive:
-                        self._walk(entry.path, recursive, excluded, entries, summary)
+                        self._walk(entry.path, recursive, excluded, entries, summary, emit, name)
                     else:
                         summary.skip("subfolder")
                     continue
@@ -149,6 +194,8 @@ class Scanner:
                     summary.skip(reason)
                     continue
                 entries.append((entry.path, st))
+                if emit and len(entries) % LISTING_EVERY == 0:
+                    emit(Status("Listing files", f"{name}: {len(entries):,} found"))
 
     @staticmethod
     def _read(path: str, root: str, role: str, st, cloud: bool) -> FileRecord | None:

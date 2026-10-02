@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Callable
 
 from ..ai.services import DEFAULT_SERVICE, OLLAMA_URL, SERVICES, make_provider
@@ -13,7 +14,7 @@ from ..engine import Planner, Source
 from ..engine.plan import Plan
 from ..engine.planner import SORT_OUT, TIDY
 from ..scanning.scanner import Scanner
-from ..tasks import JobRunner, Status
+from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
 from . import plan_view
 
@@ -24,6 +25,8 @@ DEFAULTS = {                    # settings with on/off values, and their default
     "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
 }
 GENTLE_PAUSE = 0.005
+PLAN_SHARE = 5                  # planning counts as one fifth of the files on the progress bar
+SPEED_DEFAULTS = {"read": 100.0, "remembered": 5000.0, "plan": 1500.0}     # files per second
 MODES = (SORT_OUT, TIDY)
 WINDOWS_FOLDERS = {      # name -> Windows known-folder id (found through Windows, so OneDrive moves are followed)
     "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
@@ -240,28 +243,82 @@ class AppService:
         emit = emit or (lambda event: None)
         self.scanner.read_google_drive = self.option("read_google_drive")
         self.scanner.pause = GENTLE_PAUSE if self.option("gentle") else 0.0
-        sources, destinations = self.source_folders(), _outermost(self.destination_folders())
+        sources = self.source_folders()
         if not sources:
             raise FolderError("Add a folder to sort first.")
+        emit(Status("Counting files", "nothing is opened yet"))
+        counts = self.count_folders()
+        emit(Estimate(self.estimate_seconds(counts)))
+        total_files = sum(c.files for c in counts)
+        plan_units = max(1, total_files // PLAN_SHARE)
+        grand = total_files + plan_units
+        done_before = 0
         records = []
-        source_paths = [f["path"] for f in sources]
-        for f in sources:
-            emit(Status("Reading", os.path.basename(f["path"])))
-            summary = self.scanner.scan(f["path"], "source", recursive=True, emit=emit, token=token)
+        started = time.perf_counter()
+        read = remembered = 0
+        for number, count in enumerate(counts):
+            role = "source" if number < len(sources) else "destination"
+            emit(Status("Reading", os.path.basename(count.root)))
+
+            def overall(event, offset=done_before):
+                if isinstance(event, Progress):
+                    event = Progress(offset + event.done, grand)
+                emit(event)
+
+            summary = self.scanner.scan(count.root, role, recursive=True,
+                                        exclude=[f["path"] for f in sources] if role == "destination" else (),
+                                        emit=overall, token=token, listing=count.listing)
             records += summary.files
+            read, remembered = read + summary.read, remembered + summary.remembered
             if summary.cancelled:
                 return None
-        for d in destinations:
-            emit(Status("Reading", os.path.basename(d)))
-            summary = self.scanner.scan(d, "destination", recursive=True, exclude=source_paths, emit=emit,
-                                        token=token)
-            records += summary.files
-            if summary.cancelled:
-                return None
-        emit(Status("Making the plan", f"{len(records)} files"))
-        planner = Planner(records, [Source(f["path"], f["mode"]) for f in sources], destinations,
+            done_before += count.files
+        reading_time = time.perf_counter() - started
+        emit(Status("Making the plan", f"{len(records):,} files"))
+        emit(Progress(total_files, grand))
+        started = time.perf_counter()
+        planner = Planner(records, [Source(f["path"], f["mode"]) for f in sources],
+                          [c.root for c in counts[len(sources):]],
                           answers=self.answers(), corrections=self.corrections())
-        return planner.plan()
+        plan = planner.plan()
+        emit(Progress(grand, grand))
+        self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
+        return plan
+
+    # ---------------------------------------------------------------- counting and estimates
+    def count_folders(self) -> list:
+        """Every added folder's file count, new files and biggest files, without opening any file.
+
+        Sources come first, in the order they were added, then the destination folders.
+        """
+        sources = self.source_folders()
+        source_paths = [f["path"] for f in sources]
+        counts = [self.scanner.count(f["path"], recursive=True) for f in sources]
+        counts += [self.scanner.count(d, recursive=True, exclude=source_paths)
+                   for d in _outermost(self.destination_folders())]
+        return counts
+
+    def speeds(self) -> dict[str, float]:
+        stored = self.settings.get("speeds") or {}
+        return {k: float(stored.get(k, v)) for k, v in SPEED_DEFAULTS.items()}
+
+    def estimate_seconds(self, counts) -> float:
+        """How long a plan will take: new files are read, unchanged ones come from what's remembered."""
+        speed = self.speeds()
+        new = sum(c.new_files for c in counts)
+        unchanged = sum(c.files - c.new_files for c in counts)
+        total = sum(c.files for c in counts)
+        slow = 2.0 if self.option("gentle") else 1.0
+        return slow * (new / speed["read"] + unchanged / speed["remembered"]) + total / speed["plan"]
+
+    def _learn_speed(self, read: int, remembered: int, reading_time: float, planned: int, plan_time: float) -> None:
+        speed = self.speeds()
+        if read >= 50 and reading_time > 0:
+            measured = read / max(0.001, reading_time - remembered / speed["remembered"])
+            speed["read"] = round(0.5 * speed["read"] + 0.5 * max(1.0, measured), 1)
+        if planned >= 100 and plan_time > 0:
+            speed["plan"] = round(0.5 * speed["plan"] + 0.5 * planned / plan_time, 1)
+        self.settings.set("speeds", speed)
 
     def plan_rows(self, plan: Plan) -> dict[str, list[plan_view.PlanRow]]:
         return plan_view.rows(plan, self.autonomy(), self.ask_everything())

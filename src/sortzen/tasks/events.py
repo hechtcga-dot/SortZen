@@ -36,3 +36,8 @@ class JobFinished(JobEvent):
 class JobFailed(JobEvent):
     name: str
     message: str
+
+
+@dataclass(frozen=True)
+class Estimate(JobEvent):
+    seconds: float
