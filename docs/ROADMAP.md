@@ -60,7 +60,7 @@ moves files after the plan is confirmed.
 | 29 | Files that go with another file (subtitles, sidecars) and one-movie folders kept whole; groups of look-alike files | **Done** |
 | 30 | Cataloguing wizard (labels, then only unsure files, agreement meter, rounds) | **Done** |
 | 31 | Cataloguing tab: planned files by folder, drag to change the plan and teach, notes, folders for labels | **Done** |
-| 32 | **Alpha 0.5 build** | Waiting for the go-ahead |
+| 32 | **Alpha 0.5 build** | **Done** |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).

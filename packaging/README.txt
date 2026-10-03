@@ -1,4 +1,4 @@
-SortZen 0.4 - README
+SortZen 0.5 - README
 ====================
 
 SortZen sorts messy folders, such as Downloads or a cloud drive, into the right folders.
@@ -9,7 +9,7 @@ Every move can be undone.
 
 Installing
 ----------
-1. Run SortZen-Setup-0.4.0.exe. No administrator rights are needed; SortZen installs for
+1. Run SortZen-Setup-0.5.0.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over an
    earlier version keeps your settings, answers and choices.
 2. SortZen isn't code-signed yet, so Windows may show "Windows protected your PC".
@@ -29,12 +29,22 @@ Using it
 3. Folders tab: see every added folder with its files and size, how long a plan will take,
    and warnings about very big folders or files. Untick anything SortZen should leave
    exactly where it is; it still learns from it.
-4. Click "Make a plan" (F5). A window shows the progress, the time left and tips. A repeat
-   run is much quicker because unchanged files are remembered. "Stop safely" stops at any
-   time.
-5. To place: groups of files with no clear home ("39 PDFs whose names are only numbers")
-   go to a folder you pick or type in one go, and SortZen's questions can be answered with
-   any folder. Everything is remembered and can be undone.
+4. Click "Start cataloguing" (Ctrl+L). The cataloguing wizard opens:
+   - Step 1: make your labels, words for what files are about (Work, Taxes, School, Photo
+     session...). Drag them into order: the top label counts most. "Ask AI to suggest
+     labels..." proposes some from your file names. Then choose: SortZen labels the files on
+     this PC (free), or the AI labels a sample and SortZen labels the rest from it.
+   - A window shows the progress, the time left and tips. "Stop safely" stops at any time.
+   - Step 2: only the files SortZen isn't sure about, in groups one answer settles. Select
+     files or a whole group (Shift- or Ctrl-click) and click a label, or "Looks right".
+     Right-click to take a label away, write a note about a file, keep a folder together,
+     say a file is similar to (or different from) another file, or delete files (they go to
+     a "To delete" folder). A meter shows how often SortZen's guess matched yours; "Catalog
+     again" uses what it learned, and each round leaves fewer files.
+5. "Finish: see the catalog" opens the Cataloguing tab: every folder with its files and the
+   files the plan sends there (in italics). Drag a file onto the right folder: the plan
+   changes and SortZen learns. Select a file to see why it goes there and write a note.
+   Suggestions such as "Files labelled Resume go to Work/Staffing" can be accepted.
 6. Plan: every file and folder is in Ready (at or above your level, "Move without asking
    when at least 90% sure"), Review, Staying, or "Sorted from the inside" (messy folders).
    Select a row to see how its percentage was worked out and any problem found before
@@ -48,7 +58,7 @@ Using it
 9. Tick what should move and click "Move ticked...". A window shows every destination,
    new folders and names already taken; nothing moves until you confirm.
 10. Copies tab: exact copies, with the one to keep in bold and why. Ticked extras move to
-    a dated "Queued for deletion" folder; delete those folders yourself when you're sure.
+    a "To delete" folder; delete those folders yourself when you're sure.
 11. Ctrl+Z undoes your last change, including a move. Edit > "Undo a move..." puts back
     any earlier move. "Export to Excel..." saves the whole plan with the reasons.
 
@@ -68,8 +78,32 @@ Your privacy
   uninstall, SortZen asks whether to remove them and your saved API keys too.
 
 
-What's new in 0.4
+What's new in 0.5
 -----------------
+- Cataloguing wizard (Start cataloguing, Ctrl+L): labels first, then only the files SortZen
+  isn't sure about, in groups one answer settles. Labels can come from SortZen on this PC
+  or from the AI for a sample of files (SortZen labels the rest from it, so it costs much
+  less). A meter shows how often SortZen's guess matches yours; each "Catalog again"
+  round leaves fewer files.
+- Labels: several per file, in order of importance. SortZen learns which folders your
+  labels belong in and suggests rules such as "Files labelled Taxes go to Documents/Taxes".
+  Select several files and give a label to all of them, or take one away from whichever
+  of them have it.
+- Cataloguing tab (was Catalog): see where every file will go, drag files to the right
+  folder to change the plan, and write a note on a file ("this one is for the 2023
+  audit"). Files already in a folder can be dragged too, also from Windows Explorer, and
+  folders can be added by dropping them there.
+- Similar / different: say a file is like another file, or not, and SortZen becomes more
+  or less sure of its folder. Nothing moves because of it.
+- Files that belong together stay together: subtitles, .nfo files and posters go with
+  their movie, cue sheets with their album, .xmp sidecars with their photo, and a folder
+  holding one movie is kept whole.
+- Delete: right-click, the Delete button or the Delete key moves files into a "To delete"
+  folder at once (it asks first until you tick "Don't ask again"). Nothing is really
+  deleted until you delete that folder, and Ctrl+Z puts them back.
+
+Also in 0.4
+-----------
 - Catalog tab: your categories and subcategories as a tree built from your folders, with
   their files, notes, rules and example files. Rename a category, add a subcategory, write
   what belongs in it, give it another folder (for example on a cloud drive), merge it into
@@ -80,31 +114,6 @@ What's new in 0.4
   from your feedback, and "Ask AI to review..." asks the AI service for improvements
   (names, counts, notes, a few example names and your feedback are sent; never file
   contents; the cost is shown first).
-
-Also in 0.3
------------
-- To place tab (instead of Questions): files with no clear home in groups, such as
-  "39 PDFs whose names are only numbers". Pick or type a folder and "Put them there" sends
-  the whole group; "Also files like these in future plans" makes a rule. Questions can be
-  answered with any folder.
-- Programs are kept whole, and versions and copies of one thing ("Name-1.7.3",
-  "Name-windows (4)", "Name (1)") are gathered into one new folder, such as "Name Program".
-- Rules: after you send a few files with a word in common to one folder, SortZen offers a
-  rule. Rules are listed in Edit > Settings > Rules.
-- Recently chosen folders: the last 20 head the Change destination window, and
-  right-click > "Move to" sends files there in one click. New folders can be named there,
-  and folders can be renamed (planned ones in the plan, existing ones on disk, with Undo).
-- Folder notes: right-click a folder > "Write a note about this folder..." and say what
-  belongs in it ("pay stubs, T4s, timesheets"). SortZen and the AI use the words.
-- Text in scans and pictures is read with the text recognition built into Windows, on this
-  PC. Older Word, Excel and PowerPoint files, Outlook and .eml emails, RTF, OpenDocument
-  and web pages are read too.
-- Matching by meaning, on this PC: a small model finds folders whose files are about the
-  same thing, even with no words in common ("pay stub" and "Payroll"). Nothing is sent.
-- AI service: models in a drop-down (or typed), "Get the list" and "Check", and plain
-  messages when a model name, key or service is wrong.
-- The window shown while SortZen works keeps each tip up longer, has a Next button and a
-  few "Did you know?" facts.
 
 Programs and models included: the meaning model is potion-base-8M by Minish (MIT licence);
 scanned PDF pages are drawn with pypdfium2 (PDFium, BSD/Apache licences).
