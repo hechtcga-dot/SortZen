@@ -108,7 +108,8 @@ class _Index:
 class Planner:
     def __init__(self, records: list[FileRecord], sources: list[Source], destinations: list[str],
                  not_destinations: list[str] = (), answers: dict[str, int] | None = None,
-                 corrections: dict[str, str] | None = None, left_out: list[str] = ()):
+                 corrections: dict[str, str] | None = None, left_out: list[str] = (),
+                 notes: dict[str, str] | None = None):
         self.records = list(records)
         self.sources = [Source(os.path.abspath(s.root), s.mode) for s in sources]
         self.destinations = [os.path.abspath(d) for d in destinations]
@@ -117,6 +118,7 @@ class Planner:
         self.corrections = {path_key(k): os.path.abspath(v) for k, v in (corrections or {}).items()}
         self.excluded: list[str] = []                            # messy, undecided or moving folders
         self.left_out = [os.path.abspath(p) for p in left_out]  # left in place, still learned from
+        self.notes = {os.path.abspath(f): t for f, t in (notes or {}).items() if t and t.strip()}   # folder notes
         self._sources: dict[str, Source | None] = {}
         self._labels: dict[str, str] = {}
 
@@ -202,6 +204,12 @@ class Planner:
         for folder in self.by_folder:
             for w in set(words(os.path.basename(folder))):
                 self.folders_named[w].append(folder)
+        self.note_words: dict[str, set[str]] = {}     # words users wrote about a folder count like its name
+        for folder, text in self.notes.items():
+            if self._is_candidate(folder) and not self.is_left_out(folder):
+                self.note_words[folder] = set(words(text)) - set(words(os.path.basename(folder)))
+                for w in self.note_words[folder]:
+                    self.folders_named[w].append(folder)
         # First pass: sorted files that look misplaced count less as examples for their folder.
         self.weight = {i: 1.0 for i in self.examples}
         self.out_of_place: set[int] = set()
@@ -331,9 +339,14 @@ class Planner:
                 reasons.append(Reason(True, "Name shares " + ", ".join(f"“{w}”" for w in in_name)))
             if in_text:
                 reasons.append(Reason(True, "Mentions " + ", ".join(f"“{w}”" for w in in_text)))
-        if name_match:
+        noted = [w for w in name_match or () if w in self.note_words.get(best, ())]
+        named = [w for w in name_match or () if w not in noted]
+        if named:
             reasons.append(Reason(True, f"Folder name “{os.path.basename(best)}” matches "
-                                        + ", ".join(f"“{w}”" for w in name_match)))
+                                        + ", ".join(f"“{w}”" for w in named)))
+        if noted:
+            reasons.append(Reason(True, f"Your note on “{os.path.basename(best)}” mentions "
+                                        + ", ".join(f"“{w}”" for w in noted)))
         there = self.by_folder.get(best, [])
         same_kind = sum(1 for j in there if self.records[j].kind == record.kind and j != i)
         others = len([j for j in there if j != i])

@@ -410,3 +410,37 @@ class GroupsTest(unittest.TestCase):
         self.assertEqual(plan.questions[0].choices[1].label, "Together in Typed")
         self.assertEqual(plan.questions[0].answer, 1)
         self.assertEqual((plan.files[0].destination, plan.files[0].percent), ("/s/Typed", 100))
+
+
+class FolderNotesTest(unittest.TestCase):
+    def test_a_folders_note_counts_like_its_name(self):
+        import tempfile
+        from pathlib import Path
+
+        from sortzen.config import AppPaths
+        from sortzen.repositories.api_keys import ApiKeyStore
+        from sortzen.services import AppService
+        from tests.test_repositories import FakeKeyring
+
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            files = {"Downloads/Q3 timesheet.txt": "hours for the quarter",
+                     "Sorted/Payroll/March pay register.txt": "pay register for march",
+                     "Sorted/Payroll/April pay register.txt": "pay register for april"}
+            for n, dish in enumerate(("lemon tart", "apple pie", "plum cake", "pear crumble", "fig jam", "lime curd",
+                                      "rice pudding", "bread loaf", "cherry pie", "peach cobbler")):
+                files[f"Sorted/Recipes/{dish}.txt"] = f"{dish} recipe with sugar"
+            for rel, text in files.items():
+                (base / rel).parent.mkdir(parents=True, exist_ok=True)
+                (base / rel).write_text(text, encoding="utf-8")
+            service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+            service.scanner.protected = []
+            service.add_source(str(base / "Downloads"))
+            service.add_destination(str(base / "Sorted"))
+            sheet = str(base / "Downloads" / "Q3 timesheet.txt")
+            before = service.make_plan().for_path(sheet)
+            self.assertNotEqual(before.destination, str(base / "Sorted" / "Payroll"))
+            service.set_folder_note(str(base / "Sorted" / "Payroll"), "pay stubs, T4s, timesheets")
+            after = service.make_plan().for_path(sheet)
+            self.assertEqual(after.destination, str(base / "Sorted" / "Payroll"))
+            self.assertTrue(any("Your note on “Payroll” mentions “timesheet”" in r.text for r in after.reasons))
