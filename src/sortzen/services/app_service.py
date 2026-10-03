@@ -30,7 +30,7 @@ from ..scanning import ocr
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
-from . import moving, plan_view, profile
+from . import catalog as catalog_model, moving, plan_view, profile
 
 AUTONOMY_DEFAULT = 90
 DEFAULTS = {                    # settings with on/off values, and their defaults
@@ -350,6 +350,103 @@ class AppService:
         recent = [f for f in self.settings.get("recent_destinations") or [] if path_key(f) != path_key(folder)]
         self.settings.set("recent_destinations", [folder, *recent][:RECENT_DESTINATIONS])
 
+    # ---------------------------------------------------------------- the catalog
+    def catalog_edits(self) -> dict:
+        return dict(self.settings.get("catalog") or {})
+
+    def _set_catalog(self, edits: dict) -> None:
+        self.settings.set("catalog", edits)
+
+    def catalog(self, plan: Plan | None = None) -> list:
+        """Every category, parents first: from the destination folders and the folders being tidied."""
+        roots = self.destination_folders() + [f["path"] for f in self.source_folders() if f["mode"] == TIDY]
+        records = list(self._records.values()) if self._records else None
+        return catalog_model.build(roots, self.catalog_edits(), self.folder_notes(), self.rules(), records)
+
+    def catalog_hidden(self) -> list[str]:
+        """Folders of categories files are never sent to."""
+        return list(self.catalog_edits().get("hidden") or [])
+
+    def _edit_map(self, part: str, folder: str, value) -> None:
+        edits = self.catalog_edits()
+        values = {k: v for k, v in (edits.get(part) or {}).items() if path_key(k) != path_key(folder)}
+        if value not in (None, "", []):
+            values[os.path.abspath(folder)] = value
+        edits[part] = values
+        self._set_catalog(edits)
+
+    def rename_category(self, folder: str, name: str) -> None:
+        """The name shown in the catalog (the folder keeps its name; renaming the folder is rename_folder)."""
+        name = (name or "").strip()
+        self._edit_map("names", folder, name if name and name != os.path.basename(folder) else None)
+
+    def add_category_folder(self, folder: str, other: str) -> None:
+        """Another folder for a category, e.g. its counterpart on another drive."""
+        current = next((v for k, v in (self.catalog_edits().get("extra") or {}).items()
+                        if path_key(k) == path_key(folder)), [])
+        if path_key(other) not in {path_key(f) for f in current} and path_key(other) != path_key(folder):
+            self._edit_map("extra", folder, current + [os.path.abspath(other)])
+
+    def remove_category_folder(self, folder: str, other: str) -> None:
+        current = next((v for k, v in (self.catalog_edits().get("extra") or {}).items()
+                        if path_key(k) == path_key(folder)), [])
+        self._edit_map("extra", folder, [f for f in current if path_key(f) != path_key(other)])
+
+    def set_category_hidden(self, folder: str, hidden: bool) -> None:
+        """A category files are never sent to (it still teaches SortZen)."""
+        edits = self.catalog_edits()
+        kept = [p for p in edits.get("hidden") or [] if path_key(p) != path_key(folder)]
+        edits["hidden"] = kept + [os.path.abspath(folder)] if hidden else kept
+        self._set_catalog(edits)
+
+    def merge_category(self, folder: str, into: str | None) -> None:
+        """From now on, files for this category go to ``into`` (None undoes the merge)."""
+        if into and path_key(into) == path_key(folder):
+            raise FolderError("A category can't be merged into itself.")
+        self._edit_map("merged", folder, os.path.abspath(into) if into else None)
+
+    def category_feedback(self, folder: str, kind: str, text: str = "") -> None:
+        if kind not in catalog_model.FEEDBACK:
+            raise ValueError(f"Unknown feedback: {kind}")
+        self._set_catalog(catalog_model.with_feedback(self.catalog_edits(), folder, kind, text))
+
+    def add_subcategory(self, parent: str, name: str, note: str = "") -> str:
+        """A new, empty subfolder for a category, with what belongs in it. Returns its folder."""
+        name = (name or "").strip().rstrip(". ")
+        if not name:
+            raise FolderError("Type a name for the subcategory.")
+        bad = sorted(set(name) & set('\\/:*?"<>|'))
+        if bad:
+            raise FolderError(f"Names can't contain {' '.join(bad)}")
+        folder = os.path.join(parent, name)
+        if os.path.lexists(folder):
+            raise FolderError(f"“{name}” is already there.")
+        os.mkdir(folder)
+        if note.strip():
+            self.set_folder_note(folder, note)
+        return folder
+
+    def remove_empty_subcategory(self, folder: str) -> None:
+        """Undo for add_subcategory: the folder is removed only while nothing is in it."""
+        if os.path.isdir(folder) and not os.listdir(folder):
+            os.rmdir(folder)
+
+    def merge_files(self, folder: str, into: str) -> list[MoveRequest]:
+        """What moving a category's files into another category would move (for the preview)."""
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            return []
+        return [MoveRequest(e.path, into) for e in entries
+                if not e.name.startswith((".", "~$")) and not is_queue_folder(e.name)]
+
+    def reorganize(self, requests: list[MoveRequest], emit=None, token=None) -> RunResult:
+        """Move files and folders to new places in the catalog, logged so Undo puts them back."""
+        with gentle(self.option("gentle")):
+            result = self.mover.run(requests, (), emit, token, kind="catalog")
+        self._carry_index(result)
+        return result
+
     # ---------------------------------------------------------------- folder notes
     def folder_notes(self) -> dict[str, str]:
         """What users wrote about folders ("pay stubs, T4s, timesheets"), by folder."""
@@ -522,7 +619,7 @@ class AppService:
         mapping = {old: new}
         data = self.settings.data
         for key in ("corrections", "rules", "recent_destinations", "sources", "destinations", "left_out",
-                    "folder_notes"):
+                    "folder_notes", "catalog"):
             if key in data:
                 data[key] = profile.remap(data[key], mapping)
         self.settings.save()
@@ -607,14 +704,17 @@ class AppService:
         started = time.perf_counter()
         planner = Planner(records, [Source(f["path"], f["mode"]) for f in sources],
                           [c.root for c in counts[len(sources):]],
-                          answers=self.answers(), corrections=self.corrections(), left_out=self.left_out(),
-                          notes=self.folder_notes())
+                          not_destinations=self.catalog_hidden(), answers=self.answers(),
+                          corrections=self.corrections(), left_out=self.left_out(), notes=self.folder_notes())
         plan = planner.plan()
         plan.copies = find_copies(records, plan, self.is_left_out)
         self._records = {r.path: r for r in records}
         names = self.settings.get("folder_names") or {}
         if names:
             rename_planned(plan, {k: v for k, v in names.items() if not os.path.isdir(k)})
+        merged = self.catalog_edits().get("merged") or {}
+        if merged:                  # files for a merged category go to the one it was merged into
+            rename_planned(plan, merged)
         self._apply_rules(plan)
         if self.option("meaning"):
             emit(Status("Matching by meaning", f"{len(records):,} files"))

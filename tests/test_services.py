@@ -542,3 +542,81 @@ class GroupsServiceTest(unittest.TestCase):
         self.assertEqual(self.service.answers(), {"topic:x": str(self.sorted / "Typed"), "folder:y": 1})
         self.service.save_answers({"topic:x": None})
         self.assertEqual(self.service.answers(), {"folder:y": 1})
+
+
+class CatalogTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.sorted, self.downloads = base / "Sorted", base / "Downloads"
+        files = {"Sorted/Work/Payroll/March pay register.txt": "pay register march payroll",
+                 "Sorted/Work/Payroll/April pay register.txt": "pay register april payroll",
+                 "Sorted/Work/Budget/Budget 2024.txt": "budget forecast spending plan",
+                 "Sorted/Work/Budget/Budget 2025.txt": "budget forecast spending plan",
+                 "Sorted/Recipes/Lemon tart.txt": "lemon tart recipe sugar",
+                 "Sorted/Recipes/Apple pie.txt": "apple pie recipe sugar",
+                 "Sorted/Apps/TideLog/requirements.txt": "pyside6",
+                 "Sorted/Apps/TideLog/main.py": "print('hi')",
+                 "Downloads/Plum cake recipe.txt": "plum cake recipe sugar",
+                 "Downloads/Budget 2026.txt": "budget forecast spending plan"}
+        for rel, text in files.items():
+            (base / rel).parent.mkdir(parents=True, exist_ok=True)
+            (base / rel).write_text(text, encoding="utf-8")
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads))
+        self.service.add_destination(str(self.sorted))
+        self.plan = self.service.make_plan()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def category(self, name):
+        return next(c for c in self.service.catalog() if os.path.basename(c.path) == name)
+
+    def test_catalog_from_folders_without_programs(self):
+        names = [os.path.basename(c.path) for c in self.service.catalog()]
+        self.assertEqual(names, ["Sorted", "Apps", "Recipes", "Work", "Budget", "Payroll"])
+        self.assertEqual(self.category("Work").files, 4)
+        self.assertEqual(self.category("Apps").files, 2)                 # the program counts, but isn't a category
+        self.assertEqual(self.category("Payroll").parent, str(self.sorted / "Work"))
+        self.assertEqual(self.category("Recipes").examples, ["Apple pie.txt", "Lemon tart.txt"])
+
+    def test_edits_rename_feedback_subcategory_and_folders(self):
+        payroll = str(self.sorted / "Work" / "Payroll")
+        self.service.rename_category(payroll, "Pay and timesheets")
+        self.service.category_feedback(payroll, "too_broad", "stubs and timesheets are mixed")
+        self.service.add_category_folder(payroll, str(self.downloads))
+        made = self.service.add_subcategory(payroll, "Timesheets", "weekly hours")
+        c = self.category("Payroll")
+        self.assertEqual(c.name, "Pay and timesheets")
+        self.assertEqual((c.last_feedback, c.feedback[-1]["text"]), ("too_broad", "stubs and timesheets are mixed"))
+        self.assertEqual(c.folders, [payroll, str(self.downloads)])
+        self.assertEqual(self.category("Timesheets").note, "weekly hours")
+        with self.assertRaises(ValueError):
+            self.service.add_subcategory(payroll, "Timesheets")
+        self.service.remove_empty_subcategory(made)
+        self.assertFalse(os.path.exists(made))
+
+    def test_hidden_and_merged_categories_in_plans(self):
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        budget = str(self.downloads / "Budget 2026.txt")
+        self.assertEqual(self.plan.for_path(cake).destination, str(self.sorted / "Recipes"))
+        self.assertEqual(self.plan.for_path(budget).destination, str(self.sorted / "Work" / "Budget"))
+        self.service.set_category_hidden(str(self.sorted / "Recipes"), True)
+        self.service.merge_category(str(self.sorted / "Work" / "Budget"), str(self.sorted / "Work" / "Payroll"))
+        plan = self.service.make_plan()
+        self.assertNotEqual(plan.for_path(cake).destination, str(self.sorted / "Recipes"))
+        self.assertEqual(plan.for_path(budget).destination, str(self.sorted / "Work" / "Payroll"))
+        self.assertTrue(self.category("Recipes").hidden)
+        self.assertEqual(self.category("Budget").merged_into, str(self.sorted / "Work" / "Payroll"))
+
+    def test_moving_a_categorys_files_with_undo(self):
+        budget, payroll = str(self.sorted / "Work" / "Budget"), str(self.sorted / "Work" / "Payroll")
+        requests = self.service.merge_files(budget, payroll)
+        self.assertEqual(len(requests), 2)
+        result = self.service.reorganize(requests)
+        self.assertEqual(len(os.listdir(payroll)), 4)
+        self.assertEqual(self.service.move_runs()[0]["kind"], "catalog")
+        self.service.undo_move(result.log)
+        self.assertEqual(len(os.listdir(budget)), 2)
