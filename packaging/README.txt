@@ -12,8 +12,10 @@ Installing
 1. Run SortZen-Setup-0.5.0.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over an
    earlier version keeps your settings, answers and choices.
-2. SortZen isn't code-signed yet, so Windows may show "Windows protected your PC".
-   Click "More info", then "Run anyway". This happens once per download.
+2. SortZen isn't code-signed yet. If your browser blocks SortZen-Setup-0.5.0.exe, download
+   SortZen-Setup-0.5.0.zip instead, open it and run the setup file inside (in Chrome you can
+   also open the downloads list and choose "Keep"). Windows may then show "Windows
+   protected your PC": click "More info", then "Run anyway". This happens once per download.
 
 
 Using it
