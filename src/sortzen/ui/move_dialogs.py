@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QPushButton, QTreeWidget, QVBoxLayout,
 )
 
+from .opening import open_on_double_click
 from .sortable import SortItem, make_sortable
 
 LOG = Qt.ItemDataRole.UserRole
@@ -70,8 +71,10 @@ class ConfirmMoveDialog(QDialog):
         for folder, count, is_new in preview.destinations:
             item = SortItem(self.table, [display(folder), f"{count:,}", "new" if is_new else ""])
             item.set_key(1, count)
-            item.setToolTip(0, folder)
+            item.setToolTip(0, folder + ("" if is_new else "\nDouble-click to open it"))
+            item.setData(0, Qt.ItemDataRole.UserRole, folder)
             item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        open_on_double_click(self.table, lambda item: item.data(0, Qt.ItemDataRole.UserRole))
         make_sortable(self.table, 1, Qt.SortOrder.DescendingOrder)
         col.addWidget(self.table, 1)
         if preview.emptied:

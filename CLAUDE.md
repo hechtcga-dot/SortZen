@@ -55,7 +55,8 @@ src/sortzen/
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        settings_window.py,
-                       sortable.py (click-to-sort columns), theme, fonts (OFL), icon
+                       sortable.py (click-to-sort columns), opening.py (double-click opens files and
+                       folders), theme, fonts (OFL), icon
 packaging/             launcher.py (entry point), get_meaning_model.py (downloads the meaning
                        model before tests and builds), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt

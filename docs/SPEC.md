@@ -32,6 +32,9 @@ decision; when the code and this file disagree, this file wins until it is chang
   a progress window shows what is happening.
 - Everything is right-clickable, with the same actions as the buttons; Shift-click and
   Ctrl-click select several items.
+- Double-clicking a file or folder in any list opens it (a file with its program, a folder
+  in Explorer); in trees the arrow expands and collapses. A folder the plan hasn't made yet
+  says so in the status bar.
 - Every change can be undone (Ctrl+Z and Undo buttons). Optional panels can be shown or
   hidden.
 - Features are reachable from the toolbar, the menus, the folder tree and the welcome

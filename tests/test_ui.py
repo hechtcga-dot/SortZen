@@ -571,6 +571,68 @@ class MainWindowTest(unittest.TestCase):
         self.window.undo()
         self.assertNotIn(path, self.service.corrections())
 
+    def test_double_click_opens_files_and_folders_everywhere(self):
+        from unittest import mock
+
+        from PySide6.QtGui import QDesktopServices
+
+        root = shared_test_folders()
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.refresh_folders()
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None and not self.service.jobs.busy))
+        opened = []
+        with mock.patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()) or True):
+            def double_click(view, item):
+                view.itemDoubleClicked.emit(item, 0)
+                return os.path.normcase(os.path.normpath(opened[-1])) if opened else None
+
+            def first_with(view, role, wanted=lambda v: v):
+                stack = [view.topLevelItem(i) for i in range(view.topLevelItemCount())]
+                while stack:
+                    item = stack.pop(0)
+                    if wanted(item.data(0, role)):
+                        return item
+                    stack += [item.child(i) for i in range(item.childCount())]
+                return None
+
+            source = self.window.sources_item.child(0)                      # the folder tree on the left
+            self.assertEqual(double_click(self.window.tree, source), os.path.normcase(str(root / "Downloads")))
+            self.assertFalse(self.window.tree.expandsOnDoubleClick())
+
+            from sortzen.ui import folders_page, plan_page
+
+            self.window.folders_page.set_counts(self.service.count_folders())
+            item = first_with(self.window.folders_page.tree, folders_page.PATH, bool)
+            self.assertEqual(double_click(self.window.folders_page.tree, item),
+                             os.path.normcase(item.data(0, folders_page.PATH)))
+
+            item = first_with(self.window.plan_page.tree, plan_page.ROW, lambda r: r is not None and not r.is_folder)
+            self.assertEqual(double_click(self.window.plan_page.tree, item),
+                             os.path.normcase(item.data(0, plan_page.ROW).path))
+
+            from sortzen.ui.catalog_page import PATH as CATALOG_PATH
+
+            page = self.window.catalog_page
+            self.window.tabs.setCurrentWidget(page)
+            payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
+            page.select(payroll)
+            self.assertEqual(double_click(page.tree, page.tree.currentItem()), os.path.normcase(payroll))
+            file_row = page.files.topLevelItem(0)
+            self.assertEqual(double_click(page.files, file_row), os.path.normcase(file_row.data(0, CATALOG_PATH)))
+
+            wizard = self.window.to_place_page
+            row = next(iter(wizard.items.values()))
+            from sortzen.ui.to_place_page import PATH as WIZARD_PATH
+
+            self.assertEqual(double_click(wizard.tree, row), os.path.normcase(row.data(0, WIZARD_PATH)))
+
+            count = len(opened)
+            self.window.open_folder(str(root / "Sorted" / "Not made yet"))      # not there: says so, opens nothing
+            self.assertEqual(len(opened), count)
+            self.assertIn("isn't there yet", self.window.statusBar().currentMessage())
+
     def test_folder_notes_from_the_window(self):
         root = shared_test_folders()
         self.service.add_destination(str(root / "Sorted"))

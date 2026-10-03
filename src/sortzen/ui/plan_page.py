@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from ..services.plan_view import GROUPS, READY, SORTED_INSIDE, STAYING, TO_REVIEW, PlanRow
 from . import theme
+from .opening import open_on_double_click
 from .sortable import SortItem, make_sortable, natural
 
 GROUP_HINTS = {
@@ -119,6 +120,8 @@ class PlanPage(QWidget):
 
         split = QSplitter(Qt.Orientation.Horizontal)
         self.tree = QTreeWidget()
+        open_on_double_click(self.tree, lambda item: getattr(item.data(0, ROW), "path", None),
+                             self.open_folder.emit)
         self.tree.setHeaderLabels(["Name", "Type", "Sure", "From", "To", "Notes"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setAlternatingRowColors(True)

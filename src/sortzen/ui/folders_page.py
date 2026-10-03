@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QTreeWidget, QVBoxLayout, QWidget
 
 from ..engine.planner import TIDY
+from .opening import open_on_double_click
 from .sortable import SortItem, human_size, make_sortable, natural
 
 PATH = Qt.ItemDataRole.UserRole
@@ -66,6 +67,7 @@ class FoldersPage(QWidget):
         col.addWidget(hint)
 
         self.tree = QTreeWidget()
+        open_on_double_click(self.tree, lambda item: item.data(0, PATH), self.open_folder.emit)
         self.tree.setHeaderLabels(["Name", "Files", "Size", "How it's sorted", "Note"])
         self.tree.setColumnWidth(0, 420)
         self.tree.setColumnWidth(1, 80)

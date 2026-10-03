@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QTreeWidget, QVBoxLayout, QWidget,
 )
 
+from .opening import open_on_double_click
 from .sortable import SortItem, human_size, make_sortable, natural
 
 COPY = Qt.ItemDataRole.UserRole
@@ -56,6 +57,8 @@ class CopiesPage(QWidget):
         col.addWidget(self.search)
 
         self.tree = QTreeWidget()
+        open_on_double_click(self.tree, lambda item: getattr(item.data(0, COPY), "path", None),
+                             self.open_folder.emit)
         self.tree.setHeaderLabels(["Name", "Folder", "Modified", "Size", "Notes"])
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setAlternatingRowColors(True)

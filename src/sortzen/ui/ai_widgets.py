@@ -11,6 +11,7 @@ from ..ai import privacy
 from ..ai.errors import AIProblem
 from ..ai.services import SERVICES
 from . import theme
+from .opening import open_on_double_click
 
 OFF = "off"
 WHAT_LEAVES = ("What leaves this PC: the names of the files SortZen couldn't place, where they are now, and the "
@@ -255,6 +256,7 @@ class PrivacyListsBox(QWidget):
         col.addWidget(QLabel("Always name only: these folders", objectName="cardTitle"))
         self.folders = QListWidget()
         self.folders.addItems(service.ai_value("ai_name_only_folders"))
+        open_on_double_click(self.folders, lambda item: item.text())
         self.folders.setMaximumHeight(110)
         col.addWidget(self.folders)
         buttons = QHBoxLayout()

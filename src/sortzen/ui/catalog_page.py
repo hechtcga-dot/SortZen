@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..services.catalog import FEEDBACK
+from .opening import open_on_double_click
 from .sortable import SortItem, make_sortable, natural
 
 PATH = Qt.ItemDataRole.UserRole
@@ -229,6 +230,7 @@ class CatalogPage(QWidget):
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QSplitter(Qt.Orientation.Vertical)
         self.tree = CategoryTree()
+        open_on_double_click(self.tree, lambda item: item.data(0, PATH), self.open_path.emit)
         self.tree.setHeaderLabels(["Folder", "Files", "Coming", "Note"])
         self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 60)
@@ -259,7 +261,7 @@ class CatalogPage(QWidget):
         self.files.setUniformRowHeights(True)
         self.files.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.files.customContextMenuRequested.connect(self._file_menu)
-        self.files.itemDoubleClicked.connect(lambda item, _: self.open_path.emit(item.data(0, PATH)))
+        open_on_double_click(self.files, lambda item: item.data(0, PATH), self.open_path.emit)
         self.files.dropped.connect(self.place)
         make_sortable(self.files)
         files_col.addWidget(self.files, 1)

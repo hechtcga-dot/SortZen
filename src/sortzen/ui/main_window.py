@@ -25,6 +25,7 @@ from .dialogs import MODE_TEXT, DestinationDialog, MissingFoldersDialog, ModeDia
 from .folders_page import FoldersPage
 from .icons import app_icon
 from .move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
+from .opening import open_on_double_click
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
 from .settings_window import SettingsWindow
@@ -179,6 +180,7 @@ class MainWindow(QMainWindow):
         col = QVBoxLayout(panel)
         col.setContentsMargins(8, 10, 8, 10)
         self.tree = QTreeWidget()
+        open_on_double_click(self.tree, self._tree_path, self.open_folder)
         self.tree.setHeaderHidden(True)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -744,6 +746,10 @@ class MainWindow(QMainWindow):
             self.start_hint.setText("Ready to catalog. Cataloguing moves nothing: you see where everything goes "
                                     "first.")
 
+    def _tree_path(self, item):
+        data = item.data(0, FOLDER) if item else None
+        return data[1] if data else None
+
     def _tree_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
         menu = QMenu(self)
@@ -818,7 +824,13 @@ class MainWindow(QMainWindow):
         self.refresh_folders()
 
     def open_folder(self, path: str) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        """Open a file with its program, or a folder in Explorer."""
+        from .opening import open_path
+
+        if not open_path(path):
+            self.statusBar().showMessage(f"“{os.path.basename(path) or path}” isn't there"
+                                         + (" yet: SortZen makes it when files move into it." if not
+                                            os.path.splitext(path)[1] else "."), 6000)
 
     # ---------------------------------------------------------------- the plan
     def make_plan(self) -> None:

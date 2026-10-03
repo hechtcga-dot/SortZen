@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSplitter, QTreeWidget, QVBoxLayout, QWidget,
 )
 
+from .opening import open_on_double_click
 from .sortable import SortItem, natural
 
 PATH = Qt.ItemDataRole.UserRole
@@ -302,7 +303,7 @@ class ToPlacePage(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemSelectionChanged.connect(self._selection_changed)
-        self.tree.itemDoubleClicked.connect(lambda item, _: item.data(0, PATH) and self.open_path.emit(item.data(0, PATH)))
+        open_on_double_click(self.tree, lambda item: item.data(0, PATH), self.open_path.emit)
         delete = QShortcut(QKeySequence.StandardKey.Delete, self.tree)
         delete.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete.activated.connect(lambda: self.selected_paths() and self.delete_files.emit(self.selected_paths()))
