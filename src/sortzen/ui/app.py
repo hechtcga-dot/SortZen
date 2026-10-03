@@ -23,7 +23,10 @@ def create_app(argv=None):
     from . import theme
     from .icons import app_icon
 
-    app = QApplication.instance() or QApplication(argv if argv is not None else sys.argv)
+    app = QApplication.instance()
+    if app is not None and app.property("sortzen_ready"):
+        return app                  # styled once: styling again re-polishes every open window
+    app = app or QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("SortZen")
     app.setOrganizationName("SortZen")
     app.setStyle("Fusion")
@@ -32,6 +35,7 @@ def create_app(argv=None):
     app.setPalette(theme.palette())
     app.setStyleSheet(theme.STYLE)
     app.setWindowIcon(app_icon())
+    app.setProperty("sortzen_ready", True)
     return app
 
 
