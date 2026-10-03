@@ -751,7 +751,8 @@ class AppService:
                               if os.path.normcase(main) in wanted and os.path.normcase(c) not in wanted]
 
     def unsure_files(self, plan: Plan) -> list:
-        """The files from the folders being sorted that need users: no sure label, or no sure folder."""
+        """The files from the folders being sorted that need users: no sure folder, or a label SortZen gave
+        without being sure of it. Files no label fits, with a sure folder, need nothing."""
         level = self.autonomy()
         corrections = {path_key(p) for p in self.corrections()}
         mine = {path_key(p) for p in self.users_labels()}
@@ -762,8 +763,7 @@ class AppService:
                     or s.path in plan.companions:
                 continue
             guesses = self.label_guesses(s.path)
-            label_unsure = bool(self.labels()) and path_key(s.path) not in mine and \
-                (not guesses or guesses[0][1] < LABEL_SURE)
+            label_unsure = path_key(s.path) not in mine and bool(guesses) and 50 <= guesses[0][1] < LABEL_SURE
             folder_unsure = path_key(s.path) not in corrections and (s.destination is None or s.percent < level)
             if label_unsure or folder_unsure:
                 found.append(s)

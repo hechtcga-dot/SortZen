@@ -234,6 +234,9 @@ class ToPlacePage(QWidget):
     put_in_folder = Signal(list)                 # files to send to a folder chosen from a list
     update_plan = Signal()
     open_path = Signal(str)
+    confirm = Signal(list)                       # the labels shown for these files look right
+    note_file = Signal(str)                      # write a note about one file
+    keep_together = Signal(str)                  # a folder whose files move together
 
     def __init__(self, service):
         super().__init__()
@@ -277,10 +280,14 @@ class ToPlacePage(QWidget):
         row = QHBoxLayout()
         self.selection = _label("", "muted", wrap=False)
         row.addWidget(self.selection, 1)
-        refresh = QPushButton("Update the plan")
-        refresh.setToolTip("Make the plan again with your labels and what you said about similar files")
-        refresh.clicked.connect(self.update_plan)
-        row.addWidget(refresh)
+        self.looks_right = QPushButton("Looks right")
+        self.looks_right.setToolTip("The labels shown for the selected files are right: SortZen learns from them")
+        self.looks_right.clicked.connect(lambda: self.selected_paths() and self.confirm.emit(self.selected_paths()))
+        row.addWidget(self.looks_right)
+        self.refresh_button = QPushButton("Update the plan")
+        self.refresh_button.setToolTip("Make the plan again with your labels and what you said about similar files")
+        self.refresh_button.clicked.connect(self.update_plan)
+        row.addWidget(self.refresh_button)
         self.button = QPushButton("Save answers and update the plan", objectName="primary")
         self.button.clicked.connect(lambda: self.save.emit(self.answers()))
         row.addWidget(self.button)
@@ -394,7 +401,10 @@ class ToPlacePage(QWidget):
             said = self.service.pairs_of(s.path)
             why = [f"You said: {'similar to' if kind == 'similar' else 'different from'} “{os.path.basename(other)}”"
                    for kind, other in said]
-            why += [r.text for r in s.reasons[:2] if not r.text.startswith("You said")]
+            note = self.service.file_note(s.path)
+            if note:
+                why.insert(0, f"Your note: “{note[:60]}”")
+            why += [r.text for r in s.reasons[:2] if not r.text.startswith(("You said", "Your note"))]
             item.setText(3, "; ".join(why))
             item.setToolTip(3, "\n".join(why))
         self._selection_changed()
@@ -414,6 +424,7 @@ class ToPlacePage(QWidget):
         paths = self.selected_paths()
         self.selection.setText(f"{len(paths):,} file{'s' if len(paths) != 1 else ''} selected" if paths else
                                "Select files, then click a label")
+        self.looks_right.setEnabled(bool(paths))
         for name, button in self.label_buttons.items():
             button.setEnabled(bool(paths))
             have = bool(paths) and all(name in self.service.labels_of(p) for p in paths)
@@ -446,6 +457,7 @@ class ToPlacePage(QWidget):
             return
         some = f"these {len(paths):,} files" if len(paths) != 1 else "this file"
         menu = QMenu(self)
+        menu.addAction("Looks right (keep the labels shown)", lambda: self.confirm.emit(paths))
         labels = menu.addMenu("Labels")
         for name in self.service.labels():
             action = labels.addAction(name)
@@ -459,6 +471,12 @@ class ToPlacePage(QWidget):
         menu.addAction(f"Different from another file…", lambda: self.pair.emit(paths, "different"))
         if any(self.service.pairs_of(p) for p in paths):
             menu.addAction("Forget what I said about similar files", lambda: self.forget_pairs.emit(paths))
+        if len(paths) == 1:
+            menu.addAction("Note about this file…", lambda: self.note_file.emit(paths[0]))
+        folder = os.path.dirname(paths[0])
+        if all(os.path.dirname(p) == folder for p in paths):
+            menu.addAction(f"Keep “{os.path.basename(folder)}” together (move it as it is)",
+                           lambda: self.keep_together.emit(folder))
         menu.addSeparator()
         group = getattr(item, "group", None)
         if group is not None and not item.data(0, PATH):

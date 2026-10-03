@@ -91,7 +91,7 @@ class MainWindowTest(unittest.TestCase):
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
         tabs = [self.window.tabs.tabText(i) for i in range(self.window.tabs.count())]
         self.assertIn("Plan", tabs)
-        self.assertTrue(any(t.startswith("To place") for t in tabs))
+        self.assertTrue(any(t.startswith("Cataloguing wizard (") for t in tabs))
         page = self.window.plan_page
         self.assertIn("ready", page.summary.text())
         ready = page.tree.topLevelItem(0)
@@ -428,6 +428,78 @@ class MainWindowTest(unittest.TestCase):
             question = page.cards[0]
             question.picker.box.setEditText("Sorted/Projects/Typed")
             self.assertEqual(question.answer(), str(root / "Sorted" / "Projects" / "Typed"))
+
+    def test_cataloguing_wizard_labels_rounds_and_ai(self):
+        import json
+        import shutil
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.ai.provider import AIProvider, AIResponse, TokenUsage
+        from sortzen.ui.dialogs import LabelChoiceDialog
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.refresh_folders()
+        self.window.open_wizard()
+        wizard = self.window.wizard_page
+        self.assertIs(self.window.tabs.currentWidget(), wizard)
+        self.assertEqual(wizard.stack.currentIndex(), 0)
+        self.assertFalse(wizard.start_button.isEnabled())                   # no labels yet
+        for name in ("Work", "School", "Resume"):
+            self.window.new_label([], name)
+        self.assertEqual(wizard.labels_shown(), ["Work", "School", "Resume"])
+        self.window.reorder_labels(["Resume", "Work", "School"])
+        self.assertEqual(self.service.labels()[0], "Resume")
+        wizard.start_button.click()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None and not self.service.jobs.busy))
+        self.assertTrue(wait_until(self.app, lambda: wizard.stack.currentIndex() == 1))
+        page = self.window.to_place_page
+        self.assertGreater(page.count(), 0)
+        self.assertIn("need you", wizard.meter.text())
+        resumes = next(page.tree.topLevelItem(i) for i in range(page.tree.topLevelItemCount())
+                       if "resume" in page.tree.topLevelItem(i).text(0).lower())
+        resumes.setSelected(True)
+        paths = page.selected_paths()
+        self.window.confirm_labels(paths)                                    # one answer for the whole group
+        self.assertIn("Resume", self.service.labels_of(paths[0]))
+        self.assertEqual(self.service.agreement()[1], len(paths))
+        self.assertIn(str(len(paths)), wizard.banner_text.text())
+        self.window.note_file(paths[0], "for the Staffing folder")
+        self.assertEqual(self.service.file_note(paths[0]), "for the Staffing folder")
+        first = self.window.plan
+        wizard.again_button.click()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not first and not self.service.jobs.busy))
+        self.assertEqual(self.service.learned_since_plan(), 0)
+        staffing = self.window.plan.for_path(paths[0])
+        self.assertTrue(staffing.destination.endswith("Staffing"))
+
+        class Labeller(AIProvider):
+            def generate_json(self, model, contents):
+                if "Suggest labels" in contents[0]:
+                    return AIResponse(json.dumps({"labels": [{"name": "Taxes"}, {"name": "Work"}]}), TokenUsage(9, 9, 18))
+                n = sum(1 for line in contents[0].splitlines() if line[:1].isdigit())
+                return AIResponse(json.dumps({"files": [{"n": i, "labels": [{"label": "Taxes", "sure": 80}]}
+                                                        for i in range(1, n + 1)]}), TokenUsage(9, 9, 18))
+
+        self.service.set_ai_value("ai_enabled", True)
+        self.service.save_api_key("test-key")
+        with mock.patch.object(self.service, "provider", return_value=Labeller()), \
+                mock.patch.object(LabelChoiceDialog, "exec", return_value=1), \
+                mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.window.ai_suggest_labels()
+            self.assertTrue(wait_until(self.app, lambda: "Taxes" in self.service.labels()))
+            self.assertEqual(self.service.labels().count("Work"), 1)            # labels already there are kept
+            plan = self.window.plan
+            self.window.ai_label_files("unsure")
+            self.assertTrue(wait_until(self.app, lambda: self.window.plan is not plan and not self.service.jobs.busy))
+        self.assertTrue(self.service.ai_labels())
+        self.window.finish_wizard()
+        self.assertIs(self.window.tabs.currentWidget(), self.window.catalog_page)
 
     def test_folder_notes_from_the_window(self):
         root = shared_test_folders()

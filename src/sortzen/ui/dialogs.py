@@ -227,3 +227,36 @@ class MissingFoldersDialog(QDialog):
     @property
     def dropped(self) -> list[str]:
         return [f for f in self.missing if f not in self.moved]
+
+
+class LabelChoiceDialog(QDialog):
+    """The labels the AI suggested, each with a tick box; ticked ones are added to users' list."""
+
+    def __init__(self, parent, found: list[tuple[str, str]], existing: list[str]):
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+        super().__init__(parent)
+        self.setWindowTitle("Labels the AI suggests")
+        self.resize(520, 440)
+        col = QVBoxLayout(self)
+        intro = QLabel("Untick any you don't want; you can rename or remove labels later. Labels you already have "
+                       "are kept.")
+        intro.setWordWrap(True)
+        col.addWidget(intro)
+        self.list = QListWidget()
+        have = {x.lower() for x in existing}
+        for name, why in found:
+            item = QListWidgetItem(f"{name}" + (f"  ·  {why}" if why else ""))
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked if name.lower() in have else Qt.CheckState.Checked)
+            self.list.addItem(item)
+        col.addWidget(self.list, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        col.addWidget(buttons)
+
+    def chosen(self) -> list[str]:
+        return [self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())
+                if self.list.item(i).checkState() == Qt.CheckState.Checked]

@@ -29,15 +29,15 @@ from .plan_page import PlanPage
 from .progress_window import ProgressWindow
 from .settings_window import SettingsWindow
 from .sortable import human_size
-from .to_place_page import ToPlacePage
+from .wizard_page import WizardPage
 
 STEPS = (
     ("Add folders", "Choose the messy folders to sort and the folders files may go to. "
                     "SortZen reads nothing outside them."),
-    ("Make a plan", "SortZen reads the files on this PC, learns from the folders you've already sorted, and asks "
-                    "about anything it can't settle."),
-    ("Check the plan", "Every file and folder gets a destination and a percentage showing how sure "
-                       "SortZen is, with the reasons. Anything below your chosen level waits in Review."),
+    ("Catalog", "The cataloguing wizard: make your labels (Work, Taxes, Photo session…), let SortZen or the AI "
+                "label the files, then check only what SortZen isn't sure about. Each round it learns and asks less."),
+    ("Check the catalog", "The Cataloguing tab shows where every file will go. Drag files to the right folder and "
+                          "SortZen learns again; anything below your chosen level waits in Review."),
     ("Move", "Tick what should move and confirm. Every move is written down, so Edit › Undo puts everything "
              "back."),
 )
@@ -55,6 +55,8 @@ class MainWindow(QMainWindow):
         self.progress: ProgressWindow | None = None
         self.undo_stack: list[tuple[str, object]] = []
         self._plan_waiting = False
+        self._after_plan: str | None = None         # what the wizard does once the plan is made
+        self._wizard_open = False
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self.resize(1200, 760)
@@ -103,7 +105,22 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.catalog_page, "Catalog")
         self.tabs.currentChanged.connect(lambda _: self.tabs.currentWidget() is self.catalog_page
                                          and self.catalog_page.refresh())
-        self.to_place_page = ToPlacePage(self.service)
+        self.wizard_page = WizardPage(self.service)
+        for signal, slot in ((self.wizard_page.start, self.start_cataloguing),
+                             (self.wizard_page.suggest_labels, self.ai_suggest_labels),
+                             (self.wizard_page.add_label, lambda: self.new_label([])),
+                             (self.wizard_page.edit_label, self.edit_label),
+                             (self.wizard_page.reorder, self.reorder_labels),
+                             (self.wizard_page.again, self.catalog_again),
+                             (self.wizard_page.ask_ai_rest, lambda: self.ai_label_files("unsure")),
+                             (self.wizard_page.finish, self.finish_wizard)):
+            signal.connect(slot)
+        self.tabs.insertTab(self.tabs.indexOf(self.catalog_page), self.wizard_page, "Cataloguing wizard")
+        self.to_place_page = self.wizard_page.check
+        self.to_place_page.refresh_button.hide()
+        self.to_place_page.confirm.connect(self.confirm_labels)
+        self.to_place_page.note_file.connect(self.note_file)
+        self.to_place_page.keep_together.connect(self.keep_together)
         self.to_place_page.save.connect(self.save_answers)
         self.to_place_page.place_group.connect(self.place_group)
         self.to_place_page.label.connect(self.label_files)
@@ -219,8 +236,8 @@ class MainWindow(QMainWindow):
         self.windows_button = QPushButton("Use my Windows folders")
         self.windows_button.setToolTip("Adds Documents, Pictures, Music and Videos as destination folders")
         self.windows_button.clicked.connect(self.add_windows_folders)
-        self.plan_button = QPushButton("Make a plan", objectName="primary")
-        self.plan_button.clicked.connect(self.make_plan)
+        self.plan_button = QPushButton("Start cataloguing", objectName="primary")
+        self.plan_button.clicked.connect(self.open_wizard)
         for b in (add_source, add_destination, self.windows_button):
             buttons.addWidget(b)
         buttons.addStretch(1)
@@ -247,6 +264,8 @@ class MainWindow(QMainWindow):
         self.add_destination_action = action("Add destination folder…", self.add_destination, "Ctrl+D",
                                              "Add a folder files may go to, like Documents")
         self.plan_action = action("Make a plan", self.make_plan, "F5", "Read the folders and plan where everything goes")
+        self.wizard_action = action("Start cataloguing", self.open_wizard, "Ctrl+L",
+                                    "The cataloguing wizard: labels, then only what SortZen isn't sure about")
         self.export_action = action("Export plan to Excel…", self.export_plan, "Ctrl+E",
                                     "Save the plan as an Excel workbook")
         self.undo_action = action("Undo", self.undo, QKeySequence.StandardKey.Undo, "Undo the last change")
@@ -258,8 +277,8 @@ class MainWindow(QMainWindow):
 
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
-        for a in (self.add_source_action, self.add_destination_action, self.plan_action, self.export_action,
-                  self.undo_action):
+        for a in (self.add_source_action, self.add_destination_action, self.wizard_action, self.plan_action,
+                  self.export_action, self.undo_action):
             toolbar.addAction(a)
         self.addToolBar(toolbar)
 
@@ -281,6 +300,7 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction(self.settings_action)
         plan_menu = self.menuBar().addMenu("&Plan")
+        plan_menu.addAction(self.wizard_action)
         plan_menu.addAction(self.plan_action)
         self.ai_action = action("Ask AI about unsure files…", self.ask_ai,
                                 tip="Ask an AI service about the files SortZen couldn't place by itself")
@@ -660,7 +680,8 @@ class MainWindow(QMainWindow):
             self.start_hint.setText("Add destination folders too, or tidy a folder in place. "
                                     "“Use my Windows folders” adds Documents, Pictures, Music and Videos.")
         else:
-            self.start_hint.setText("Ready to make a plan. Making one moves nothing: you see the plan first.")
+            self.start_hint.setText("Ready to catalog. Cataloguing moves nothing: you see where everything goes "
+                                    "first.")
 
     def _tree_menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
@@ -759,14 +780,9 @@ class MainWindow(QMainWindow):
         self.plan_page.set_plan(plan)
         if self.tabs.indexOf(self.plan_page) < 0:
             self.tabs.addTab(self.plan_page, "Plan")
-        groups = self.service.file_groups(plan)
+        groups = self.service.question_groups(plan)
         self.to_place_page.set_contents(plan, groups, plan.questions, self.service.destination_choices(plan),
                                          self.service.recent_destinations(plan))
-        listed = bool(self.service.unsure_files(plan) or plan.questions)
-        if listed and self.tabs.indexOf(self.to_place_page) < 0:
-            self.tabs.insertTab(self.tabs.indexOf(self.plan_page), self.to_place_page, "To place")
-        elif not listed and self.tabs.indexOf(self.to_place_page) >= 0:
-            self.tabs.removeTab(self.tabs.indexOf(self.to_place_page))
         open_questions = self._count_to_place()
         if plan.copies:
             if self.tabs.indexOf(self.copies_page) < 0:
@@ -777,14 +793,138 @@ class MainWindow(QMainWindow):
         self.copies_page.set_copies(plan.copies)
         self.copies_action.setEnabled(bool(plan.copies))
         self.ai_action.setEnabled(True)
-        self.tabs.setCurrentWidget(self.to_place_page if open_questions else self.plan_page)
+        after, self._after_plan = self._after_plan, None
+        if after == "ai-sample":
+            self.ai_label_files("sample", then_plan=True)
+        elif after == "suggest":
+            self.ai_suggest_labels()
+        if self._wizard_open:
+            self.wizard_page.show_step(1)
+            self.tabs.setCurrentWidget(self.wizard_page)
+        else:
+            self.tabs.setCurrentWidget(self.wizard_page if open_questions else self.plan_page)
+            if open_questions:
+                self.wizard_page.show_step(1)
 
     def _count_to_place(self) -> int:
         waiting = self.to_place_page.count()
-        if self.tabs.indexOf(self.to_place_page) >= 0:
-            self.tabs.setTabText(self.tabs.indexOf(self.to_place_page),
-                                 f"To place ({waiting:,})" if waiting else "To place")
+        self.tabs.setTabText(self.tabs.indexOf(self.wizard_page),
+                             f"Cataloguing wizard ({waiting:,})" if waiting else "Cataloguing wizard")
+        self.wizard_page.refresh()
         return waiting
+
+    # ---------------------------------------------------------------- the cataloguing wizard
+    def open_wizard(self) -> None:
+        """Start cataloguing: the wizard opens on the labels step."""
+        if not self.service.source_folders():
+            QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
+            return
+        self.wizard_page.show_step(0)
+        self.tabs.setCurrentWidget(self.wizard_page)
+
+    def start_cataloguing(self, mode: str) -> None:
+        """Label the files (on the PC, or the AI for a sample first) and catalog them."""
+        self._wizard_open = True
+        self._after_plan = "ai-sample" if mode == "ai" else None
+        if mode == "ai" and not self.service.ai_ready():
+            QMessageBox.information(self, APP_NAME, "Choose an AI service and its key first (Edit › Settings › AI). "
+                                    "SortZen labels the files on this PC for now.")
+            self._after_plan = None
+        self.make_plan()
+
+    def catalog_again(self) -> None:
+        self._wizard_open = True
+        self.make_plan()
+
+    def finish_wizard(self) -> None:
+        self._wizard_open = False
+        self.tabs.setCurrentWidget(self.catalog_page)
+        self.catalog_page.refresh()
+
+    def reorder_labels(self, names: list) -> None:
+        self._label_change("Change label order", lambda: self.service.set_label_order(names))
+        self.to_place_page._fill_labels()
+
+    def confirm_labels(self, paths: list) -> None:
+        if paths and self._label_change("Looks right", lambda: self.service.confirm_labels(paths)):
+            self.statusBar().showMessage(f"Thanks: SortZen learns from {len(paths):,} file"
+                                         f"{'s' if len(paths) != 1 else ''}.", 5000)
+
+    def note_file(self, path: str, text: str | None = None) -> None:
+        """A note about one file: why it goes somewhere special. Its words count for labels and folders."""
+        if text is None:
+            text, ok = QInputDialog.getMultiLineText(
+                self, "Note about a file", f"Anything special about “{os.path.basename(path)}”? For example: "
+                "“this one is for the 2023 audit” or “keep with Mum's documents”. Naming a folder sends it there.",
+                self.service.file_note(path))
+            if not ok:
+                return
+        if self._label_change("Note about a file", lambda: self.service.set_file_note(path, text)):
+            self.statusBar().showMessage("Note saved. Catalog again to use it.", 5000)
+
+    def keep_together(self, folder: str) -> None:
+        if self._label_change("Keep a folder together", lambda: self.service.keep_folder_together(folder)):
+            self.statusBar().showMessage(f"“{os.path.basename(folder)}” moves as it is. Catalog again to use it.", 6000)
+
+    def _ai_ok(self, what: str, estimate: dict) -> bool:
+        money = "free: it runs on this PC" if estimate["local"] else f"about ${estimate['cost']:.4f}"
+        sending = ("file names (long numbers removed), the folder each file is in, and the beginning of files"
+                   if self.service.ai_value("ai_privacy") == "beginning" else
+                   "file names (long numbers removed) and the folder each file is in")
+        return QMessageBox.question(
+            self, "Ask the AI", f"Ask {estimate['service']} {what}? {money}.\n\nSent: {sending}, as your privacy "
+            "settings allow (Edit › Settings › Privacy). Spending stops at your cap."
+        ) == QMessageBox.StandardButton.Yes
+
+    def ai_suggest_labels(self, confirm: bool = True) -> None:
+        if not self.service.ai_ready():
+            QMessageBox.information(self, APP_NAME, "Choose an AI service and its key first (Edit › Settings › AI).")
+            return
+        if self.plan is None:                       # the files are read first
+            self._after_plan = "suggest"
+            self.make_plan()
+            return
+        if not self._free_for_job():
+            return
+        estimate = self.service.ai_label_estimate("list")
+        if confirm and not self._ai_ok(f"to suggest labels from {estimate['files']:,} file names", estimate):
+            return
+        self.progress = ProgressWindow(self, "Asking the AI for labels")
+        self.progress.show()
+        self.run_job("ai-list", lambda emit, token: self.service.ai_suggest_labels(emit, token))
+
+    def _pick_labels(self, found: list, chosen: list | None = None) -> None:
+        if chosen is None:
+            from .dialogs import LabelChoiceDialog
+
+            dialog = LabelChoiceDialog(self, found, self.service.labels())
+            if not dialog.exec():
+                return
+            chosen = dialog.chosen()
+        new = [n for n in chosen if n.lower() not in {x.lower() for x in self.service.labels()}]
+        if new:
+            self._label_change("Labels from the AI", lambda: [self.service.add_label(n) for n in new])
+            self.to_place_page._fill_labels()
+        self.wizard_page.refresh()
+
+    def ai_label_files(self, which: str, then_plan: bool = False, confirm: bool = True) -> None:
+        """The AI labels a sample of files (or the files SortZen is still unsure of); SortZen learns the rest."""
+        if not self.service.ai_ready() or not self._free_for_job():
+            return
+        estimate = self.service.ai_label_estimate(which, self.plan)
+        if not estimate["files"]:
+            self.statusBar().showMessage("Nothing to ask the AI about.", 5000)
+            return
+        what = (f"to label a sample of {estimate['files']:,} files (SortZen labels the rest from them)"
+                if which == "sample" else f"to label the {estimate['files']:,} files SortZen is still unsure of")
+        if confirm and not self._ai_ok(what, estimate):
+            return
+        plan = self.plan
+        self._wizard_open = True
+        self.progress = ProgressWindow(self, "Asking the AI for labels", estimate=max(4.0, estimate["files"] / 20))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("ai-labels", lambda emit, token: self.service.ai_label_files(which, plan, emit, token))
 
     # ---------------------------------------------------------------- labels and similar files
     def _label_change(self, text: str, change) -> bool:
@@ -1199,6 +1339,11 @@ class MainWindow(QMainWindow):
                     self.make_plan()
             if event.name == "ai":
                 self._asked(event.result)
+            if event.name == "ai-list":
+                self._pick_labels(event.result or [])
+            if event.name == "ai-labels":
+                self.statusBar().showMessage(f"The AI labelled {event.result or 0:,} files. Cataloguing them…", 6000)
+                self.make_plan()
             if event.name == "catalog-ai":
                 self.statusBar().showMessage(f"{len(event.result):,} suggestions from the AI service.", 6000)
                 self.tabs.setCurrentWidget(self.catalog_page)
@@ -1224,7 +1369,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
-            if event.name in ("ai", "catalog-ai"):
+            if event.name in ("ai", "catalog-ai", "ai-list", "ai-labels"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
             if event.name in ("move", "undo-move", "queue", "catalog-move", "place", "delete"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
