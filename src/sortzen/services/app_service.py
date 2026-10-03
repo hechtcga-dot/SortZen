@@ -539,6 +539,9 @@ class AppService:
         """Move what users put into categories, logged so Undo puts it back. Each file's new folder is
         remembered as their choice: plans keep it there, learn from it and suggest rules from it."""
         result = self.reorganize(requests, emit, token, kind="placed")
+        for old, new in result.moves:
+            if os.path.isdir(new):              # a moved category keeps its name, note and settings
+                self._remap_paths(old, new)
         chosen = {new: os.path.dirname(new) for _, new in result.moves if os.path.isfile(new)}
         if chosen:
             current = self.corrections()
@@ -1119,6 +1122,9 @@ class AppService:
             gone = {path_key(moved_from) for moved_from, _ in result.moves}     # forget the choices it made
             current = self.corrections()
             self.settings.set("corrections", {k: v for k, v in current.items() if path_key(k) not in gone})
+            for back_from, back_to in result.moves:
+                if os.path.isdir(back_to):
+                    self._remap_paths(back_from, back_to)
         if any(r["log"] == log and r["kind"] == "rename" for r in self.move_runs()):
             for back_from, back_to in result.moves:
                 self._remap_paths(back_from, back_to)

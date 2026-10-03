@@ -645,6 +645,18 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.service.corrections(), {})                         # the choices are forgotten
         self.assertEqual(self.category("Payroll").chosen, 0)
 
+    def test_a_category_put_into_another_keeps_its_note_and_name(self):
+        recipes, work = str(self.sorted / "Recipes"), str(self.sorted / "Work")
+        self.service.set_folder_note(recipes, "baking")
+        self.service.rename_category(recipes, "Baking")
+        result = self.service.place(self.service.drop_requests([recipes], work))
+        moved = os.path.join(work, "Recipes")
+        self.assertEqual((self.category("Recipes").parent, self.category("Recipes").name), (work, "Baking"))
+        self.assertEqual(self.service.folder_note(moved), "baking")
+        self.service.undo_move(result.log)
+        self.assertEqual(self.category("Recipes").parent, str(self.sorted))
+        self.assertEqual(self.service.folder_note(recipes), "baking")
+
     def test_deleting_queues_files_and_undo_puts_them_back(self):
         tart = str(self.sorted / "Recipes" / "Lemon tart.txt")
         requests = self.service.delete_requests([tart, str(self.sorted / "Recipes")])
