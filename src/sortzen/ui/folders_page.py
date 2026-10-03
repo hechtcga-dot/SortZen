@@ -27,6 +27,7 @@ class FoldersPage(QWidget):
     remove_folder = Signal(str)
     set_mode = Signal(str, str)
     open_folder = Signal(str)
+    note_folder = Signal(str)
 
     def __init__(self, service):
         super().__init__()
@@ -58,12 +59,14 @@ class FoldersPage(QWidget):
         self.estimate.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         col.addWidget(self.estimate)
         hint = QLabel("Untick anything SortZen should leave exactly where it is: nothing is moved into or out of "
-                      "it, and SortZen still learns from what's inside. Right-click for more.", objectName="hint")
+                      "it, and SortZen still learns from what's inside. Right-click a folder to write a note about "
+                      "what belongs in it (\"pay stubs, T4s, timesheets\"): SortZen and the AI use it.",
+                      objectName="hint")
         hint.setWordWrap(True)
         col.addWidget(hint)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["Name", "Files", "Size", "How it's sorted"])
+        self.tree.setHeaderLabels(["Name", "Files", "Size", "How it's sorted", "Note"])
         self.tree.setColumnWidth(0, 420)
         self.tree.setColumnWidth(1, 80)
         self.tree.setColumnWidth(2, 90)
@@ -142,7 +145,10 @@ class FoldersPage(QWidget):
                 files, size = 1, 0
         else:
             files, size, _ = self._tree_counts(path)
-        item = SortItem(parent, [name, "" if kind == "file" else f"{files:,}", human_size(size), how])
+        note = self.service.folder_note(path) if kind != "file" else ""
+        item = SortItem(parent, [name, "" if kind == "file" else f"{files:,}", human_size(size), how, note])
+        if note:
+            item.setToolTip(4, note)
         item.setData(0, PATH, path)
         item.setData(0, KIND, kind)
         item.set_key(0, (1 if kind == "file" else 0, natural(name)))        # folders first, as in Explorer
@@ -177,7 +183,7 @@ class FoldersPage(QWidget):
                 files += 1
         hidden = sum(1 for e in entries if not e.is_dir(follow_symlinks=False)) - files
         if hidden > 0:
-            more = SortItem(item, [f"…and {hidden:,} more files", "", "", ""])
+            more = SortItem(item, [f"…and {hidden:,} more files", "", "", "", ""])
             more.setData(0, KIND, "more")
             more.set_key(0, (2, ()))
             more.setForeground(0, self.palette().placeholderText())
@@ -252,6 +258,10 @@ class FoldersPage(QWidget):
                 action.setCheckable(True)
                 action.setChecked(mode == current)
             menu.addSeparator()
+        if kind != "file":
+            has = bool(self.service.folder_note(path))
+            menu.addAction("Change the note about this folder…" if has else "Write a note about this folder…",
+                           lambda: self.note_folder.emit(path))
         menu.addAction("Open in Explorer", lambda: self.open_folder.emit(path if kind != "file"
                                                                          else os.path.dirname(path)))
         if kind in ("root-source", "root-destination"):

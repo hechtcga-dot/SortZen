@@ -59,13 +59,14 @@ class DestinationDialog(QDialog):
     """
 
     def __init__(self, parent, choices: list[str], display, title: str = "Choose a destination",
-                 recent: list[str] = (), rename=None):
+                 recent: list[str] = (), rename=None, note=lambda folder: ""):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(600, 600)
         self.chosen: str | None = None
         self.display = display
         self.rename = rename
+        self.note = note
         col = QVBoxLayout(self)
         col.addWidget(_hint("SortZen remembers your choice and learns from it for similar files. Nothing moves "
                             "until you use “Move ticked…” and confirm."))
@@ -105,9 +106,11 @@ class DestinationDialog(QDialog):
     def _fill(self, widget: QListWidget, folders) -> None:
         widget.clear()
         for folder in folders:
-            item = QListWidgetItem(self.display(folder) + ("" if os.path.isdir(folder) else "  (new folder)"))
+            text = self.note(folder)
+            item = QListWidgetItem(self.display(folder) + ("" if os.path.isdir(folder) else "  (new folder)")
+                                   + (f"  —  {text[:70]}" if text else ""))
             item.setData(Qt.ItemDataRole.UserRole, folder)
-            item.setToolTip(folder)
+            item.setToolTip(folder + (f"\n{text}" if text else ""))
             widget.addItem(item)
 
     def _filter(self, text: str) -> None:

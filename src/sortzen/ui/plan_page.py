@@ -53,6 +53,7 @@ class PlanPage(QWidget):
     ask_ai = Signal()
     move_to = Signal(list, str)              # rows, a recently chosen folder
     rename_folder = Signal(str)
+    note_folder = Signal(str)
 
     def __init__(self, service):
         super().__init__()
@@ -427,6 +428,8 @@ class PlanPage(QWidget):
         rename = menu.addAction("Rename its destination folder…",
                                 lambda: self.rename_folder.emit(destination))
         rename.setEnabled(bool(destination))
+        note = menu.addAction("Write a note about its destination folder…", lambda: self.note_folder.emit(destination))
+        note.setEnabled(bool(destination))
         menu.addAction("Open the folder it is in", lambda: self.open_folder.emit(rows[0].current))
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 

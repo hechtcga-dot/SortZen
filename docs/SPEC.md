@@ -448,6 +448,13 @@ and when):
     the plan, and the name is remembered for later plans. A folder that exists is renamed
     on disk after confirmation, logged like a move so Undo puts the old name back. Choices,
     rules and recent folders that point into it follow the new name.
+  - **Folder notes**: right-click a folder on the Folders tab (or a file on the Plan tab,
+    for its destination folder) › "Write a note about this folder…" and say what belongs
+    in it ("pay stubs, T4s, timesheets"). The words count like words in the folder's name
+    ("Your note on “Payroll” mentions “timesheet”"), are sent to the AI service with the
+    folder list, and are used for matching by meaning. Notes show in the Folders tab's
+    Note column and in the "Change destination" window, are saved in profiles, follow
+    renamed folders, and can be undone.
   - **Rules**: a rule sends files whose names contain a word (optionally of one file type)
     to a folder, at 100%. When users send two or more files with a word in common to the
     same folder, SortZen offers a rule ("Names with “invoice” go to Work/Accounts

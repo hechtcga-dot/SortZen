@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self.folders_page.remove_folder.connect(self.remove_folder)
         self.folders_page.set_mode.connect(self.set_mode)
         self.folders_page.open_folder.connect(self.open_folder)
+        self.folders_page.note_folder.connect(self.note_folder)
         self.tabs.addTab(self.folders_page, "Folders")
         self.to_place_page = ToPlacePage(self.service)
         self.to_place_page.save.connect(self.save_answers)
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         self.plan_page.ask_ai.connect(self.ask_ai)
         self.plan_page.move_to.connect(self.correct)
         self.plan_page.rename_folder.connect(self.rename_folder)
+        self.plan_page.note_folder.connect(self.note_folder)
         self.copies_page = CopiesPage(self.service)
         self.copies_page.queue.connect(self.queue_copies)
         self.copies_page.open_folder.connect(self.open_folder)
@@ -549,7 +551,8 @@ class MainWindow(QMainWindow):
         if not rows:
             return
         dialog = DestinationDialog(self, self.service.destination_choices(self.plan), self.service.display,
-                                   recent=self.service.recent_destinations(self.plan), rename=self.rename_folder)
+                                   recent=self.service.recent_destinations(self.plan), rename=self.rename_folder,
+                                   note=self.service.folder_note)
         if dialog.exec() and dialog.chosen:
             self.correct(rows, dialog.chosen)
 
@@ -604,6 +607,23 @@ class MainWindow(QMainWindow):
             before = self.service.add_rule(suggestion.rule)
             self._push_undo("Make a rule", lambda: self.service.restore_rules(before))
             self.make_plan()
+
+    def note_folder(self, folder: str, text: str | None = None) -> None:
+        """Write what belongs in a folder; SortZen and the AI use the words like the folder's name."""
+        if not folder:
+            return
+        if text is None:
+            text, ok = QInputDialog.getMultiLineText(
+                self, "Note about a folder",
+                f"What belongs in “{os.path.basename(folder)}”? For example: pay stubs, T4s, timesheets.\n"
+                "SortZen uses these words like the folder's name, and sends them to the AI with the folder list.",
+                self.service.folder_note(folder))
+            if not ok:
+                return
+        before = self.service.set_folder_note(folder, text)
+        self._push_undo("Folder note", lambda: self.service.restore_folder_notes(before))
+        self.folders_page.set_counts(self.folders_page.counts)
+        self.statusBar().showMessage("Note saved. Update the plan to use it.", 6000)
 
     def rename_folder(self, folder: str, new_name: str | None = None, confirm: bool = True) -> str | None:
         """Give a folder a new name: in the plan if it is still to be made, on disk (with Undo) if it exists."""

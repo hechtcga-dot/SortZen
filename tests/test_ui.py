@@ -406,6 +406,21 @@ class MainWindowTest(unittest.TestCase):
             question.picker.box.setEditText("Sorted/Projects/Typed")
             self.assertEqual(question.answer(), str(root / "Sorted" / "Projects" / "Typed"))
 
+    def test_folder_notes_from_the_window(self):
+        root = shared_test_folders()
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.refresh_folders()
+        payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
+        self.window.note_folder(payroll, "pay stubs, T4s, timesheets")
+        self.assertEqual(self.service.folder_note(payroll), "pay stubs, T4s, timesheets")
+        self.assertEqual(self.window.undo_action.text(), "Undo folder note")
+        from sortzen.ui.dialogs import DestinationDialog
+        dialog = DestinationDialog(self.window, [payroll], self.service.display, note=self.service.folder_note)
+        self.assertIn("pay stubs, T4s, timesheets", dialog.list.item(0).text())
+        dialog.close()
+        self.window.undo()
+        self.assertEqual(self.service.folder_note(payroll), "")
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview
