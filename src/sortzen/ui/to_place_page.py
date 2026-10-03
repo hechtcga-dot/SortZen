@@ -106,6 +106,13 @@ class FlowLayout(QLayout):
         self.setSpacing(spacing)
         self.setContentsMargins(0, 0, 0, 0)
 
+    def __del__(self):                  # hand every item back before Qt deletes the layout
+        try:
+            while self.takeAt(0) is not None:
+                pass
+        except RuntimeError:
+            pass
+
     def addItem(self, item):
         self._items.append(item)
 

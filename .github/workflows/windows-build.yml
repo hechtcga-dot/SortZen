@@ -53,7 +53,7 @@ jobs:
         run: python packaging/get_meaning_model.py
 
       - name: Run tests
-        run: python -m unittest discover -s tests -t . -v
+        run: python -X faulthandler -m unittest discover -s tests -t . -v
 
       - name: Build icon
         run: python packaging/make_icon.py
