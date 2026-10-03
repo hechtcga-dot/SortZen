@@ -294,3 +294,104 @@ class GoogleDriveTest(unittest.TestCase):
     def test_not_google_drive_elsewhere(self):
         if os.name != "nt":
             self.assertFalse(scanner_module.on_google_drive(tempfile.gettempdir()))
+
+
+class MoreFileTypesTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self.dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.dir.name)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def read(self, name, data):
+        from sortzen.scanning.file_types import kind_of
+        from sortzen.scanning.readers import read_contents
+
+        path = self.base / name
+        path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+        ext = path.suffix.lower()
+        return read_contents(path, kind_of(ext), ext, path.stat().st_size)
+
+    def test_opendocument(self):
+        import io
+        import zipfile
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            z.writestr("content.xml", '<office:document-content xmlns:office="urn:o" xmlns:text="urn:t">'
+                                      '<text:p>Quarterly garden budget</text:p><text:p>Seeds and soil</text:p>'
+                                      '</office:document-content>')
+            z.writestr("meta.xml", '<m xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Garden budget'
+                                   '</dc:title><dc:creator>Avery Lund</dc:creator></m>')
+        details, text = self.read("budget.odt", out.getvalue())
+        self.assertEqual(details, {"title": "Garden budget", "author": "Avery Lund"})
+        self.assertIn("Seeds and soil", text)
+
+    def test_rtf(self):
+        _, text = self.read("letter.rtf", r"{\rtf1\ansi{\fonttbl{\f0 Arial;}}{\*\generator Wordpad;}"
+                                          r"\f0\fs22 Dear Avery,\par Your caf\'e9 order is ready.\par}")
+        self.assertIn("Dear Avery,", text)
+        self.assertIn("café order is ready.", text)
+        self.assertNotIn("Arial", text)
+        self.assertNotIn("fs22", text)
+
+    def test_eml_plain_and_html(self):
+        plain = ("From: Avery Lund <avery@example.com>\nSubject: Northgate invoice 454\n"
+                 "Content-Type: text/plain\n\nPlease find the invoice attached.\n")
+        details, text = self.read("mail.eml", plain)
+        self.assertEqual(details, {"title": "Northgate invoice 454", "author": "Avery Lund"})
+        self.assertIn("invoice attached", text)
+        html = ("From: Shop <shop@example.com>\nSubject: Receipt\nContent-Type: text/html\n\n"
+                "<html><body><p>Thanks for your <b>order</b></p></body></html>\n")
+        _, text = self.read("receipt.eml", html)
+        self.assertIn("Thanks for your order", text)
+        self.assertNotIn("<p>", text)
+
+    def test_older_office_and_outlook_text(self):
+        from unittest import mock
+
+        from sortzen.scanning import readers
+
+        blob = b"\x00\x01" + "Hanlon site plan".encode("utf-16-le") + b"\x00\x00\x07" + b"zz\x01"
+        self.assertEqual(readers.ole_strings(blob), "Hanlon site plan")
+
+        class FakeOle:
+            streams = {"__substg1.0_0037001F": "Lease renewal".encode("utf-16-le"),
+                       "__substg1.0_0C1A001F": "Avery Lund".encode("utf-16-le"),
+                       "__substg1.0_1000001E": b"The lease renews in May."}
+
+            def __init__(self, path):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def exists(self, name):
+                return name in self.streams
+
+            def openstream(self, name):
+                import io
+                return io.BytesIO(self.streams[name])
+
+        with mock.patch("olefile.OleFileIO", FakeOle):
+            details, text = self.read("lease.msg", b"not really ole")
+        self.assertEqual(details, {"title": "Lease renewal", "author": "Avery Lund"})
+        self.assertIn("renews in May", text)
+
+    def test_older_reads_of_new_kinds_are_read_again(self):
+        from sortzen.scanning.readers import READER_VERSION, needs_reread
+
+        old = SimpleNamespace(ext=".doc", details={})
+        self.assertTrue(needs_reread(old))
+        self.assertFalse(needs_reread(SimpleNamespace(ext=".doc", details={"reader": READER_VERSION})))
+        self.assertFalse(needs_reread(SimpleNamespace(ext=".pdf", details={})))
+
+    def test_web_page(self):
+        _, text = self.read("page.html", "<html><head><style>p{}</style></head><body>Garden &amp; seeds</body></html>")
+        self.assertEqual(text, "Garden & seeds")

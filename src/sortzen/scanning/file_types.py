@@ -15,6 +15,7 @@ KINDS = {
     "installer": {".exe", ".msi", ".msix", ".appx"},
     "ebook": {".epub", ".mobi"},
     "web page": {".html", ".htm", ".mhtml"},
+    "email": {".eml", ".msg"},
     "shortcut": {".lnk", ".url"},
 }
 _BY_EXT = {ext: kind for kind, exts in KINDS.items() for ext in exts}

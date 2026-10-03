@@ -19,7 +19,8 @@ MAX_GROUPS = 30
 WORD_SHARE = 0.5            # a word in more than this share of the unsure files says too little
 KIND_PLURAL = {"pdf": "PDFs", "word": "Word documents", "spreadsheet": "spreadsheets", "presentation": "presentations",
                "image": "pictures", "video": "videos", "audio": "music files", "archive": "zip files",
-               "installer": "programs", "text": "text files"}
+               "installer": "programs", "text": "text files", "email": "emails",
+               "web page": "web pages"}
 
 
 @dataclass

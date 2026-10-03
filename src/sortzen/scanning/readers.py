@@ -2,8 +2,10 @@
 
 ``read_contents`` returns ``(details, text)``. Details are small facts (title, author,
 camera, archive file names); text is the readable words, capped at ``MAX_TEXT_CHARS``.
-Office files (.docx, .xlsx, .pptx) are zip files of XML and are read with the standard
-library. Damaged files raise an exception, which the scanner records.
+Office files (.docx, .xlsx, .pptx) and OpenDocument files (.odt, .ods, .odp) are zip files
+of XML, read with the standard library; older Office files (.doc, .xls, .ppt) and Outlook
+emails (.msg) with olefile; .eml emails with the standard library. Damaged files raise an
+exception, which the scanner records.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ from .file_types import GOOGLE_LINKS
 
 logging.getLogger("pypdf").setLevel(logging.ERROR)     # damaged PDFs are recorded, not printed
 
+READER_VERSION = 2          # remembered files of the kinds below, read by an older version, are read again
+REREAD_EXTS = {".doc", ".xls", ".ppt", ".msg", ".eml", ".rtf", ".odt", ".ods", ".odp", ".html", ".htm"}
 MAX_TEXT_CHARS = 20_000
 MAX_CONTENT_BYTES = 50 * 1024 * 1024     # bigger files are sorted by name and details only
 MAX_PDF_PAGES = 2
@@ -52,6 +56,18 @@ def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str
         return _pdf(path)
     if kind == "text" or ext == ".csv":
         return {}, _text_file(path)
+    if ext in (".odt", ".ods", ".odp"):
+        return _odf(path)
+    if ext == ".rtf":
+        return {}, _rtf(path)
+    if ext in OLE_STREAMS:
+        return _ole(path, OLE_STREAMS[ext])
+    if ext == ".msg":
+        return _msg(path)
+    if ext == ".eml":
+        return _eml(path)
+    if kind == "web page" and ext != ".mhtml":
+        return {}, _html(_text_file(path))
     if kind == "image":
         return _image(path), ""
     if ext == ".zip":
@@ -59,6 +75,12 @@ def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str
     if ext == ".exe":
         return _exe(path), ""
     return {}, ""
+
+
+def needs_reread(record) -> bool:
+    """A remembered file this version reads better than the version that read it."""
+    return record.ext in REREAD_EXTS and record.details.get("reader", 1) < READER_VERSION \
+        and not record.details.get("names_only")
 
 
 def _cap(text: str) -> str:
@@ -134,6 +156,113 @@ def _pdf(path: Path) -> tuple[dict, str]:
     if not text.strip():
         details["no_text"] = True                       # a scan: needs OCR to read
     return details, _cap(text)
+
+
+_ODF_META = {"title": "{http://purl.org/dc/elements/1.1/}title",
+             "author": "{http://purl.org/dc/elements/1.1/}creator"}
+OLE_STREAMS = {".doc": "WordDocument", ".xls": "Workbook", ".ppt": "PowerPoint Document"}
+_UTF16_RUN = re.compile(rb"(?:[\x20-\x7e\xa0-\xff]\x00){4,}")
+_BYTE_RUN = re.compile(rb"[\x20-\x7e\xa0-\xff]{4,}")
+
+
+def _odf(path: Path) -> tuple[dict, str]:
+    details = {}
+    with zipfile.ZipFile(path) as archive:
+        names = set(archive.namelist())
+        if "meta.xml" in names:
+            root = ElementTree.fromstring(archive.read("meta.xml"))
+            for name, tag in _ODF_META.items():
+                found = root.find(f".//{tag}")
+                if found is not None and (found.text or "").strip():
+                    details[name] = found.text.strip()
+        text = " ".join(ElementTree.fromstring(archive.read("content.xml")).itertext()) \
+            if "content.xml" in names else ""
+    return details, _cap(text)
+
+
+def _rtf(path: Path) -> str:
+    """RTF without its formatting: control words, groups like fonts and pictures, and escapes removed."""
+    with path.open("rb") as f:
+        raw = f.read(MAX_TEXT_FILE_BYTES).decode("latin-1", "replace")
+    raw = re.sub(r"\{\\\*[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", " ", raw)
+    raw = re.sub(r"\{\\(?:fonttbl|colortbl|stylesheet|info|pict)[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", " ", raw)
+    raw = re.sub(r"\\'([0-9a-fA-F]{2})", lambda m: bytes([int(m.group(1), 16)]).decode("cp1252", "replace"), raw)
+    raw = re.sub(r"\\u(-?\d+)\??", lambda m: chr(int(m.group(1)) % 65536), raw)
+    raw = re.sub(r"\\(?:par|line|tab)\b", " ", raw)
+    raw = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", raw)
+    return _cap(raw.replace("{", "").replace("}", "").replace("\\", ""))
+
+
+def ole_strings(data: bytes) -> str:
+    """Readable text in an older Office file's binary stream: runs of UTF-16 or single-byte letters."""
+    wide = " ".join(m.group(0).decode("utf-16-le", "replace") for m in _UTF16_RUN.finditer(data))
+    narrow = " ".join(m.group(0).decode("cp1252", "replace") for m in _BYTE_RUN.finditer(data))
+
+    def letters(text: str) -> int:
+        return sum(1 for c in text if c.isalpha())
+
+    best = wide if letters(wide) >= letters(narrow) else narrow
+    return " ".join(w for w in best.split() if sum(c.isalpha() for c in w) >= max(1, len(w) // 2))
+
+
+def _ole(path: Path, stream: str) -> tuple[dict, str]:
+    import olefile
+
+    with olefile.OleFileIO(str(path)) as ole:
+        details = {}
+        meta = ole.get_metadata()
+        for name, value in (("title", meta.title), ("author", meta.author), ("subject", meta.subject)):
+            if value:
+                value = value.decode("cp1252", "replace") if isinstance(value, bytes) else str(value)
+                if value.strip():
+                    details[name] = value.strip()
+        text = ole_strings(ole.openstream(stream).read(4 * MAX_TEXT_FILE_BYTES)) if ole.exists(stream) else ""
+    return details, _cap(text)
+
+
+def _msg_text(ole, prop: str) -> str:
+    for suffix, encoding in (("001F", "utf-16-le"), ("001E", "cp1252")):
+        name = f"__substg1.0_{prop}{suffix}"
+        if ole.exists(name):
+            return ole.openstream(name).read(MAX_TEXT_FILE_BYTES).decode(encoding, "replace").rstrip("\x00").strip()
+    return ""
+
+
+def _msg(path: Path) -> tuple[dict, str]:
+    """An Outlook email: subject, sender's name and the beginning of the message."""
+    import olefile
+
+    with olefile.OleFileIO(str(path)) as ole:
+        subject, sender, body = _msg_text(ole, "0037"), _msg_text(ole, "0C1A"), _msg_text(ole, "1000")
+    details = {k: v for k, v in (("title", subject), ("author", sender)) if v}
+    return details, _cap(f"{subject}\n{body}")
+
+
+def _eml(path: Path) -> tuple[dict, str]:
+    from email import policy
+    from email.parser import BytesParser
+    from email.utils import parseaddr
+
+    with path.open("rb") as f:
+        message = BytesParser(policy=policy.default).parse(f)
+    subject = str(message.get("subject") or "").strip()
+    sender = parseaddr(str(message.get("from") or ""))[0].strip()
+    part = message.get_body(preferencelist=("plain", "html"))
+    body = ""
+    if part is not None:
+        body = part.get_content()
+        if part.get_content_type() == "text/html":
+            body = _html(body)
+    details = {k: v for k, v in (("title", subject), ("author", sender)) if v}
+    return details, _cap(f"{subject}\n{body}")
+
+
+def _html(text: str) -> str:
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    for entity, char in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"')):
+        text = text.replace(entity, char)
+    return _cap(text)
 
 
 def _text_file(path: Path) -> str:

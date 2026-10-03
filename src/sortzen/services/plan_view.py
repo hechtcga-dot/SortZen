@@ -11,7 +11,7 @@ from ..scanning.file_types import kind_of
 KIND_NAMES = {"word": "Word", "pdf": "PDF", "spreadsheet": "Spreadsheet", "presentation": "Presentation",
               "form": "Form", "text": "Text", "image": "Picture", "video": "Video", "audio": "Music",
               "archive": "Zip", "installer": "Program", "ebook": "E-book", "web page": "Web page",
-              "shortcut": "Shortcut", "other": "Other"}
+              "shortcut": "Shortcut", "email": "Email", "other": "Other"}
 MAX_PATH = 259                  # longest full path Windows programs reliably handle
 
 READY, TO_REVIEW, STAYING, SORTED_INSIDE = "Ready", "Review", "Staying", "Sorted from the inside"

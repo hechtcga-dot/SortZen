@@ -15,6 +15,7 @@ from pathlib import Path
 from ..repositories.file_index import FileIndex, path_key
 from ..tasks import Progress, Status
 from .file_types import SKIPPED_FOLDER_NAMES, is_queue_folder, kind_of, skip_reason
+from .readers import READER_VERSION, REREAD_EXTS, needs_reread
 from .fingerprint import fingerprint
 from .readers import read_contents
 from .records import FileRecord, ScanSummary
@@ -112,7 +113,7 @@ class Scanner:
                 names = bool(names_keys) and any(_inside(key, n) for n in names_keys)
                 if (previous and previous.size == st.st_size and previous.modified_ns == st.st_mtime_ns
                         and previous.cloud_only == cloud and previous.role == role
-                        and (names or not previous.details.get("names_only"))):
+                        and (names or not previous.details.get("names_only")) and not needs_reread(previous)):
                     record = previous
                     summary.remembered += 1
                 else:
@@ -233,6 +234,8 @@ class Scanner:
             return record
         try:
             record.details, record.text = read_contents(Path(path), record.kind, ext, st.st_size)
+            if ext in REREAD_EXTS:
+                record.details["reader"] = READER_VERSION
         except Exception as exc:  # damaged or unusual file: sorted by name and details
             record.error = f"Couldn't read the contents ({type(exc).__name__}: {exc})"[:300]
         return record
