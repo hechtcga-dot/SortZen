@@ -512,3 +512,40 @@ class CatalogReviewTest(unittest.TestCase):
         self.assertEqual([n for n, _ in found[0].parts], ["Hydro", "Phone"])
         merge = next(s for s in found if s.kind == "merge")
         self.assertEqual(merge.into, "/s/Home/Bills")               # shares "bill" with Bills
+
+
+class PairsTest(unittest.TestCase):
+    def plan(self, *suggestions):
+        from sortzen.engine.plan import Plan, Suggestion
+
+        return Plan(files=[Suggestion(p, "/in", d, pc, runner_up=r) for p, d, pc, r in suggestions])
+
+    def test_similar_raises_leans_or_doubts(self):
+        from sortzen.engine.pairs import SIMILAR_ALONE, apply_pairs
+
+        plan = self.plan(("/in/a.pdf", "/s/Tax", 70, None), ("/in/b.pdf", None, 0, None),
+                         ("/in/c.pdf", "/s/Work", 90, None), ("/in/d.pdf", "/s/Work", 100, None))
+        home = {"/s/Tax/t4.pdf": "/s/Tax"}.get
+        n = apply_pairs(plan, [("/in/a.pdf", "/s/Tax/t4.pdf"), ("/in/b.pdf", "/s/Tax/t4.pdf"),
+                               ("/in/c.pdf", "/s/Tax/t4.pdf"), ("/in/d.pdf", "/s/Tax/t4.pdf")], [], home, str)
+        a, b, c, d = plan.files
+        self.assertEqual(n, 3)                                              # a folder users chose stays
+        self.assertEqual((a.destination, a.percent), ("/s/Tax", 85))
+        self.assertIn("You said it's like “t4.pdf”", a.reasons[0].text)
+        self.assertEqual((b.destination, b.percent), ("/s/Tax", SIMILAR_ALONE))   # leans, still waits for users
+        self.assertEqual((c.destination, c.percent, c.runner_up), ("/s/Work", 72, ("/s/Tax", SIMILAR_ALONE)))
+        self.assertEqual((d.destination, d.percent), ("/s/Work", 100))
+
+    def test_different_lowers_or_switches_to_the_runner_up(self):
+        from sortzen.engine.pairs import DIFFERENT_MAX, apply_pairs
+
+        plan = self.plan(("/in/a.pdf", "/s/Tax", 90, None), ("/in/b.pdf", "/s/Tax", 80, ("/s/Work", 50)),
+                         ("/in/c.pdf", "/s/Work", 80, None))
+        home = {"/s/Tax/t4.pdf": "/s/Tax"}.get
+        pairs = [(p, "/s/Tax/t4.pdf") for p in ("/in/a.pdf", "/in/b.pdf", "/in/c.pdf")]
+        self.assertEqual(apply_pairs(plan, [], pairs, home, str), 2)
+        a, b, c = plan.files
+        self.assertEqual((a.destination, a.percent), ("/s/Tax", DIFFERENT_MAX))
+        self.assertFalse(a.reasons[0].supports)
+        self.assertEqual((b.destination, b.percent, b.runner_up), ("/s/Work", 50, ("/s/Tax", DIFFERENT_MAX)))
+        self.assertEqual((c.destination, c.percent), ("/s/Work", 80))       # already elsewhere: unchanged
