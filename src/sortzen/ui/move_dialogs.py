@@ -132,7 +132,7 @@ class MoveResultDialog(QDialog):
 
 
 KIND_TEXT = {"move": "Move", "duplicates": "Copies queued for deletion", "rename": "Folder renamed",
-             "catalog": "Catalog reorganized"}
+             "catalog": "Catalog reorganized", "placed": "Put into a category", "deleted": "Files queued for deletion"}
 
 
 class RunsDialog(QDialog):

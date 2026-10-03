@@ -1,23 +1,162 @@
 """The Catalog tab: the categories files are sorted into, as a tree users can see, edit and comment on.
 
-The left side lists every category and subcategory with its files and note. The right side shows
-the selected category (folders, example files, rules, feedback) with buttons to edit it and to say
-what is wrong with it, and below them the suggestions SortZen (or the AI service) has for the
-catalog, each with Accept and Not this.
+The left side lists every category and subcategory with its files and note, and below it the files
+in the selected category. Files (several at once) and categories can be dragged onto a category,
+from here or from Windows Explorer; SortZen moves them after confirmation and remembers the choice.
+Folders dropped on the empty space below the categories are added to the catalog. The right side
+shows the selected category (folders, example files, rules, feedback) with buttons to edit it and
+to say what is wrong with it, and below them the suggestions SortZen (or the AI service) has for
+the catalog, each with Accept and Not this.
 """
 from __future__ import annotations
 
+import json
 import os
+import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QMenu, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSplitter, QTreeWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QFrame, QGridLayout, QMenu, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QSplitter, QTreeWidget, QVBoxLayout, QWidget,
 )
 
 from ..services.catalog import FEEDBACK
-from .sortable import SortItem, make_sortable, natural
+from .sortable import SortItem, human_size, make_sortable, natural
 
 PATH = Qt.ItemDataRole.UserRole
+MIME = "application/x-sortzen-paths"
+
+
+def paths_mime(paths: list[str]) -> QMimeData:
+    """What a drag inside SortZen carries: the paths, never anything Explorer could act on."""
+    mime = QMimeData()
+    mime.setData(MIME, json.dumps([p for p in paths if p]).encode("utf-8"))
+    return mime
+
+
+def paths_from(mime: QMimeData) -> list[str]:
+    """The paths a drag carries, from SortZen or from Windows Explorer."""
+    if mime.hasFormat(MIME):
+        return json.loads(bytes(mime.data(MIME)).decode("utf-8"))
+    if mime.hasUrls():
+        return [os.path.normpath(u.toLocalFile()) for u in mime.urls() if u.isLocalFile()]
+    return []
+
+
+class _DropTarget:
+    """Drops are confirmed after the drag has finished, and SortZen moves the files itself: the drag
+    reports a copy, so neither Qt nor Explorer removes anything."""
+    drops_from_itself = False
+
+    def _accept_drag(self, event) -> bool:
+        if not paths_from(event.mimeData()) or (event.source() is self and not self.drops_from_itself):
+            event.ignore()
+            return False
+        event.setDropAction(Qt.DropAction.MoveAction)
+        event.accept()
+        return True
+
+    def _finish_drop(self, event, emit) -> None:
+        paths = paths_from(event.mimeData())
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        if paths:
+            QTimer.singleShot(0, lambda: emit(paths))
+
+
+class CategoryTree(_DropTarget, QTreeWidget):
+    """The categories. Files and categories dropped on one go into it; folders dropped on the empty
+    space below are added to the catalog."""
+    dropped = Signal(list, str)             # paths, the category's folder
+    dropped_outside = Signal(list)          # paths dropped below the categories
+    drops_from_itself = True                # a category dragged onto another
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self._marked = None
+
+    def mimeTypes(self):
+        return [MIME, "text/uri-list"]
+
+    def mimeData(self, items):              # a category is dragged as its folder (added folders stay put)
+        return paths_mime([i.data(0, PATH) for i in items if i.parent() is not None])
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
+
+    def dragEnterEvent(self, event):
+        self._accept_drag(event)
+
+    def dragMoveEvent(self, event):
+        if self._accept_drag(event):
+            self._mark(self.itemAt(event.position().toPoint()))
+
+    def dragLeaveEvent(self, event):
+        self._mark(None)
+
+    def dropEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        self._mark(None)
+        if item is None:
+            self._finish_drop(event, self.dropped_outside.emit)
+        else:
+            folder = item.data(0, PATH)
+            self._finish_drop(event, lambda paths: self.dropped.emit(paths, folder))
+
+    def _mark(self, item) -> None:
+        """Show which category a drop goes into."""
+        if self._marked is item:
+            return
+        for old in [self._marked] if self._marked is not None else []:
+            try:
+                for column in range(self.columnCount()):
+                    old.setBackground(column, QBrush())
+            except RuntimeError:
+                pass
+        self._marked = item
+        if item is not None:
+            for column in range(self.columnCount()):
+                item.setBackground(column, self.palette().highlight().color().lighter(170))
+
+
+class FileList(_DropTarget, QTreeWidget):
+    """The files in the selected category: Shift- or Ctrl-click to choose several, drag them onto a
+    category. Files dropped here from Explorer go into the selected category."""
+    dropped = Signal(list, str)
+
+    def __init__(self):
+        super().__init__()
+        self.folder = ""
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+
+    def mimeTypes(self):
+        return [MIME, "text/uri-list"]
+
+    def mimeData(self, items):
+        return paths_mime([i.data(0, PATH) for i in items])
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
+
+    def dragEnterEvent(self, event):
+        self._accept_drag(event) if self.folder else event.ignore()
+
+    def dragMoveEvent(self, event):
+        self._accept_drag(event) if self.folder else event.ignore()
+
+    def dropEvent(self, event):
+        folder = self.folder
+        self._finish_drop(event, lambda paths: self.dropped.emit(paths, folder))
+
+    def selected_paths(self) -> list[str]:
+        return [i.data(0, PATH) for i in self.selectedItems()]
 
 
 def _label(text: str = "", name: str = "") -> QLabel:
@@ -38,6 +177,11 @@ class CatalogPage(QWidget):
     accept = Signal(object)                  # a suggestion
     decline = Signal(object)
     ask_ai = Signal()
+    place = Signal(list, str)                # paths put into a category's folder
+    move_files = Signal(list)                # paths to put into a category chosen from a list
+    delete_files = Signal(list)
+    add_to_catalog = Signal(list)            # folders to add (an empty list asks which)
+    open_path = Signal(str)
 
     def __init__(self, service):
         super().__init__()
@@ -50,6 +194,14 @@ class CatalogPage(QWidget):
         top = QHBoxLayout()
         self.summary = _label("Catalog", "pageTitle")
         top.addWidget(self.summary, 1)
+        add = QPushButton("Add a folder…")
+        add.setToolTip("Add a folder to the catalog: its subfolders become categories")
+        add.clicked.connect(lambda: self.add_to_catalog.emit([]))
+        top.addWidget(add)
+        self.show_files = QCheckBox("Show files")
+        self.show_files.setChecked(True)
+        self.show_files.setToolTip("Show or hide the files in the selected category")
+        top.addWidget(self.show_files)
         refresh = QPushButton("Find suggestions")
         refresh.setToolTip("Read the folders again and look for ways to improve the catalog (on this PC)")
         refresh.clicked.connect(self.refresh)
@@ -62,10 +214,13 @@ class CatalogPage(QWidget):
         col.addLayout(top)
         col.addWidget(_label("Your categories, built from your folders. Select one to edit it or tell SortZen "
                              "what is wrong with it; SortZen uses your feedback to suggest a better structure. "
-                             "Nothing on disk changes without a preview, and everything can be undone.", "hint"))
+                             "Drag files or categories onto a category to put them there: SortZen remembers it and "
+                             "learns from it. Nothing on disk changes without a preview, and everything can be "
+                             "undone.", "hint"))
 
         split = QSplitter(Qt.Orientation.Horizontal)
-        self.tree = QTreeWidget()
+        left = QSplitter(Qt.Orientation.Vertical)
+        self.tree = CategoryTree()
         self.tree.setHeaderLabels(["Category", "Files", "Note"])
         self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 60)
@@ -75,8 +230,39 @@ class CatalogPage(QWidget):
         self.tree.itemSelectionChanged.connect(self._show)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.dropped.connect(self.place)
+        self.tree.dropped_outside.connect(self._dropped_outside)
         make_sortable(self.tree)
-        split.addWidget(self.tree)
+        left.addWidget(self.tree)
+        self.files_panel = QWidget()
+        files_col = QVBoxLayout(self.files_panel)
+        files_col.setContentsMargins(0, 6, 0, 0)
+        files_col.setSpacing(4)
+        self.files_title = _label("", "sectionCaps")
+        files_col.addWidget(self.files_title)
+        self.files = FileList()
+        self.files.setHeaderLabels(["File", "Size", "Changed"])
+        self.files.setColumnWidth(0, 260)
+        self.files.setColumnWidth(1, 80)
+        self.files.setRootIsDecorated(False)
+        self.files.setAlternatingRowColors(True)
+        self.files.setUniformRowHeights(True)
+        self.files.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.files.customContextMenuRequested.connect(self._file_menu)
+        self.files.itemDoubleClicked.connect(lambda item, _: self.open_path.emit(item.data(0, PATH)))
+        self.files.dropped.connect(self.place)
+        make_sortable(self.files)
+        files_col.addWidget(self.files, 1)
+        files_col.addWidget(_label("Shift- or Ctrl-click to choose several files, then drag them onto a category. "
+                                   "Right-click for Move to, Delete and Open.", "hint"))
+        delete = QShortcut(QKeySequence.StandardKey.Delete, self.files)
+        delete.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete.activated.connect(lambda: self.files.selected_paths() and
+                                 self.delete_files.emit(self.files.selected_paths()))
+        left.addWidget(self.files_panel)
+        left.setSizes([420, 300])
+        self.show_files.toggled.connect(self._toggle_files)
+        split.addWidget(left)
 
         side = QScrollArea()
         side.setWidgetResizable(True)
@@ -169,6 +355,7 @@ class CatalogPage(QWidget):
         c = self.by_path.get(self._selected())
         for button in self.edit_buttons + [self.hide_button]:
             button.setEnabled(c is not None)
+        self._fill_files(c)
         if c is None:
             self.title.setText("Select a category")
             self.details.setText("")
@@ -181,6 +368,9 @@ class CatalogPage(QWidget):
             lines.append(f"Note: {c.note}")
         if c.rules:
             lines.append(f"{c.rules} rule{'s' if c.rules != 1 else ''} send files here")
+        if c.chosen:
+            lines.append(f"You chose this folder for {c.chosen:,} file{'s' if c.chosen != 1 else ''}; "
+                         "SortZen learns from them")
         if c.examples:
             lines.append("For example: " + ", ".join(c.examples))
         for f in c.feedback[-3:]:
@@ -213,9 +403,59 @@ class CatalogPage(QWidget):
             card.suggestion = s
             self.suggestion_box.addWidget(card)
 
+    def _fill_files(self, c) -> None:
+        self.files.folder = c.path if c else ""
+        if not self.show_files.isChecked():
+            return
+        self.files.setSortingEnabled(False)
+        self.files.clear()
+        found = self.service.category_files(c.path) if c else []
+        for f in found:
+            item = SortItem(self.files, [f["name"], human_size(f["size"]),
+                                         time.strftime("%Y-%m-%d %H:%M", time.localtime(f["modified"]))])
+            item.setData(0, PATH, f["path"])
+            item.setToolTip(0, f["path"])
+            item.set_key(0, natural(f["name"]))
+            item.set_key(1, f["size"])
+            item.set_key(2, f["modified"])
+            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.files.setSortingEnabled(True)
+        if c is None:
+            self.files_title.setText("Files")
+        else:
+            more = f" (and {c.files - len(found):,} in its subfolders)" if c.files > len(found) else ""
+            self.files_title.setText(f"Files in {c.name} · {len(found):,}{more}")
+
+    def _toggle_files(self, on: bool) -> None:
+        self.files_panel.setVisible(on)
+        if on:
+            self._fill_files(self.by_path.get(self._selected()))
+
+    def _dropped_outside(self, paths: list) -> None:
+        folders = [p for p in paths if os.path.isdir(p)]
+        if folders:
+            self.add_to_catalog.emit(folders)
+
+    def _file_menu(self, pos) -> None:
+        paths = self.files.selected_paths()
+        if not paths:
+            return
+        n = len(paths)
+        some = f"{n:,} files" if n != 1 else "this file"
+        menu = QMenu(self)
+        menu.addAction(f"Move {some} to…", lambda: self.move_files.emit(paths))
+        menu.addAction(f"Delete {some}…", lambda: self.delete_files.emit(paths))
+        if n == 1:
+            menu.addAction("Open", lambda: self.open_path.emit(paths[0]))
+        menu.addAction("Open the folder", lambda: self.open_path.emit(os.path.dirname(paths[0])))
+        menu.exec(self.files.viewport().mapToGlobal(pos))
+
     def _menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
         if item is None:
+            menu = QMenu(self)
+            menu.addAction("Add a folder to the catalog…", lambda: self.add_to_catalog.emit([]))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
             return
         self.tree.setCurrentItem(item)
         path = item.data(0, PATH)
@@ -229,6 +469,7 @@ class CatalogPage(QWidget):
         hidden = bool(c and c.hidden)
         menu.addAction("Put files here again" if hidden else "Don't put files here",
                        lambda: self.hide.emit(path, not hidden))
+        menu.addAction("Open the folder", lambda: self.open_path.emit(path))
         feedback = menu.addMenu("How is this category?")
         for kind in ("right", "too_broad", "too_narrow", "wrong_name", "comment"):
             feedback.addAction(FEEDBACK[kind] + ("…" if kind == "comment" else ""),

@@ -466,6 +466,71 @@ class MainWindowTest(unittest.TestCase):
             self.window.undo()                                       # the move: files go back
         self.assertTrue(wait_until(self.app, lambda: len(os.listdir(budget)) == files and not self.service.jobs.busy))
 
+    def test_catalog_files_dragged_deleted_and_folders_added(self):
+        import shutil
+        from unittest import mock
+
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.ui.catalog_page import PATH, paths_from
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.tabs.setCurrentWidget(self.window.catalog_page)
+        page = self.window.catalog_page
+        budget = str(root / "Sorted" / "Documents" / "Work" / "Budget")
+        payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
+        page.select(budget)
+        self.assertTrue(page.files_title.text().startswith("Files in Budget"))
+        self.assertEqual(page.files.topLevelItemCount(), len(self.service.category_files(budget)))
+        page.files.topLevelItem(0).setSelected(True)
+        page.files.topLevelItem(1).setSelected(True)
+        chosen = page.files.selected_paths()
+        mime = page.files.mimeData(page.files.selectedItems())
+        self.assertEqual(sorted(paths_from(mime)), sorted(chosen))
+        roots = [page.tree.topLevelItem(i) for i in range(page.tree.topLevelItemCount())]
+        self.assertEqual(paths_from(page.tree.mimeData(roots)), [])            # added folders aren't dragged
+        target = next(i for i in page._items() if i.data(0, PATH) == payroll)
+        page.tree.scrollToItem(target)
+        self.app.processEvents()
+        where = QPointF(page.tree.visualItemRect(target).center())
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))
+        drop = QDropEvent(where, Qt.DropAction.MoveAction, mime, Qt.MouseButton.LeftButton,
+                          Qt.KeyboardModifier.NoModifier)
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            page.tree.dropEvent(drop)
+            self.assertTrue(wait_until(self.app, lambda: all(os.path.exists(os.path.join(payroll, os.path.basename(p)))
+                                                             for p in chosen) and not self.service.jobs.busy))
+        moved = os.path.join(payroll, os.path.basename(chosen[0]))
+        self.assertEqual(self.service.corrections()[moved], payroll)            # remembered and learned from
+        self.assertTrue(wait_until(self.app, lambda: self.window.undo_action.text() == "Undo put into a category"))
+        self.window.undo()
+        self.assertTrue(wait_until(self.app, lambda: all(os.path.exists(p) for p in chosen) and not self.service.jobs.busy))
+        self.assertEqual(self.service.corrections(), {})
+        if getattr(self.window, "result_dialog", None):
+            self.window.result_dialog.close()
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))
+
+        self.window.delete_files([chosen[0]], confirm=False)
+        self.assertTrue(wait_until(self.app, lambda: not os.path.exists(chosen[0]) and not self.service.jobs.busy))
+        self.assertTrue(wait_until(self.app, lambda: self.window.undo_action.text() == "Undo delete"))
+        self.window.undo()
+        self.assertTrue(wait_until(self.app, lambda: os.path.exists(chosen[0]) and not self.service.jobs.busy))
+        if getattr(self.window, "result_dialog", None):
+            self.window.result_dialog.close()
+
+        extra = Path(self.dir.name) / "Photos"
+        (extra / "Session one").mkdir(parents=True)
+        page.tree.dropped_outside.emit([str(extra)])
+        self.assertIn(str(extra), self.service.destination_folders())
+        self.assertIn(str(extra), [c.path for c in self.service.catalog()])
+        self.assertIs(self.window.tabs.currentWidget(), page)
+        page.show_files.setChecked(False)
+        self.assertFalse(page.files_panel.isVisible())
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview

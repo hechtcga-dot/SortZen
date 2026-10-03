@@ -93,7 +93,12 @@ class MainWindow(QMainWindow):
                              (self.catalog_page.feedback, self.category_feedback),
                              (self.catalog_page.accept, self.accept_suggestion),
                              (self.catalog_page.decline, self.decline_suggestion),
-                             (self.catalog_page.ask_ai, self.ask_ai_about_catalog)):
+                             (self.catalog_page.ask_ai, self.ask_ai_about_catalog),
+                             (self.catalog_page.place, self.place_in_category),
+                             (self.catalog_page.move_files, self.move_files_to),
+                             (self.catalog_page.delete_files, self.delete_files),
+                             (self.catalog_page.add_to_catalog, self.add_to_catalog),
+                             (self.catalog_page.open_path, self.open_folder)):
             signal.connect(slot)
         self.tabs.addTab(self.catalog_page, "Catalog")
         self.tabs.currentChanged.connect(lambda _: self.tabs.currentWidget() is self.catalog_page
@@ -391,6 +396,93 @@ class MainWindow(QMainWindow):
         if move_files and requests:
             self._reorganize(requests)
 
+    # ---------------------------------------------------------------- putting files into categories
+    def place_in_category(self, paths: list, folder: str, confirm: bool = True) -> None:
+        """Move files and categories into a category after confirmation; SortZen remembers the choice."""
+        requests = self.service.drop_requests(paths, folder)
+        name = os.path.basename(folder) or folder
+        if not requests:
+            self.statusBar().showMessage(f"Already in “{name}”. Nothing to move.", 6000)
+            return
+        if not self._free_for_job():
+            return
+        files = sum(1 for r in requests if not os.path.isdir(r.path))
+        what = ", ".join(part for part in (
+            f"{files:,} file{'s' if files != 1 else ''}" if files else "",
+            f"{len(requests) - files:,} folder{'s' if len(requests) - files != 1 else ''}"
+            if len(requests) > files else "") if part)
+        examples = ", ".join(os.path.basename(r.path) for r in requests[:3]) + (", …" if len(requests) > 3 else "")
+        if confirm and QMessageBox.question(
+                self, "Put into a category", f"Move {what} into “{self.service.display(folder)}”?\n\n{examples}\n\n"
+                "SortZen remembers that they belong there and learns from them for future plans. "
+                "Edit › Undo puts them back.") != QMessageBox.StandardButton.Yes:
+            return
+        self._placing = folder
+        if len(requests) > 20:
+            self.progress = ProgressWindow(self, "Moving into the category", estimate=max(2.0, len(requests) / 50))
+            self.progress.stop.connect(self.service.stop_job)
+            self.progress.show()
+        self.run_job("place", lambda emit, token: self.service.place(requests, emit, token))
+
+    def move_files_to(self, paths: list, folder: str | None = None) -> None:
+        """Put files into a category chosen from the list (recently used folders first)."""
+        if folder is None:
+            categories = [c for c in self.service.catalog() if not c.merged_into]
+            recent = [os.path.normcase(f) for f in self.service.recent_destinations()]
+            categories.sort(key=lambda c: recent.index(os.path.normcase(c.path)) if os.path.normcase(c.path) in recent
+                            else len(recent))
+            labels = [self.service.display(c.path) for c in categories]
+            if not labels:
+                return
+            chosen, ok = QInputDialog.getItem(self, "Move to a category", f"Put {len(paths):,} file"
+                                              f"{'s' if len(paths) != 1 else ''} into:", labels, 0, False)
+            if not ok:
+                return
+            folder = categories[labels.index(chosen)].path
+        self.place_in_category(paths, folder, confirm=False)
+
+    def delete_files(self, paths: list, confirm: bool = True) -> None:
+        """Move files into "Queued for deletion" folders after confirmation; Undo puts them back."""
+        requests = self.service.delete_requests(paths)
+        if not requests or not self._free_for_job():
+            return
+        n = len(requests)
+        if confirm and QMessageBox.question(
+                self, "Delete files", f"Delete {n:,} file{'s' if n != 1 else ''}?\n\nThey move into a folder named "
+                "“Queued for deletion” with today's date, inside the folder you added. Delete that folder yourself "
+                "when you're sure. Edit › Undo puts them back.") != QMessageBox.StandardButton.Yes:
+            return
+        self.run_job("delete", lambda emit, token: self.service.delete(requests, emit, token))
+
+    def add_to_catalog(self, folders: list) -> None:
+        """Add folders to the catalog (as destination folders); an empty list asks which."""
+        if not folders:
+            folder = QFileDialog.getExistingDirectory(self, "Add a folder to the catalog")
+            folders = [folder] if folder else []
+        for folder in folders:
+            self._try(lambda f=folder: self.service.add_destination(f), f"Add {os.path.basename(folder)} to the catalog",
+                      lambda path: self.service.remove_folder(path), show_folders=False)
+        self.catalog_page.refresh()
+
+    def _placed(self, name: str, result) -> None:
+        if result.moved:
+            text = "Put into a category" if name == "place" else "Delete"
+            self._push_undo(text, lambda: self.undo_run(result.log, confirm=False))
+        if result.failed:
+            QMessageBox.warning(self, APP_NAME, f"{len(result.failed):,} couldn't be moved:\n\n" + "\n".join(
+                f"{os.path.basename(p)}: {why}" for p, why in result.failed[:8]))
+        self.catalog_page.refresh()
+        if name == "delete":
+            self.statusBar().showMessage(f"{result.moved:,} queued for deletion. Edit › Undo puts them back.", 8000)
+            return
+        folder = getattr(self, "_placing", "")
+        self.statusBar().showMessage(f"{result.moved:,} moved into “{os.path.basename(folder)}”. SortZen learns from "
+                                     "them: update the plan to use it. Edit › Undo puts them back.", 8000)
+        if result.moved and self.plan is not None and folder:
+            suggestion = self.service.suggest_rule(self.plan, folder)
+            if suggestion:
+                self.offer_rule(suggestion)
+
     def _reorganize(self, requests) -> None:
         if not self._free_for_job():
             return
@@ -609,7 +701,7 @@ class MainWindow(QMainWindow):
             self._push_undo("Add Windows folders", lambda: [self.service.remove_folder(p) for p in added])
         self.refresh_folders()
 
-    def _try(self, work, undo_text, undo) -> None:
+    def _try(self, work, undo_text, undo, show_folders: bool = True) -> None:
         try:
             path = work()
         except FolderError as exc:
@@ -617,7 +709,8 @@ class MainWindow(QMainWindow):
             return
         self._push_undo(undo_text, lambda: undo(path))
         self.refresh_folders()
-        self.tabs.setCurrentWidget(self.folders_page)
+        if show_folders:
+            self.tabs.setCurrentWidget(self.folders_page)
 
     def set_mode(self, path: str, mode: str) -> None:
         before = next((f["mode"] for f in self.service.source_folders() if f["path"] == path), mode)
@@ -947,7 +1040,7 @@ class MainWindow(QMainWindow):
 
     def _moving(self) -> bool:
         return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move", "queue",
-                                                                              "catalog-move")
+                                                                              "catalog-move", "place", "delete")
 
     def _sync_undo_action(self) -> None:
         self.undo_action.setEnabled(bool(self.undo_stack))
@@ -1010,6 +1103,8 @@ class MainWindow(QMainWindow):
             if event.name == "catalog-move":
                 self._moved(event.result, False)
                 self.catalog_page.refresh()
+            if event.name in ("place", "delete"):
+                self._placed(event.name, event.result)
             if event.name in ("move", "undo-move", "queue"):
                 self._moved(event.result, event.name == "undo-move", event.name == "queue")
             if event.name == "plan":
@@ -1028,7 +1123,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
             if event.name in ("ai", "catalog-ai"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
-            if event.name in ("move", "undo-move", "queue", "catalog-move"):
+            if event.name in ("move", "undo-move", "queue", "catalog-move", "place", "delete"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
                                     "is written down; Edit › Undo a move puts it back.")
 
