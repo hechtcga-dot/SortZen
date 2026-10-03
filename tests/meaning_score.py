@@ -62,7 +62,7 @@ def main() -> None:
         meaning.AGREE_SIMILARITY, meaning.ALONE_SIMILARITY, meaning.MARGIN = agree, alone, margin
         plan = plans(root, True)
         print(line(f"agree {agree} alone {alone} margin {margin}", score(plan, key, root), plan, key, root))
-    meaning.AGREE_SIMILARITY, meaning.ALONE_SIMILARITY, meaning.MARGIN = 0.5, 0.6, 0.05
+    meaning.AGREE_SIMILARITY, meaning.ALONE_SIMILARITY, meaning.MARGIN = 0.50, 0.60, 0.05
     plan = plans(root, True)
     print("\nMeaning-alone examples (file, expected, got, sure):")
     for s in [s for s in plan.files if any(r.text.startswith("Meaning alone") for r in s.reasons)][:15]:

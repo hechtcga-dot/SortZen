@@ -13,8 +13,8 @@ import os
 
 from .plan import Plan, Reason
 
-AGREE_SIMILARITY = 0.45         # the closest folder agrees with SortZen at least this closely
-ALONE_SIMILARITY = 0.55         # a folder suggested by meaning alone is at least this close
+AGREE_SIMILARITY = 0.50         # the closest folder agrees with SortZen at least this closely
+ALONE_SIMILARITY = 0.60         # a folder suggested by meaning alone is at least this close
 MARGIN = 0.05                   # ...and this much closer than the next folder
 ALONE_MAX = 65
 AGREE_GAIN = 0.3                # share of the way to 100 an agreeing match adds
