@@ -906,7 +906,22 @@ class AppService:
         corrected = {path_key(p) for p in self.corrections()}
         unsure = [r for r in self._ai_unsure(plan) if path_key(r.path) not in corrected and r.path not in plan.companions]
         by_path = {s.path: s for s in plan.files}
-        return find_groups([by_path[r.path] for r in unsure if r.path in by_path and not by_path[r.path].topic])
+        return find_groups([by_path[r.path] for r in unsure if r.path in by_path and not by_path[r.path].topic],
+                           self._vectors([r.path for r in unsure]))
+
+    def question_groups(self, plan: Plan) -> list[FileGroup]:
+        """The files that need users (no sure label or folder), in groups that one answer settles: alike
+        names, a shared word, or files that look alike. Biggest first."""
+        unsure = self.unsure_files(plan)
+        return find_groups(unsure, self._vectors([s.path for s in unsure]))
+
+    def _vectors(self, paths: list[str]) -> dict:
+        from ..engine.features import clues_for, finish_vectors, rarity
+
+        records = [self._records[p] for p in paths if p in self._records]
+        clues = [clues_for(r) for r in records]
+        finish_vectors(clues, rarity(clues))
+        return {r.path: c.vector for r, c in zip(records, clues)}
 
     def place_group(self, group: FileGroup, destination: str, make_rule: bool = False) -> dict:
         """Send every file of a group to one folder (and, when asked, files like them in future plans).
@@ -915,8 +930,9 @@ class AppService:
         destination = os.path.abspath(destination)
         before = {"corrections": self.correct(group.paths, destination), "rules": None}
         self.note_destination(destination)
-        if make_rule:
-            before["rules"] = self.add_rule(group.rule(destination))
+        rule = group.rule(destination) if make_rule else None
+        if rule is not None:
+            before["rules"] = self.add_rule(rule)
         return before
 
     def undo_place_group(self, before: dict) -> None:

@@ -1,8 +1,10 @@
 """Files SortZen couldn't place, gathered into groups users can place in one go. Never touches files.
 
 A group is files with the same kind of name ("39 PDFs whose names are only numbers",
-"41 pictures named like IMG_1234") or with a word in common ("12 files with “northgate” in
-the name"). Each file is in one group at most; the biggest groups come first.
+"41 pictures named like IMG_1234"), with a word in common ("12 files with “northgate” in
+the name") or, given their clues, files that look alike ("9 files like “Lease draft.docx”").
+Each file is in one group at most; the biggest groups come first, so one answer settles the
+most files.
 """
 from __future__ import annotations
 
@@ -31,8 +33,9 @@ class FileGroup:
     suggestion: str | None = None           # the folder most of them lean towards, if any
     rule_parts: dict = field(default_factory=dict)      # what a rule for files like these looks like
 
-    def rule(self, destination: str) -> Rule:
-        return Rule(destination=destination, **self.rule_parts)
+    def rule(self, destination: str) -> Rule | None:
+        """A rule for files like these, when their names have something in common."""
+        return Rule(destination=destination, **self.rule_parts) if self.rule_parts else None
 
 
 def _plural(ext: str, n: int) -> str:
@@ -41,8 +44,12 @@ def _plural(ext: str, n: int) -> str:
     return KIND_PLURAL.get(kind_of(ext), f"{ext.lstrip('.').upper()} files" if ext else "files")
 
 
-def find_groups(unsure: list) -> list[FileGroup]:
-    """Groups among the files SortZen couldn't place (Suggestions with a low percentage or no destination)."""
+LOOKALIKE = 0.3            # files at least this alike (by their clues) form a group of look-alikes
+
+
+def find_groups(unsure: list, vectors: dict | None = None) -> list[FileGroup]:
+    """Groups among the files SortZen couldn't place (Suggestions with a low percentage or no destination).
+    ``vectors``: each file's clue vector, by path, to group the remaining files that look alike."""
     by_shape: dict[tuple[str, str], list] = defaultdict(list)
     for s in unsure:
         name = os.path.basename(s.path)
@@ -73,12 +80,38 @@ def find_groups(unsure: list) -> list[FileGroup]:
         groups.append((FileGroup(f"word:{word}", f"{len(members)} files with “{word}” in the name", [],
                                  rule_parts={"word": word}), members))
         used.update(s.path for s in members)
+    if vectors:
+        rest = [s for s in unsure if s.path not in used and vectors.get(s.path)]
+        for members in _lookalikes(rest, vectors):
+            example = os.path.basename(members[0].path)
+            groups.append((FileGroup(f"like:{os.path.normcase(members[0].path)}",
+                                     f"{len(members)} files like “{example}”", [], rule_parts={}), members))
     found = []
     for group, members in sorted(groups, key=lambda g: -len(g[1]))[:MAX_GROUPS]:
+        members = sorted(members, key=lambda s: s.path.lower())
         group.paths = sorted(s.path for s in members)
         leaning = Counter(s.destination for s in members if s.destination and s.destination != s.current_folder)
         if leaning:
             folder, votes = leaning.most_common(1)[0]
             group.suggestion = folder if votes >= len(members) / 2 else None
         found.append(group)
+    return found
+
+
+def _lookalikes(files: list, vectors: dict) -> list[list]:
+    """Files that look alike, by their clues: each group is a file and the files close enough to it."""
+    from .planner import _Index
+
+    index = _Index([vectors[s.path] for s in files])
+    near = {pos: [other for other, sim in index.search(vectors[s.path], exclude=pos) if sim >= LOOKALIKE]
+            for pos, s in enumerate(files)}
+    taken: set[int] = set()
+    found = []
+    for pos in sorted(near, key=lambda k: -len(near[k])):
+        if pos in taken:
+            continue
+        members = [pos] + [o for o in near[pos] if o not in taken]
+        if len(members) >= MIN_GROUP:
+            taken.update(members)
+            found.append([files[m] for m in members])
     return found

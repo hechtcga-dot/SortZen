@@ -670,3 +670,25 @@ class CompanionsTest(unittest.TestCase):
             self.assertIn(f.outcome, (KEEP_TOGETHER, "review"))
             self.assertTrue(f.reasons[0].text.startswith("One movie"))
         self.assertEqual(plan.files, [])                     # no subtitle file is sorted on its own
+
+
+class LookalikeGroupsTest(unittest.TestCase):
+    def test_files_that_look_alike_form_a_group(self):
+        from sortzen.engine.features import clues_for, finish_vectors, rarity
+        from sortzen.engine.groups import find_groups
+        from sortzen.engine.plan import Suggestion
+
+        names = {"Lease draft Elm Street.docx": "lease tenant landlord rent elm street deposit",
+                 "Tenant notice Elm.docx": "lease tenant landlord rent elm notice deposit",
+                 "Rent increase letter.docx": "lease tenant landlord rent elm increase deposit",
+                 "Holiday menu.docx": "turkey stuffing gravy pie", "Car service.pdf": "oil filter brake"}
+        records = [FileRecord(f"/d/{n}", "/d", "source", n, os.path.splitext(n)[1], "word", 10, 0, text=t)
+                   for n, t in names.items()]
+        clues = [clues_for(r) for r in records]
+        finish_vectors(clues, rarity(clues))
+        vectors = {r.path: c.vector for r, c in zip(records, clues)}
+        groups = find_groups([Suggestion(r.path, "/d", None, 0) for r in records], vectors)
+        self.assertEqual(len(groups), 1)
+        self.assertTrue(groups[0].title.startswith("3 files like “"))
+        self.assertEqual(len(groups[0].paths), 3)
+        self.assertIsNone(groups[0].rule("/s"))          # nothing in their names to make a rule from
