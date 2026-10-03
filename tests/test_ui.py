@@ -421,6 +421,49 @@ class MainWindowTest(unittest.TestCase):
         self.window.undo()
         self.assertEqual(self.service.folder_note(payroll), "")
 
+    def test_catalog_tab_edit_feedback_and_suggestions(self):
+        import shutil
+
+        from sortzen.engine.catalog_review import CatalogSuggestion
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.tabs.setCurrentWidget(self.window.catalog_page)
+        page = self.window.catalog_page
+        self.assertIn("categories", page.summary.text())
+        payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
+        page.select(payroll)
+        self.assertEqual(page.title.text(), "Payroll")
+        self.window.hide_category(payroll, True)
+        self.assertEqual(self.service.catalog_hidden(), [payroll])
+        self.window.undo()
+        self.assertEqual(self.service.catalog_hidden(), [])
+        self.window.category_feedback(payroll, "too_broad", "stubs and timesheets mixed")
+        page.select(payroll)
+        self.assertIn("Too broad: split it (stubs and timesheets mixed)", page.details.text())
+        self.window.accept_suggestion(CatalogSuggestion("new", payroll, "Add Timesheets", name="Timesheets",
+                                                        note="weekly hours"))
+        made = Path(payroll) / "Timesheets"
+        self.assertTrue(made.is_dir())
+        self.assertEqual(self.service.folder_note(str(made)), "weekly hours")
+        self.window.undo()
+        self.assertFalse(made.exists())
+        budget = str(root / "Sorted" / "Documents" / "Work" / "Budget")
+        files = len(os.listdir(budget))
+        self.window.merge_category(budget, payroll, move_files=True)
+        self.assertTrue(wait_until(self.app, lambda: getattr(self.window, "result_dialog", None) is not None))
+        self.assertEqual(os.listdir(budget), [])
+        self.assertEqual(self.service.catalog_edits()["merged"], {budget: payroll})
+        self.window.result_dialog.accept()
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.window.undo()                                       # the move: files go back
+        self.assertTrue(wait_until(self.app, lambda: len(os.listdir(budget)) == files and not self.service.jobs.busy))
+
     def test_confirm_and_runs_windows(self):
         from sortzen.mover import RunResult
         from sortzen.services.moving import MovePreview

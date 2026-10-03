@@ -44,6 +44,14 @@ moves files after the plan is confirmed.
 | 21 | Matching by meaning, on the PC (tuned on the test folders: agreeing matches 98% right, Ready unchanged) | **Done** |
 | 22 | **Alpha 0.3 build** | **Done** |
 
+### Alpha 0.4
+| # | Phase | Status |
+|---|-------|--------|
+| 23 | Catalog: categories from folders, edits, hidden and merged categories in plans | **Done** |
+| 24 | Catalog feedback and suggestions (on the PC and from the AI) | **Done** |
+| 25 | Catalog tab | **Done** |
+| 26 | **Alpha 0.4 build** | To do |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is

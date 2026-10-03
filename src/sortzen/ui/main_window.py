@@ -19,6 +19,7 @@ from ..tasks import Estimate, JobFailed, JobFinished, Log, Progress, Status
 from . import theme
 from .bridge import EventBridge
 from .ai_dialog import AskAIDialog
+from .catalog_page import CatalogPage
 from .copies_page import CopiesPage
 from .dialogs import MODE_TEXT, DestinationDialog, MissingFoldersDialog, ModeDialog
 from .folders_page import FoldersPage
@@ -82,6 +83,21 @@ class MainWindow(QMainWindow):
         self.folders_page.open_folder.connect(self.open_folder)
         self.folders_page.note_folder.connect(self.note_folder)
         self.tabs.addTab(self.folders_page, "Folders")
+        self.catalog_page = CatalogPage(self.service)
+        for signal, slot in ((self.catalog_page.rename, self.rename_category),
+                             (self.catalog_page.add_subcategory, self.add_subcategory),
+                             (self.catalog_page.note, self.note_category),
+                             (self.catalog_page.add_folder, self.add_category_folder),
+                             (self.catalog_page.merge, self.merge_category),
+                             (self.catalog_page.hide, self.hide_category),
+                             (self.catalog_page.feedback, self.category_feedback),
+                             (self.catalog_page.accept, self.accept_suggestion),
+                             (self.catalog_page.decline, self.decline_suggestion),
+                             (self.catalog_page.ask_ai, self.ask_ai_about_catalog)):
+            signal.connect(slot)
+        self.tabs.addTab(self.catalog_page, "Catalog")
+        self.tabs.currentChanged.connect(lambda _: self.tabs.currentWidget() is self.catalog_page
+                                         and self.catalog_page.refresh())
         self.to_place_page = ToPlacePage(self.service)
         self.to_place_page.save.connect(self.save_answers)
         self.to_place_page.place_group.connect(self.place_group)
@@ -261,6 +277,8 @@ class MainWindow(QMainWindow):
                                     tip="Exact copies found while making the plan")
         self.copies_action.setEnabled(False)
         plan_menu.addAction(self.copies_action)
+        plan_menu.addAction(action("Catalog", lambda: self.tabs.setCurrentWidget(self.catalog_page),
+                                   tip="Your categories: see, edit and comment on them"))
         view_menu = self.menuBar().addMenu("&View")
         self.tree_action = QAction("Show folder tree", self, checkable=True, checked=True)
         self.tree_action.toggled.connect(lambda on: self.splitter.widget(0).setVisible(on))
@@ -277,6 +295,151 @@ class MainWindow(QMainWindow):
                           f"<b>{APP_NAME} {APP_VERSION}</b> (alpha)<br>{APP_TAGLINE}<br><br>"
                           "Sorts messy folders into the right place. Local first; AI is optional. "
                           "Nothing moves until you confirm, and every move can be undone.")
+
+    # ---------------------------------------------------------------- the catalog
+    def _catalog_change(self, text: str, change, undo_extra=None) -> None:
+        """Make a catalog change that Undo puts back (settings, and anything ``undo_extra`` undoes)."""
+        before = self.service.settings_snapshot()
+        try:
+            result = change()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Catalog", str(exc))
+            return
+        def undo():
+            self.service.restore_settings(before)
+            if undo_extra:
+                undo_extra(result)
+        self._push_undo(text, undo)
+        self.catalog_page.refresh()
+        self.statusBar().showMessage(f"{text}. Update the plan to use it.", 6000)
+
+    def _category(self, path: str):
+        return next((c for c in self.service.catalog() if c.path == path), None)
+
+    def rename_category(self, path: str, name: str | None = None, folder_too: bool | None = None) -> None:
+        c = self._category(path)
+        if c is None:
+            return
+        if name is None:
+            name, ok = QInputDialog.getText(self, "Rename category", f"New name for “{c.name}”:", text=c.name)
+            if not ok or not name.strip():
+                return
+        if folder_too is None:
+            folder_too = QMessageBox.question(
+                self, "Rename category", f"Rename the folder on disk to “{name.strip()}” too?\n\nYes renames the "
+                "folder (Undo puts the old name back). No changes only the name shown in the catalog.") \
+                == QMessageBox.StandardButton.Yes
+        if folder_too:
+            if self.rename_folder(path, name, confirm=False):
+                self.catalog_page.refresh()
+            return
+        self._catalog_change("Rename category", lambda: self.service.rename_category(path, name))
+
+    def add_subcategory(self, path: str, name: str | None = None, note: str | None = None) -> None:
+        if name is None:
+            name, ok = QInputDialog.getText(self, "Add a subcategory", "Name of the new subcategory:")
+            if not ok or not name.strip():
+                return
+            note, _ = QInputDialog.getText(self, "Add a subcategory",
+                                           f"What belongs in “{name.strip()}”? (optional, e.g. pay stubs, T4s)")
+        self._catalog_change("Add a subcategory", lambda: self.service.add_subcategory(path, name, note or ""),
+                             self.service.remove_empty_subcategory)
+
+    def note_category(self, path: str) -> None:
+        self.note_folder(path)
+        self.catalog_page.refresh()
+
+    def add_category_folder(self, path: str, other: str | None = None) -> None:
+        if other is None:
+            other = QFileDialog.getExistingDirectory(self, "Another folder for this category")
+            if not other:
+                return
+        self._catalog_change("Add a folder to a category", lambda: self.service.add_category_folder(path, other))
+
+    def hide_category(self, path: str, hidden: bool) -> None:
+        self._catalog_change("Don't put files here" if hidden else "Put files here again",
+                             lambda: self.service.set_category_hidden(path, hidden))
+
+    def category_feedback(self, path: str, kind: str, text: str | None = None) -> None:
+        if text is None and kind in ("comment", "wrong_name", "too_broad", "too_narrow"):
+            prompt = {"comment": "What should change about this category?",
+                      "wrong_name": "What would be a better name? (optional)",
+                      "too_broad": "What is mixed together in it? (optional)",
+                      "too_narrow": "Where do its files belong? (optional)"}[kind]
+            text, ok = QInputDialog.getText(self, "Feedback", prompt)
+            if not ok or (kind == "comment" and not text.strip()):
+                return
+        self._catalog_change("Feedback", lambda: self.service.category_feedback(path, kind, text or ""))
+        if kind == "wrong_name" and text and text.strip():
+            self.rename_category(path, text.strip())
+
+    def merge_category(self, path: str, into: str | None = None, move_files: bool | None = None) -> None:
+        categories = [c for c in self.service.catalog() if c.path != path and not c.merged_into]
+        if into is None:
+            labels = [self.service.display(c.path) for c in categories]
+            chosen, ok = QInputDialog.getItem(self, "Merge into", "Files for this category go to:", labels, 0, False)
+            if not ok:
+                return
+            into = categories[labels.index(chosen)].path
+        requests = self.service.merge_files(path, into)
+        if move_files is None and requests:
+            move_files = QMessageBox.question(
+                self, "Merge category", f"Also move the {len(requests):,} files and folders in it into "
+                f"{self.service.display(into)} now?\n\nNo merges future files only. Every move can be undone.") \
+                == QMessageBox.StandardButton.Yes
+        self._catalog_change("Merge category", lambda: self.service.merge_category(path, into))
+        if move_files and requests:
+            self._reorganize(requests)
+
+    def _reorganize(self, requests) -> None:
+        if self.service.jobs.busy:
+            return
+        self.progress = ProgressWindow(self, "Reorganizing the catalog", estimate=max(2.0, len(requests) / 50))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("catalog-move", lambda emit, token: self.service.reorganize(requests, emit, token))
+
+    def accept_suggestion(self, s, confirm: bool = True) -> None:
+        if s.kind == "rename":
+            self.rename_category(s.category, s.name, folder_too=False)
+        elif s.kind == "merge":
+            self.merge_category(s.category, s.into, None if confirm else True)
+        elif s.kind == "new":
+            self.add_subcategory(s.category, s.name, s.note)
+        elif s.kind == "empty":
+            self.hide_category(s.category, True)
+        elif s.kind == "split":
+            requests = self.service.split_requests(s)
+            if confirm and QMessageBox.question(
+                    self, "Split category", f"Make {len(s.parts)} subfolders in “{os.path.basename(s.category)}” "
+                    f"({', '.join(n for n, _ in s.parts)}) and move {len(requests):,} files into them?\n\n"
+                    "Every move can be undone.") != QMessageBox.StandardButton.Yes:
+                return
+            self._reorganize(requests)
+        self.service.decline_suggestion(s)          # done: not suggested again
+        self.catalog_page.refresh()
+
+    def decline_suggestion(self, s) -> None:
+        self.service.decline_suggestion(s)
+        self.catalog_page.refresh()
+
+    def ask_ai_about_catalog(self, confirm: bool = True) -> None:
+        if self.service.jobs.busy:
+            return
+        if not self.service.ai_ready():
+            QMessageBox.information(self, APP_NAME, "Choose an AI service and its key first (Edit › Settings › AI).")
+            return
+        estimate = self.service.catalog_ai_estimate()
+        money = "free: it runs on this PC" if estimate["local"] else f"about ${estimate['cost']:.4f}"
+        if confirm and QMessageBox.question(
+                self, "Ask AI to review the catalog",
+                f"Send {estimate['service']} the names of your {estimate['categories']:,} categories, their file "
+                f"counts and notes, a few example file names (long numbers removed) and your feedback? No file "
+                f"contents are sent.\n\nCost: {money}.") != QMessageBox.StandardButton.Yes:
+            return
+        self.progress = ProgressWindow(self, "Asking the AI service about the catalog")
+        self.progress.show()
+        self.run_job("catalog-ai", lambda emit, token: self.service.ask_ai_about_catalog(emit, token))
 
     # ---------------------------------------------------------------- settings, profiles, help
     def show_settings(self, tab: str = "General") -> None:
@@ -786,7 +949,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     def _moving(self) -> bool:
-        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move", "queue")
+        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move", "queue",
+                                                                              "catalog-move")
 
     def _sync_undo_action(self) -> None:
         self.undo_action.setEnabled(bool(self.undo_stack))
@@ -831,6 +995,13 @@ class MainWindow(QMainWindow):
                     self.make_plan()
             if event.name == "ai":
                 self._asked(event.result)
+            if event.name == "catalog-ai":
+                self.statusBar().showMessage(f"{len(event.result):,} suggestions from the AI service.", 6000)
+                self.tabs.setCurrentWidget(self.catalog_page)
+                self.catalog_page.refresh()
+            if event.name == "catalog-move":
+                self._moved(event.result, False)
+                self.catalog_page.refresh()
             if event.name in ("move", "undo-move", "queue"):
                 self._moved(event.result, event.name == "undo-move", event.name == "queue")
             if event.name == "plan":
@@ -846,7 +1017,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
-            if event.name == "ai":
+            if event.name in ("ai", "catalog-ai"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
             if event.name in ("move", "undo-move", "queue"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "

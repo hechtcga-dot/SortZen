@@ -11,6 +11,7 @@ are left alone.
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -78,8 +79,8 @@ def split_parts(category, limit: int) -> list[tuple[str, list[str]]]:
         if best is None:
             break
         members = sorted(n for n in left if best[0] in file_words[n])
-        spelled = next((t for n in members for t in stem_of(n).replace("_", " ").replace("-", " ").split()
-                        if t.lower().rstrip("s") == best[0].rstrip("s")), best[0])
+        tokens = (re.sub(r"\d+", "", t) for n in members for t in re.split(r"[\s_\-.]+", stem_of(n)))
+        spelled = next((t for t in tokens if t and t.lower().rstrip("s") == best[0].rstrip("s")), best[0])
         parts.append((spelled[:1].upper() + spelled[1:], members))
         left -= set(members)
     covered = sum(len(m) for _, m in parts)

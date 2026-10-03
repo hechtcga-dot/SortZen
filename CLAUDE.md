@@ -16,7 +16,8 @@ src/sortzen/
   config.py            constants, per-user storage paths (SORTZEN_DATA_DIR override)
   ai/                  provider interface, Gemini and web adapters, service list, JSON parsing,
                        privacy.py (scrubbing, name-only rules, previews), costs.py (prices),
-                       sorter.py (two passes in batches, spending cap)
+                       sorter.py (two passes in batches, spending cap), catalog_review.py (AI review of
+                       the catalog)
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
   scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, older Office files,
                        emails, RTF, OpenDocument, web pages, text, photos, zip, programs),
@@ -32,7 +33,7 @@ src/sortzen/
                        kept and why), ai_evidence.py (AI answers as evidence), meaning.py (meaning
                        as evidence), rules.py (rules
                        users make, rule suggestions, renamed planned folders), groups.py
-                       (groups of unsure files), plan.py (Suggestion, FolderSuggestion, Topic, Question,
+                       (groups of unsure files), catalog_review.py (catalog suggestions), plan.py (Suggestion, FolderSuggestion, Topic, Question,
                        Plan)
   mover/               moves confirmed files and folders (never decides): no overwriting,
                        copy and check across drives, step-by-step run log, Undo
@@ -41,11 +42,12 @@ src/sortzen/
                        (SQLite: remembered AI answers)
   services/            AppService: the only API the window uses (folders, autonomy, answers,
                        corrections, make_plan, move, undo, AI step, profiles,
-                       diagnostics); profile.py (.szprofile files); plan_view.py (Ready/Review/
+                       diagnostics, catalog); catalog.py (categories from folders and users' edits);
+                       profile.py (.szprofile files); plan_view.py (Ready/Review/
                        Staying rows, problems, display paths, Excel export); moving.py
                        (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
-                       to_place_page.py (groups and questions), progress_window.py (+ tips.py), dialogs.py,
+                       to_place_page.py (groups and questions), catalog_page.py, progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        settings_window.py,

@@ -475,6 +475,31 @@ and when):
     specific rule wins (a word and a type before a word alone); files users placed
     themselves keep their choice. Rules are listed, and can be removed, in Settings ›
     Rules, are saved in profiles, and making one can be undone.
+- **0.4**: everything in 0.3, plus:
+  - **Catalog** tab: the categories files are sorted into, as a tree built from the
+    destination folders and the folders being tidied, one category per folder, nested like
+    the folders; program folders are left out (their files count towards the category
+    above). Each category shows its files, folders, note, rules, example files and
+    feedback.
+  - **Editing**, by buttons and right-click: rename (the name shown, or the folder too),
+    add a subcategory (an empty folder with what belongs in it), write a note, add another
+    folder (a category can span places, e.g. Documents and a cloud drive), merge into
+    another category (future files go there; its files can move too, after confirmation),
+    and "Don't put files here" (still learned from, never a destination). Every edit can
+    be undone; moves are logged like any move.
+  - **Feedback** on each category: "Looks right", "Too broad: split it", "Too narrow:
+    merge it", "Wrong name" (with a better name) and comments in users' own words.
+  - **Suggestions**, each with Accept and Not this (not suggested again):
+    - worked out on the PC: split a category whose own files fall into groups by a word
+      they share (30 files or more; 8 after "Too broad"), merge near-duplicate sibling
+      names ("Invoice" and "Invoices"), merge after "Too narrow" (into the sibling sharing
+      most words, or the category above), and empty categories; nothing for categories
+      marked "Looks right";
+    - "Ask AI to review…": category names, file counts, notes, up to 4 example names (long
+      numbers removed) and users' feedback are sent, never file contents, after the cost
+      is shown; the AI suggests renames, merges, splits (subcategories with the words of
+      the files that belong in them) and new subcategories.
+  - Catalog edits are saved with profiles and follow renamed folders.
 - Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned

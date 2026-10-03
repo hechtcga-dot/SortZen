@@ -131,7 +131,8 @@ class MoveResultDialog(QDialog):
         self.accept()
 
 
-KIND_TEXT = {"move": "Move", "duplicates": "Copies queued for deletion"}
+KIND_TEXT = {"move": "Move", "duplicates": "Copies queued for deletion", "rename": "Folder renamed",
+             "catalog": "Catalog reorganized"}
 
 
 class RunsDialog(QDialog):
