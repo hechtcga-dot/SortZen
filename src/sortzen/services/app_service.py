@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 import os
 import re
@@ -808,6 +809,9 @@ class AppService:
             else:
                 homeless = [s for s in mine if s.destination is None or s.percent < level]
                 parent = (self.destination_folders() or [None])[0]
+                leaning = Counter(path_key(s.destination) for s in mine if s.destination and s.percent >= 50)
+                if leaning and leaning.most_common(1)[0][1] >= len(mine) / 2:
+                    continue                # most of them already lean towards one folder: no new one
                 if len(homeless) >= LABEL_FOLDER_FILES and parent:
                     rule = Rule("", os.path.join(parent, label), label=label)
                     if rule.key not in known:

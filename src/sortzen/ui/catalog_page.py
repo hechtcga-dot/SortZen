@@ -1,30 +1,33 @@
-"""The Catalog tab: the categories files are sorted into, as a tree users can see, edit and comment on.
+"""The Cataloguing tab: the folders files are sorted into, as a tree users can see, edit and comment on,
+with the files already in each folder and the files the plan sends there.
 
 The left side lists every category and subcategory with its files and note, and below it the files
 in the selected category. Files (several at once) and categories can be dragged onto a category,
 from here or from Windows Explorer; SortZen moves them after confirmation and remembers the choice.
 Folders dropped on the empty space below the categories are added to the catalog. The right side
 shows the selected category (folders, example files, rules, feedback) with buttons to edit it and
-to say what is wrong with it, and below them the suggestions SortZen (or the AI service) has for
-the catalog, each with Accept and Not this.
+to say what is wrong with it, a note box for the selected file, and the suggestions SortZen (or the
+AI service) has for the catalog and for labels' folders, each with Accept and Not this. Dragging a
+file the plan sends somewhere onto another folder changes the plan, nothing moves, and SortZen learns
+from it; files already in a folder move on disk after confirmation.
 """
 from __future__ import annotations
 
 import json
 import os
-import time
 
 from PySide6.QtCore import QMimeData, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFrame, QGridLayout, QMenu, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QSplitter, QTreeWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QFrame, QGridLayout, QMenu, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QScrollArea, QSplitter, QTreeWidget, QVBoxLayout, QWidget,
 )
 
 from ..services.catalog import FEEDBACK
-from .sortable import SortItem, human_size, make_sortable, natural
+from .sortable import SortItem, make_sortable, natural
 
 PATH = Qt.ItemDataRole.UserRole
+COMING = Qt.ItemDataRole.UserRole + 1       # a file the plan sends here (not on disk here yet)
 MIME = "application/x-sortzen-paths"
 
 
@@ -182,10 +185,15 @@ class CatalogPage(QWidget):
     delete_files = Signal(list)
     add_to_catalog = Signal(list)            # folders to add (an empty list asks which)
     open_path = Signal(str)
+    label = Signal(list, str, bool)          # files, label, on or off
+    right_folder = Signal(list)              # files the plan sends to the right folder
+    note_file = Signal(str, str)             # file, note
 
     def __init__(self, service):
         super().__init__()
         self.service = service
+        self.plan = None
+        self.coming: dict[str, list] = {}       # folder (normcase) -> the plan's suggestions sending files there
         self.categories = []
         self.by_path = {}
         col = QVBoxLayout(self)
@@ -214,14 +222,14 @@ class CatalogPage(QWidget):
         col.addLayout(top)
         col.addWidget(_label("Your categories, built from your folders. Select one to edit it or tell SortZen "
                              "what is wrong with it; SortZen uses your feedback to suggest a better structure. "
-                             "Drag files or categories onto a category to put them there: SortZen remembers it and "
-                             "learns from it. Nothing on disk changes without a preview, and everything can be "
-                             "undone.", "hint"))
+                             "Coming shows the files the plan sends to each folder. Drag files onto the right folder: "
+                             "SortZen remembers it and learns from it. Nothing on disk changes without a preview, and "
+                             "everything can be undone.", "hint"))
 
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QSplitter(Qt.Orientation.Vertical)
         self.tree = CategoryTree()
-        self.tree.setHeaderLabels(["Category", "Files", "Note"])
+        self.tree.setHeaderLabels(["Folder", "Files", "Coming", "Note"])
         self.tree.setColumnWidth(0, 260)
         self.tree.setColumnWidth(1, 60)
         self.tree.setMinimumWidth(380)
@@ -241,9 +249,11 @@ class CatalogPage(QWidget):
         self.files_title = _label("", "sectionCaps")
         files_col.addWidget(self.files_title)
         self.files = FileList()
-        self.files.setHeaderLabels(["File", "Size", "Changed"])
-        self.files.setColumnWidth(0, 260)
-        self.files.setColumnWidth(1, 80)
+        self.files.setHeaderLabels(["File", "Labels", "From", "Sure"])
+        self.files.setColumnWidth(0, 220)
+        self.files.setColumnWidth(1, 100)
+        self.files.setColumnWidth(2, 120)
+        self.files.itemSelectionChanged.connect(self._file_chosen)
         self.files.setRootIsDecorated(False)
         self.files.setAlternatingRowColors(True)
         self.files.setUniformRowHeights(True)
@@ -253,8 +263,10 @@ class CatalogPage(QWidget):
         self.files.dropped.connect(self.place)
         make_sortable(self.files)
         files_col.addWidget(self.files, 1)
-        files_col.addWidget(_label("Shift- or Ctrl-click to choose several files, then drag them onto a category. "
-                                   "Right-click for Move to, Delete and Open.", "hint"))
+        files_col.addWidget(_label("Shift- or Ctrl-click to choose several files, then drag them onto a folder. A "
+                                   "file the plan sends here (From shows where it is now) just changes the plan, and "
+                                   "SortZen learns from it; a file already here moves after you confirm. Right-click "
+                                   "for labels, Move to, Delete and Open.", "hint"))
         delete = QShortcut(QKeySequence.StandardKey.Delete, self.files)
         delete.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete.activated.connect(lambda: self.files.selected_paths() and
@@ -298,6 +310,24 @@ class CatalogPage(QWidget):
             grid.addWidget(button, i // 3, i % 3)
             self.edit_buttons.append(button)
         self.side.addLayout(grid)
+        self.note_box = QWidget()
+        note_col = QVBoxLayout(self.note_box)
+        note_col.setContentsMargins(0, 6, 0, 0)
+        self.note_title = _label("", "sectionCaps")
+        note_col.addWidget(self.note_title)
+        self.file_why = _label("", "muted")
+        note_col.addWidget(self.file_why)
+        self.note_edit = QPlainTextEdit()
+        self.note_edit.setPlaceholderText("Anything special about this file, or why it goes somewhere else. For "
+                                          "example: “this one is for the 2023 audit”. Naming a folder sends it there.")
+        self.note_edit.setMaximumHeight(70)
+        note_col.addWidget(self.note_edit)
+        save = QPushButton("Save note")
+        save.clicked.connect(lambda: self.files.selected_paths() and
+                             self.note_file.emit(self.files.selected_paths()[0], self.note_edit.toPlainText()))
+        note_col.addWidget(save, 0, Qt.AlignmentFlag.AlignRight)
+        self.note_box.hide()
+        self.side.addWidget(self.note_box)
         self.side.addWidget(_label("Suggestions", "sectionCaps"))
         self.suggestion_box = QVBoxLayout()
         self.side.addLayout(self.suggestion_box)
@@ -311,6 +341,15 @@ class CatalogPage(QWidget):
         self._show()
 
     # ---------------------------------------------------------------- filling
+    def set_plan(self, plan) -> None:
+        self.plan = plan
+        self.coming = {}
+        for s in plan.files if plan else []:
+            if s.destination and os.path.normcase(s.destination) != os.path.normcase(s.current_folder):
+                self.coming.setdefault(os.path.normcase(s.destination), []).append(s)
+        if self.isVisible():
+            self.refresh()
+
     def refresh(self) -> None:
         keep = self._selected()
         self.categories = self.service.catalog()
@@ -327,24 +366,45 @@ class CatalogPage(QWidget):
             if c.merged_into:
                 into = self.by_path.get(c.merged_into)
                 label += f"  → {into.name if into else os.path.basename(c.merged_into)}"
-            item = SortItem(parent, [label, f"{c.files:,}", c.note])
+            coming = len(self.coming.get(os.path.normcase(c.path), []))
+            item = SortItem(parent, [label, f"{c.files:,}", f"+{coming:,}" if coming else "", c.note])
             item.setData(0, PATH, c.path)
             item.set_key(0, natural(c.name))
             item.set_key(1, c.files)
+            item.set_key(2, coming)
             item.setToolTip(0, "\n".join(c.folders))
-            item.setToolTip(2, c.note)
+            item.setToolTip(2, f"{coming:,} files the plan sends here" if coming else "")
+            item.setToolTip(3, c.note)
             item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             if c.hidden or c.merged_into:
                 item.setForeground(0, muted)
             items[c.path] = item
             if c.parent is None or len(self.categories) < 60:
                 item.setExpanded(True)
+        known = {os.path.normcase(c.path) for c in self.categories}
+        for key, coming in self.coming.items():           # folders the plan makes
+            folder = coming[0].destination
+            parent = items.get(os.path.dirname(folder))
+            if key in known or parent is None:
+                continue
+            item = SortItem(parent, [f"{os.path.basename(folder)}  (new)", "0", f"+{len(coming):,}", ""])
+            item.setData(0, PATH, folder)
+            item.set_key(0, natural(os.path.basename(folder)))
+            item.setToolTip(0, "A folder the plan makes when files first move into it")
+            item.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            items[folder] = item
         self.tree.setSortingEnabled(True)
         total = sum(c.files for c in self.categories if c.parent is None)
-        self.summary.setText(f"Catalog · {len(self.categories):,} categories · {total:,} files")
+        coming = sum(len(v) for v in self.coming.values())
+        self.summary.setText(f"Cataloguing · {len(self.categories):,} folders · {total:,} files"
+                             + (f" · {coming:,} coming from the plan" if coming else ""))
         if keep in items:
             self.tree.setCurrentItem(items[keep])
-        self.show_suggestions(self.service.catalog_suggestions(self.categories))
+        found = list(self.service.catalog_suggestions(self.categories))
+        if self.plan is not None:
+            found = list(self.service.label_folder_suggestions(self.plan)) + found
+        self.show_suggestions(found)
         self._show()
 
     def _selected(self) -> str | None:
@@ -356,6 +416,10 @@ class CatalogPage(QWidget):
         for button in self.edit_buttons + [self.hide_button]:
             button.setEnabled(c is not None)
         self._fill_files(c)
+        if c is None and self._selected():
+            self.title.setText(os.path.basename(self._selected()))
+            self.details.setText("A folder the plan makes when files first move into it.")
+            return
         if c is None:
             self.title.setText("Select a category")
             self.details.setText("")
@@ -392,9 +456,10 @@ class CatalogPage(QWidget):
             card = QFrame(objectName="card")
             row = QHBoxLayout(card)
             row.setContentsMargins(10, 8, 10, 8)
-            text = _label(f"{s.title}\n{s.why}" + (f"  ·  from {s.source}" if s.source != "SortZen" else ""))
+            source = getattr(s, "source", "SortZen")
+            text = _label(f"{s.title}\n{s.why}" + (f"  ·  from {source}" if source != "SortZen" else ""))
             row.addWidget(text, 1)
-            yes = QPushButton("Accept…" if s.kind in ("split", "merge", "empty") else "Accept")
+            yes = QPushButton("Accept…" if getattr(s, "kind", "") in ("split", "merge", "empty") else "Accept")
             yes.clicked.connect(lambda _=False, x=s: self.accept.emit(x))
             no = QPushButton("Not this")
             no.clicked.connect(lambda _=False, x=s: self.decline.emit(x))
@@ -404,27 +469,57 @@ class CatalogPage(QWidget):
             self.suggestion_box.addWidget(card)
 
     def _fill_files(self, c) -> None:
-        self.files.folder = c.path if c else ""
+        folder = c.path if c else self._selected()
+        self.files.folder = folder or ""
         if not self.show_files.isChecked():
             return
         self.files.setSortingEnabled(False)
         self.files.clear()
-        found = self.service.category_files(c.path) if c else []
+        found = self.service.category_files(folder) if c else []
         for f in found:
-            item = SortItem(self.files, [f["name"], human_size(f["size"]),
-                                         time.strftime("%Y-%m-%d %H:%M", time.localtime(f["modified"]))])
-            item.setData(0, PATH, f["path"])
-            item.setToolTip(0, f["path"])
-            item.set_key(0, natural(f["name"]))
-            item.set_key(1, f["size"])
-            item.set_key(2, f["modified"])
-            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self._file_row(f["path"], "Already here", "")
+        coming = self.coming.get(os.path.normcase(folder), []) if folder else []
+        for s in coming:
+            item = self._file_row(s.path, self.service.display(s.current_folder), f"{s.percent}%")
+            item.setData(0, COMING, True)
+            item.set_key(3, s.percent)
+            font = item.font(0)
+            font.setItalic(True)
+            item.setFont(0, font)
         self.files.setSortingEnabled(True)
-        if c is None:
+        name = c.name if c else os.path.basename(folder or "")
+        if not folder:
             self.files_title.setText("Files")
         else:
-            more = f" (and {c.files - len(found):,} in its subfolders)" if c.files > len(found) else ""
-            self.files_title.setText(f"Files in {c.name} · {len(found):,}{more}")
+            more = f" (and {c.files - len(found):,} in its subfolders)" if c and c.files > len(found) else ""
+            self.files_title.setText(f"Files in {name} · {len(found):,}{more}"
+                                     + (f" · {len(coming):,} coming (in italics)" if coming else ""))
+        self._file_chosen()
+
+    def _file_row(self, path: str, origin: str, sure: str) -> SortItem:
+        labels = self.service.labels_of(path)
+        item = SortItem(self.files, [os.path.basename(path), ", ".join(labels), origin, sure])
+        item.setData(0, PATH, path)
+        item.setToolTip(0, path)
+        item.setToolTip(2, origin)
+        item.set_key(0, natural(os.path.basename(path)))
+        item.setTextAlignment(3, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return item
+
+    def _file_chosen(self) -> None:
+        """One file chosen: why it goes here, and its note."""
+        items = self.files.selectedItems()
+        if len(items) != 1:
+            self.note_box.hide()
+            return
+        path = items[0].data(0, PATH)
+        planned = self.plan.for_path(path) if self.plan is not None else None
+        self.note_title.setText(f"About “{os.path.basename(path)}”")
+        why = [r.text for r in planned.reasons[:3]] if planned is not None and items[0].data(0, COMING) else []
+        self.file_why.setText("\n".join(why))
+        self.file_why.setVisible(bool(why))
+        self.note_edit.setPlainText(self.service.file_note(path))
+        self.note_box.show()
 
     def _toggle_files(self, on: bool) -> None:
         self.files_panel.setVisible(on)
@@ -443,6 +538,16 @@ class CatalogPage(QWidget):
         n = len(paths)
         some = f"{n:,} files" if n != 1 else "this file"
         menu = QMenu(self)
+        if any(i.data(0, COMING) for i in self.files.selectedItems()):
+            menu.addAction("Right folder (SortZen learns from it)", lambda: self.right_folder.emit(paths))
+        labels = menu.addMenu("Labels")
+        for name in self.service.labels():
+            action = labels.addAction(name)
+            action.setCheckable(True)
+            have = all(name in self.service.labels_of(p) for p in paths)
+            action.setChecked(have)
+            action.triggered.connect(lambda _=False, x=name, h=have: self.label.emit(paths, x, not h))
+        labels.setEnabled(bool(self.service.labels()))
         menu.addAction(f"Move {some} to…", lambda: self.move_files.emit(paths))
         menu.addAction(f"Delete {some}…", lambda: self.delete_files.emit(paths))
         if n == 1:

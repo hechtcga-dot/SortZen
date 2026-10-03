@@ -100,9 +100,12 @@ class MainWindow(QMainWindow):
                              (self.catalog_page.move_files, self.move_files_to),
                              (self.catalog_page.delete_files, self.delete_files),
                              (self.catalog_page.add_to_catalog, self.add_to_catalog),
-                             (self.catalog_page.open_path, self.open_folder)):
+                             (self.catalog_page.open_path, self.open_folder),
+                             (self.catalog_page.label, self.label_files),
+                             (self.catalog_page.right_folder, self.right_folder),
+                             (self.catalog_page.note_file, self.note_file)):
             signal.connect(slot)
-        self.tabs.addTab(self.catalog_page, "Catalog")
+        self.tabs.addTab(self.catalog_page, "Cataloguing")
         self.tabs.currentChanged.connect(lambda _: self.tabs.currentWidget() is self.catalog_page
                                          and self.catalog_page.refresh())
         self.wizard_page = WizardPage(self.service)
@@ -426,7 +429,18 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------------- putting files into categories
     def place_in_category(self, paths: list, folder: str, confirm: bool = True) -> None:
-        """Move files and categories into a category after confirmation; SortZen remembers the choice."""
+        """Files the plan sends somewhere: the plan changes (nothing moves) and SortZen learns. Files and
+        folders already in place move into the category after confirmation; SortZen remembers the choice."""
+        planned = {os.path.normcase(s.path): s for s in self.plan.files} if self.plan is not None else {}
+        rows = [planned[os.path.normcase(p)] for p in paths if os.path.normcase(p) in planned
+                and os.path.normcase(planned[os.path.normcase(p)].destination or "") != os.path.normcase(folder)]
+        if rows:
+            self.correct(rows, folder)
+            self.catalog_page.set_plan(self.plan)
+            self.catalog_page.refresh()
+        paths = [p for p in paths if os.path.normcase(p) not in planned]
+        if not paths:
+            return
         requests = self.service.drop_requests(paths, folder)
         name = os.path.basename(folder) or folder
         if not requests:
@@ -519,7 +533,27 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.run_job("catalog-move", lambda emit, token: self.service.reorganize(requests, emit, token))
 
+    def right_folder(self, paths: list) -> None:
+        """Users agree with the folders the plan chose for these files: SortZen learns from them."""
+        if self.plan is None:
+            return
+        keys = {os.path.normcase(p) for p in paths}
+        by_folder: dict[str, list] = {}
+        for s in self.plan.files:
+            if os.path.normcase(s.path) in keys and s.destination:
+                by_folder.setdefault(s.destination, []).append(s)
+        for folder, rows in by_folder.items():
+            self.correct(rows, folder, suggest=False)
+        self.catalog_page.refresh()
+
     def accept_suggestion(self, s, confirm: bool = True) -> None:
+        if hasattr(s, "rule"):                      # a folder for a label: a rule, then the plan again
+            before = self.service.add_rule(s.rule)
+            self._push_undo("Make a rule", lambda: self.service.restore_rules(before))
+            self.statusBar().showMessage(f"{s.title}. Cataloguing again…", 6000)
+            self._keep_tab = self.tabs.currentWidget()
+            self.make_plan()
+            return
         if s.kind == "rename":
             self.rename_category(s.category, s.name, folder_too=False)
         elif s.kind == "merge":
@@ -540,6 +574,10 @@ class MainWindow(QMainWindow):
         self.catalog_page.refresh()
 
     def decline_suggestion(self, s) -> None:
+        if hasattr(s, "rule"):
+            self.service.decline_rule(s.rule)
+            self.catalog_page.refresh()
+            return
         self.service.decline_suggestion(s)
         self.catalog_page.refresh()
 
@@ -778,6 +816,7 @@ class MainWindow(QMainWindow):
         self.plan = plan
         self.export_action.setEnabled(True)
         self.plan_page.set_plan(plan)
+        self.catalog_page.set_plan(plan)
         if self.tabs.indexOf(self.plan_page) < 0:
             self.tabs.addTab(self.plan_page, "Plan")
         groups = self.service.question_groups(plan)
@@ -798,7 +837,10 @@ class MainWindow(QMainWindow):
             self.ai_label_files("sample", then_plan=True)
         elif after == "suggest":
             self.ai_suggest_labels()
-        if self._wizard_open:
+        keep, self._keep_tab = getattr(self, "_keep_tab", None), None
+        if keep is not None:
+            self.tabs.setCurrentWidget(keep)
+        elif self._wizard_open:
             self.wizard_page.show_step(1)
             self.tabs.setCurrentWidget(self.wizard_page)
         else:
@@ -946,6 +988,8 @@ class MainWindow(QMainWindow):
     def _show_labels(self) -> None:
         self.to_place_page.refresh_rows()
         self._count_to_place()
+        if self.tabs.currentWidget() is self.catalog_page:
+            self.catalog_page._show()
 
     def label_files(self, paths: list, name: str, on: bool) -> None:
         if paths and self._label_change(f"Label {name}" if on else f"Take away {name}",
@@ -1070,14 +1114,17 @@ class MainWindow(QMainWindow):
 
         if suggest:
             self.service.note_destination(destination)
-        previous = self.service.correct([r.path for r in rows], destination)
-        changed = {os.path.normcase(r.path) for r in rows}
+        paths = self.service.with_companions(self.plan, [r.path for r in rows])
+        changed = {os.path.normcase(p) for p in paths}
+        guessed = {s.path: s.destination for s in (self.plan.files if self.plan else [])
+                   if os.path.normcase(s.path) in changed}
+        previous = self.service.correct(paths, destination, guessed)
         for s in self.plan.files if self.plan else []:
             if os.path.normcase(s.path) in changed:
                 s.destination, s.percent, s.new_folder = destination, 100, not os.path.isdir(destination)
                 s.reasons = [Reason(True, "You chose this folder")]
         self._push_undo("Change destination", lambda: self.service.restore_corrections(previous))
-        self.plan_page.note_corrections([r.path for r in rows])
+        self.plan_page.note_corrections(paths)
         self.plan_page.refresh()
         self.statusBar().showMessage("Remembered. Update the plan to let SortZen learn from it for similar files.",
                                      6000)
@@ -1089,8 +1136,10 @@ class MainWindow(QMainWindow):
     def offer_rule(self, suggestion, answer=None) -> None:
         """Offer to make a rule from a pattern in the destinations chosen; ``answer`` skips the question."""
         n = len(suggestion.matches)
-        text = (f"{self.service.describe_rule(suggestion.rule)}?\n\nYou sent {suggestion.examples} files with this "
-                f"in their name there. {n:,} more file{'s' if n != 1 else ''} in this plan match"
+        sent = (f"You put {suggestion.examples} files with this label there" if suggestion.rule.label else
+                f"You sent {suggestion.examples} files with this in their name there")
+        text = (f"{self.service.describe_rule(suggestion.rule)}?\n\n{sent}. "
+                f"{n:,} more file{'s' if n != 1 else ''} in this plan match"
                 f"{'es' if n == 1 else ''}. A rule places them, and similar files in future plans, at 100%. "
                 "Nothing moves until you confirm. Rules are listed in Edit › Settings › Rules.")
         if answer is None:

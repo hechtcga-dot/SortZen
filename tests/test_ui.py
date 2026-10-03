@@ -501,6 +501,45 @@ class MainWindowTest(unittest.TestCase):
         self.window.finish_wizard()
         self.assertIs(self.window.tabs.currentWidget(), self.window.catalog_page)
 
+    def test_cataloguing_tab_planned_files_dragged_notes_and_label_folders(self):
+        import shutil
+
+        from sortzen.ui.catalog_page import COMING, PATH
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None and not self.service.jobs.busy))
+        self.window.tabs.setCurrentWidget(self.window.catalog_page)
+        page = self.window.catalog_page
+        self.assertIn("coming from the plan", page.summary.text())
+        staffing = str(root / "Sorted" / "Documents" / "Work" / "Staffing")
+        payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
+        page.select(staffing)
+        coming = [page.files.topLevelItem(i) for i in range(page.files.topLevelItemCount())
+                  if page.files.topLevelItem(i).data(0, COMING)]
+        self.assertTrue(coming)
+        coming[0].setSelected(True)
+        self.assertTrue(page.note_box.isVisible())
+        path = coming[0].data(0, PATH)
+        self.assertTrue(page.file_why.text())
+        page.note_edit.setPlainText("an old applicant, keep for HR")
+        page.note_file.emit(path, page.note_edit.toPlainText())
+        self.assertEqual(self.service.file_note(path), "an old applicant, keep for HR")
+        before = self.service.agreement()[1]
+        self.window.place_in_category([path], payroll)                       # the plan changes; nothing moves
+        self.assertTrue(os.path.exists(path))
+        self.assertEqual(self.window.plan.for_path(path).destination, payroll)
+        self.assertEqual(self.service.corrections()[path], payroll)
+        self.assertEqual(self.service.agreement()[1], before + 1)          # SortZen's guess was checked
+        page.select(payroll)
+        self.assertIn(path, [page.files.topLevelItem(i).data(0, PATH) for i in range(page.files.topLevelItemCount())])
+        self.window.undo()
+        self.assertNotIn(path, self.service.corrections())
+
     def test_folder_notes_from_the_window(self):
         root = shared_test_folders()
         self.service.add_destination(str(root / "Sorted"))
@@ -526,7 +565,7 @@ class MainWindowTest(unittest.TestCase):
         self.service.add_destination(str(root / "Sorted"))
         self.window.tabs.setCurrentWidget(self.window.catalog_page)
         page = self.window.catalog_page
-        self.assertIn("categories", page.summary.text())
+        self.assertIn("folders", page.summary.text())
         payroll = str(root / "Sorted" / "Documents" / "Work" / "Payroll")
         page.select(payroll)
         self.assertEqual(page.title.text(), "Payroll")

@@ -194,7 +194,7 @@ def suggest_label_rule(examples: list[list[str]], destination: str, others: list
     return best
 
 
-HOME_SHARE = 0.6            # a folder is a label's home when this share of its files carry the label
+HOME_SHARE = 0.5            # a folder is a label's home when this share of its files carry the label
 HOME_FILES = 3
 
 
