@@ -690,6 +690,21 @@ class AppService:
         label_evidence(plan, labelled, folder_labels(labelled, corrections), names, self.display,
                        lambda p: path_key(p) in corrected, folders)
 
+    def _follow_companions(self, plan: Plan) -> None:
+        """Subtitles, sidecar files and the like go wherever the file they go with goes."""
+        from ..engine.companions import follow_companions
+
+        corrected = {path_key(p) for p in self.corrections()}
+        follow_companions(plan, plan.companions, lambda p: path_key(p) in corrected)
+
+    def with_companions(self, plan: Plan | None, paths: list[str]) -> list[str]:
+        """The files, and the files that go with them (a movie's subtitles)."""
+        if plan is None or not plan.companions:
+            return list(paths)
+        wanted = {os.path.normcase(p) for p in paths}
+        return list(paths) + [c for c, main in plan.companions.items()
+                              if os.path.normcase(main) in wanted and os.path.normcase(c) not in wanted]
+
     def unsure_files(self, plan: Plan) -> list:
         """The files from the folders being sorted that need users: no sure label, or no sure folder."""
         level = self.autonomy()
@@ -698,7 +713,8 @@ class AppService:
         found = []
         for s in plan.files:
             record = self._records.get(s.path)
-            if record is None or record.role != "source" or s.topic or self.is_left_out(s.path):
+            if record is None or record.role != "source" or s.topic or self.is_left_out(s.path) \
+                    or s.path in plan.companions:
                 continue
             guesses = self.label_guesses(s.path)
             label_unsure = bool(self.labels()) and path_key(s.path) not in mine and \
@@ -888,7 +904,7 @@ class AppService:
     def file_groups(self, plan: Plan) -> list[FileGroup]:
         """Files SortZen couldn't place, in groups that can be placed in one go."""
         corrected = {path_key(p) for p in self.corrections()}
-        unsure = [r for r in self._ai_unsure(plan) if path_key(r.path) not in corrected]
+        unsure = [r for r in self._ai_unsure(plan) if path_key(r.path) not in corrected and r.path not in plan.companions]
         by_path = {s.path: s for s in plan.files}
         return find_groups([by_path[r.path] for r in unsure if r.path in by_path and not by_path[r.path].topic])
 
@@ -1121,6 +1137,7 @@ class AppService:
         self._apply_labels(plan)
         self._apply_file_notes(plan)
         self._apply_pairs(plan)
+        self._follow_companions(plan)
         self.settings.set("learned_since_plan", 0)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)

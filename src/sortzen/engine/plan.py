@@ -82,6 +82,7 @@ class Plan:
     questions: list[Question] = field(default_factory=list)
     new_folders: list[str] = field(default_factory=list)
     copies: list = field(default_factory=list)          # duplicates.CopyGroup: exact copies
+    companions: dict = field(default_factory=dict)      # a subtitle file, sidecar... -> the file it goes with
 
     def folder(self, path: str) -> FolderSuggestion | None:
         return next((f for f in self.folders if f.path == path), None)

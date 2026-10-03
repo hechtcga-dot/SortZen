@@ -181,9 +181,15 @@ class Planner:
                                                  reasons, new_folder=not os.path.isdir(home)))
                 else:
                     plan.files.append(self._suggest(i))
-        overview.find_topics(self, plan)
+        from .companions import find_companions, follow_companions
+
+        plan.companions = find_companions([s.path for s in plan.files])
+        follow_companions(plan, plan.companions, lambda path: path_key(path) in self.corrections)
+        companions = {os.path.normcase(p) for p in plan.companions}
+        overview.find_topics(self, plan, skip=companions)
         overview.ask_about_folders(self, plan)
         overview.apply_answers(self, plan)
+        follow_companions(plan, plan.companions, lambda path: path_key(path) in self.corrections)
         plan.files.sort(key=lambda s: s.path.lower())
         plan.folders.sort(key=lambda f: f.path.lower())
         plan.new_folders = sorted({s.destination for s in plan.files if s.new_folder}

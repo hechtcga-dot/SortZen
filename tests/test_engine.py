@@ -614,3 +614,59 @@ class LabelingTest(unittest.TestCase):
         plan = Plan(files=[Suggestion("/in/a.pdf", "/in", None, 0)])
         apply_rules(plan, [found.rule], lambda f: True, lambda p: True, str, lambda p: ["Tax"])
         self.assertEqual((plan.files[0].destination, plan.files[0].percent), ("/s/Tax", 100))
+
+
+class CompanionsTest(unittest.TestCase):
+    def test_companions_found_by_name_or_as_the_only_movie(self):
+        from sortzen.engine.companions import find_companions
+
+        paths = ["/d/Film.mkv", "/d/Film.en.srt", "/d/poster.jpg", "/d/Other Film.mp4", "/d/Other Film.srt",
+                 "/m/Movie.mkv", "/m/Movie-sample.mkv", "/m/English.srt", "/p/IMG_1.jpg", "/p/IMG_1.xmp",
+                 "/p/IMG_2.xmp", "/a/Album.flac", "/a/Album.cue", "/x/notes.srt"]
+        found = find_companions(paths)
+        self.assertEqual(found["/d/Film.en.srt"], "/d/Film.mkv")
+        self.assertEqual(found["/d/Other Film.srt"], "/d/Other Film.mp4")
+        self.assertNotIn("/d/poster.jpg", found)            # two movies there: whose poster is unclear
+        self.assertEqual(found["/m/English.srt"], "/m/Movie.mkv")   # the only movie (the sample doesn't count)
+        self.assertEqual(found["/p/IMG_1.xmp"], "/p/IMG_1.jpg")
+        self.assertNotIn("/p/IMG_2.xmp", found)
+        self.assertEqual(found["/a/Album.cue"], "/a/Album.flac")
+        self.assertNotIn("/x/notes.srt", found)
+
+    def test_subtitles_go_wherever_their_movie_goes(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "Downloads").mkdir()
+        (root / "Sorted" / "Movies").mkdir(parents=True)
+        (root / "Sorted" / "Movies" / "Old Film 1999.mkv").write_bytes(b"x")
+        records = [FileRecord(str(root / "Downloads" / n), str(root / "Downloads"), "source", n,
+                              os.path.splitext(n)[1], k, 10, 0) for n, k in
+                   (("Harbor Lights 2011.mkv", "video"), ("Harbor Lights 2011.en.srt", "other"),
+                    ("English.srt", "other"))]
+        records.append(FileRecord(str(root / "Sorted" / "Movies" / "Old Film 1999.mkv"), str(root / "Sorted"),
+                                  "destination", "Old Film 1999.mkv", ".mkv", "video", 10, 0))
+        plan = Planner(records, [Source(str(root / "Downloads"), SORT_OUT)], [str(root / "Sorted")]).plan()
+        film = plan.for_path(str(root / "Downloads" / "Harbor Lights 2011.mkv"))
+        subs = plan.for_path(str(root / "Downloads" / "Harbor Lights 2011.en.srt"))
+        self.assertEqual((subs.destination, subs.percent), (film.destination, film.percent))
+        self.assertEqual(subs.reasons[0].text, "Goes with “Harbor Lights 2011.mkv”")
+
+    def test_movie_folders_are_kept_whole(self):
+        from sortzen.engine.plan import KEEP_TOGETHER
+
+        root = Path(tempfile.mkdtemp())
+        records = []
+        for folder, video in (("Harbor Lights (2011)", "Harbor.Lights.mkv"), ("Lantern Road", "movie.mkv"),
+                              ("Lantern Road/Subs", None)):
+            base = root / "Downloads" / folder
+            names = [video, "English.srt", "poster.jpg"] if video else ["French.srt"]
+            for n in names:
+                ext = os.path.splitext(n)[1]
+                records.append(FileRecord(str(base / n), str(root / "Downloads"), "source", n, ext,
+                                          "video" if ext == ".mkv" else "image" if ext == ".jpg" else "other", 10, 0))
+        (root / "Sorted").mkdir()
+        plan = Planner(records, [Source(str(root / "Downloads"), SORT_OUT)], [str(root / "Sorted")]).plan()
+        for name in ("Harbor Lights (2011)", "Lantern Road"):
+            f = plan.folder(str(root / "Downloads" / name))
+            self.assertIn(f.outcome, (KEEP_TOGETHER, "review"))
+            self.assertTrue(f.reasons[0].text.startswith("One movie"))
+        self.assertEqual(plan.files, [])                     # no subtitle file is sorted on its own

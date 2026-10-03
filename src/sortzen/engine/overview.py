@@ -252,6 +252,10 @@ def _decide_clear(p, folder: str, source) -> FolderSuggestion | None:
     if program:
         p.units.add(folder)
         return result(keep, 95, Reason(True, program), Reason(True, "A program is kept whole"))
+    item = _one_item(p, folder)
+    if item:
+        p.units.add(folder)
+        return result(keep, 95, Reason(True, item), Reason(True, "Kept whole with the files that go with it"))
     messy = sorted(MESSY_WORDS & set(name_words))
     if messy:
         return result(SORT_INSIDE, 90, Reason(True, f"Generic name “{name}”"))
@@ -299,6 +303,29 @@ def _decide_spread(p, folder: str, source) -> FolderSuggestion:
     if len(homes) == 1 and spread >= MESSY_SHARE:
         return result(KEEP_TOGETHER, 50 + 40 * spread, Reason(True, f"All its files fit {examples}"))
     return result(FOLDER_REVIEW, 50, Reason(False, "Not clear whether these files belong together"))
+
+
+ITEM_EXTRA_FOLDERS = {"sub", "subs", "subtitle", "subtitles", "sample", "samples", "extra", "extras", "featurette",
+                      "featurettes", "artwork", "art", "scan", "scans"}
+ITEM_EXTRA_EXTS = {".txt", ".url", ".nfo", ".sfv", ".md5", ".jpg", ".jpeg", ".png", ".webp"}
+
+
+def _one_item(p, folder: str) -> str:
+    """A folder that holds one thing, e.g. a movie with its subtitles and poster: kept whole."""
+    from .companions import EXTRA_WORDS, is_companion
+
+    if any(os.path.basename(c).lower() not in ITEM_EXTRA_FOLDERS for c in p.children.get(folder, ())):
+        return ""
+    films, others = [], []
+    for i in p.files_under[folder]:
+        r = p.records[i]
+        if r.kind == "video" and not any(w in os.path.splitext(r.name)[0].lower() for w in EXTRA_WORDS):
+            films.append(r)
+        elif r.kind != "video":
+            others.append(r)
+    if len(films) != 1 or not all(is_companion(r.name) or r.ext in ITEM_EXTRA_EXTS for r in others):
+        return ""
+    return f"One movie (“{films[0].name}”) with the files that go with it"
 
 
 def _zip_beside(p, folder: str) -> str:
@@ -412,12 +439,13 @@ def _topic_words(name: str) -> set[str]:
             and w not in COPY_WORDS and w not in GENERIC_TOPIC_WORDS}
 
 
-def find_topics(p, plan: Plan) -> None:
+def find_topics(p, plan: Plan, skip=frozenset()) -> None:
+    """``skip``: files (by normcase path) that never join a topic on their own, such as subtitles."""
     folder_plan = {path_key(f.path): f for f in plan.folders}
     for source in p.sources:
         items = {}          # path -> (is_folder, current parent, planned place)
         for s in plan.files:
-            if _inside(s.path, source.root):
+            if _inside(s.path, source.root) and os.path.normcase(s.path) not in skip:
                 items[s.path] = (False, s.current_folder, s.destination or s.current_folder)
         for folder in p.files_under:
             if not _inside(folder, source.root) or any(_inside(folder, h) and path_key(folder) != path_key(h)
