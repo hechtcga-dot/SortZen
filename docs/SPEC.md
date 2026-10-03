@@ -175,41 +175,53 @@ overview of what is there:
     suggested at 65% at most, so the file waits in Review with the reason shown.
   Files users placed, files placed by rules and topic members keep what they have.
 
-### 2. To place: labels, similar files, groups and questions
-The **To place** tab (between Folders and Plan) holds what SortZen couldn't settle, as one
-list: the files waiting in Review from the folders being sorted, gathered into groups by
-the kind of name they have ("39 PDFs whose names are only numbers", "17 PDFs named like
-“INV10197.pdf”") or a word they share ("13 files with “letter” in the name"; at least 3
-files each, biggest first, 30 at most, each with the folder most of its files lean
-towards), then "Other files SortZen isn't sure about", then "Labelled". Each file shows its
-labels, where its labels send it, SortZen's guess with its percentage, and why. Files are
-chosen with Shift- or Ctrl-click, or a whole group at once.
-- **Labels**: users make labels ("Work", "Taxes", "Photo session") in the label bar or
-  with right-click › Labels › New label…. Each label has a folder: one already named like
-  it (the shallowest), a new folder with its name in the first destination folder, or any
-  folder chosen. Clicking a label gives it to the selected files; clicking it again when
-  they all have it takes it away. A file can have several labels, and they choose its
-  folder together, taken in the order the labels were made: a label whose folder is inside
-  the folder so far goes deeper, one whose folder holds it adds nothing, and any other adds
-  a subfolder named after it (Work and Taxes: Work/Taxes). A labelled file goes to that
-  folder at 100% ("Your labels: Work, Taxes"), counts as an example of the folder, and
-  feeds rule suggestions. Files without labels show, greyed, the labels that fit SortZen's
-  guess ("Taxes?"). Labels can be renamed, given another folder or removed (right-click a
-  label); files follow at once.
-- **Similar to / different from**: right-click › "Similar to another file…" or "Different
-  from another file…", then pick the file by typing part of its name. This is evidence,
-  never a move: "similar to" makes SortZen surer when its guess is the other file's folder
-  (halfway towards 100%, at most 95%), leans an unsure file (no folder, or under 60%)
-  towards it at 60%, and makes a guess elsewhere less sure (80% of its percentage).
-  "Different from" drops a guess for the other file's folder to at most 30%, or switches to
-  the runner-up. The other file's folder is where it is, or where the plan sends it. What
-  was said shows in the Why column and can be forgotten (right-click).
-- **Put in a folder**: right-click a group › "Put all in a folder…" (a folder box, recent
-  folders first, typed as shown, e.g. "Sorted/Work/Scans", or a new folder's name, which is
-  made in the first destination folder; "Also files like these in future plans" makes a
-  rule for them), or right-click files › "Put in a folder…".
-- Every label, label change and similar/different can be undone; "Update the plan" makes
-  the plan again with them.
+### 2. The cataloguing wizard: labels, then only what SortZen isn't sure about
+"Start cataloguing" (start screen, toolbar, Plan menu, Ctrl+L) opens the **Cataloguing wizard**
+tab (between Folders and Cataloguing).
+
+**Step 1: labels.** Users make their label list: words for what files are about ("Work",
+"Taxes", "School", "Photo session"). A file can have several labels. The list is ordered by
+dragging: the top label counts most when SortZen weighs labels as evidence for a folder (the
+bottom one half as much). Labels don't name folders; SortZen learns which folders they belong
+in. "Ask AI to suggest labels…" sends up to 200 file names (long numbers removed) and the
+destination folder names, after showing the cost, and returns up to 20 labels about what files
+are about (never file types such as "PDF" or "Subtitles"), each with a tick box. Then users
+choose how files get their first labels:
+- **SortZen on this PC** (free): a label's words in a file's name (85%), its folders (70%),
+  a note users wrote about it (90%) or its contents (40%, too little on its own to apply a
+  label), combined with the labels of the labelled files most like it. A label applies at
+  50% or more.
+- **The AI for a sample**: up to 300 files spread over every folder are labelled by the AI
+  (in batches of 40, within the spending cap, after the cost is shown), and SortZen labels
+  the rest on the PC from them.
+
+**Step 2: check.** The plan is made and the wizard lists only the files that need users:
+files whose folder SortZen isn't sure of (below the autonomy level), and files given a label
+at 50 to 69%. Files no label fits, with a sure folder, need nothing. They are gathered into
+groups one answer settles (the same kind of name, a shared word, or files that look alike by
+their clues), biggest first, then the other files; files that go with another file (§7.4)
+never appear on their own. Users select files or whole groups and:
+- click a label to give it (or, when all have it, take it away); "Looks right" keeps the
+  labels shown; Labels › New label…;
+- right-click › "Note about this file…" (§7.5), "Keep “folder” together" (it moves as it
+  is), "Similar to another file…" / "Different from another file…" (below), "Put in a
+  folder…" (a whole group can also become a rule).
+
+A meter shows how many files need users and how often SortZen's guess matched users'
+changes over the last 50 (each label added or taken away, "Looks right" and each folder
+chosen is a check). After 10 changes SortZen offers **Catalog again**: the plan is made again
+with everything learned, and each round should leave fewer files. "Ask AI about the rest…"
+labels only the files SortZen is still unsure of, after showing the cost. When SortZen
+matched at least 90% of at least 30 checks, it says the rest can be left to it. "Finish: see
+the catalog" opens the Cataloguing tab.
+
+- **Similar to / different from**: evidence, never a move. "Similar to" makes SortZen surer
+  when its guess is the other file's folder (halfway towards 100%, at most 95%), leans an
+  unsure file (no folder, or under 60%) towards it at 60%, and makes a guess elsewhere less
+  sure (80% of its percentage). "Different from" drops a guess for the other file's folder to
+  at most 30%, or switches to the runner-up. What was said shows in the Why column and can be
+  forgotten.
+- Every label, change and note can be undone.
 - **Questions**, most important first and at most 10 per run, each with its suggested
   answers and "Another folder:" with the same folder box. Each question names what was
   found and offers choices, e.g.:
@@ -221,6 +233,33 @@ chosen with Shift- or Ctrl-click, or a whole group at once.
 > ○ Another folder: [pick or type a folder]
 
 Answers are remembered. Anything still unsettled goes to Review.
+
+### 2b. Labels as evidence for folders
+Each folder's labels come from the labelled files in it; a file users put in a folder counts
+three times. A file's labels, weighted by their priority and sureness, are compared with every
+folder that may receive files: when a folder's files carry the same labels (at least half
+weighted), a guess for that folder gets surer, and an unsure file (no folder, or under 60%)
+leans towards it (up to 95%). Users' choices and rules are never overruled. A rule can be
+"Files labelled X go to Y": it is suggested when users put at least 3 files with that label in
+one folder (80% of those they put there), and in the Cataloguing tab when a folder holds mostly
+files with that label (half or more, at least 3), or as a new folder named after the label
+when at least 5 unsure files carry it and they don't mostly lean towards one folder already.
+No folder is ever suggested for a file type alone.
+
+### 4. Files that go with another file
+Subtitles (.srt, .sub, .idx, .ass, .ssa, .vtt, .smi), .nfo and .thm files go with the movie
+in their folder (the one whose name theirs begins with, or the only movie there; samples and
+trailers don't count), cue sheets and lyrics with their album, a photo's .xmp or .aae sidecar
+with the photo of the same name, and artwork (poster, folder, fanart, cover…) with the movie
+or album beside it. They go wherever that file goes, are never grouped, labelled into a folder
+or asked about on their own, and never join a topic. A folder holding one movie with only its
+subtitles, artwork and small text files (subfolders such as Subs, Sample or Extras allowed)
+is kept whole: "One movie (“…”) with the files that go with it".
+
+### 5. Notes on files
+A note on a file ("this one is for the 2023 audit") counts for its labels like the file's
+name, goes to the AI with the file, and when it names a folder (every word of the folder's
+name), sends the file there at 85% ("Your note: …").
 
 ### 3. File by file
 For each file, in this order, stopping at the first confident answer:
@@ -524,21 +563,25 @@ and when):
       the files that belong in them) and new subcategories.
   - Catalog edits are saved with profiles and follow renamed folders.
 - **0.5**: everything in 0.4, plus:
-  - **Catalog files**: below the categories, the files in the selected category (name,
-    size, when changed; "Show files" hides them). Files, several at a time, and categories
-    are dragged onto a category, or dropped onto it from Windows Explorer; after
-    confirmation they move there, logged like any move, and each file's new folder is
-    remembered as users' choice, so plans keep it there, learn from it for similar files
-    and suggest rules. A category moved into another keeps its name, note and settings.
-    Undo puts everything back and forgets the choices. Right-click files: Move to a category
-    (recent folders first), Delete, Open; the Delete key deletes.
+  - **Cataloguing wizard** (§7.2) instead of the To place tab: labels with priority (users',
+    SortZen's on the PC, the AI's for a sample), only the files that need users, in groups
+    one answer settles, Looks right, notes, kept-together folders, similar / different, an
+    agreement meter, rounds of cataloguing again, and labels as evidence for folders (§7.2b).
+  - **Cataloguing tab** (the Catalog tab, renamed): each folder's files and the files the
+    plan sends there ("Coming", in italics), folders the plan makes ("(new)"). Dragging a
+    planned file onto another folder changes the plan (nothing moves) and counts as users'
+    choice; "Right folder" agrees with the plan's choice; files already in a folder, several
+    at a time, and folders move on disk after confirmation, logged like any move (also from
+    Windows Explorer), and are remembered as users' choice; a folder moved into another keeps
+    its name, note and settings. Right-click: Labels, Move to a category (recent folders
+    first), Delete, Open. A note box for the selected file shows why it goes there. Folders
+    for labels are suggested (§7.2b). The Plan tab stays as the final check before moving.
   - **Deleting** moves files into a dated "Queued for deletion" folder in the folder they
     were added with (as for copies); users delete that folder themselves when sure.
   - **Adding folders**: "Add a folder…" (or right-click the empty space below the
-    categories), or a folder dropped there from Explorer, adds it to the catalog as a
-    destination folder; Add a subcategory makes a new folder inside a category.
-  - **Labels** and **similar / different** on the To place tab (§7.2), which lists every
-    unsure file instead of one card per group.
+    folders), or a folder dropped there from Explorer, adds it to the catalog as a
+    destination folder.
+  - **Files that go with another file** (§7.4) and **folders that hold one movie** stay whole.
 - Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned

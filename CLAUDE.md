@@ -16,7 +16,8 @@ src/sortzen/
   config.py            constants, per-user storage paths (SORTZEN_DATA_DIR override)
   ai/                  provider interface, Gemini and web adapters, service list, JSON parsing,
                        privacy.py (scrubbing, name-only rules, previews), costs.py (prices),
-                       sorter.py (two passes in batches, spending cap), catalog_review.py (AI review of
+                       sorter.py (two passes in batches, spending cap), labeler.py (label list, labels for
+                       a sample of files), catalog_review.py (AI review of
                        the catalog)
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
   scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, older Office files,
@@ -30,7 +31,9 @@ src/sortzen/
                        reasons, corrections), overview.py (subfolders, kept-together folders,
                        topics, questions, answers, programs, versions and copies),
                        duplicates.py (exact copies, the copy
-                       kept and why), ai_evidence.py (AI answers as evidence), meaning.py (meaning
+                       kept and why), labeling.py (labels guessed, labels as evidence, label
+                       rules), companions.py (subtitles and sidecars follow their file),
+                       pairs.py (similar / different files), ai_evidence.py (AI answers as evidence), meaning.py (meaning
                        as evidence), rules.py (rules
                        users make, rule suggestions, renamed planned folders), groups.py
                        (groups of unsure files), catalog_review.py (catalog suggestions), plan.py (Suggestion, FolderSuggestion, Topic, Question,
@@ -47,7 +50,8 @@ src/sortzen/
                        Staying rows, problems, display paths, Excel export); moving.py
                        (ticked rows to move requests, the confirmation preview)
   ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
-                       to_place_page.py (groups and questions), catalog_page.py, progress_window.py (+ tips.py), dialogs.py,
+                       wizard_page.py (cataloguing wizard), to_place_page.py (its
+                       file list: labels, groups and questions), catalog_page.py (Cataloguing tab), progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        settings_window.py,

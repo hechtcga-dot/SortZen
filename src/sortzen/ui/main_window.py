@@ -1,4 +1,4 @@
-"""The workspace window: folder tree on the left; Start, Folders, To place, Plan and Copies tabs on the right."""
+"""The workspace window: folder tree on the left; Start, Folders, Cataloguing wizard, Cataloguing, Plan and Copies tabs on the right."""
 from __future__ import annotations
 
 import logging

@@ -56,9 +56,11 @@ moves files after the plan is confirmed.
 | # | Phase | Status |
 |---|-------|--------|
 | 27 | Catalog: files dragged onto categories (and from Explorer), learned as users' choice; delete to a queued folder; folders added | **Done** |
-| 28 | Labels (several per file, choosing the folder together) and similar / different files as evidence | **Done** |
-| 29 | To place tab rebuilt around labels | **Done** |
-| 30 | **Alpha 0.5 build** | Waiting for the go-ahead |
+| 28 | Labels with priority, guessed on the PC or by the AI for a sample; labels as evidence for folders; label rules; similar / different files | **Done** |
+| 29 | Files that go with another file (subtitles, sidecars) and one-movie folders kept whole; groups of look-alike files | **Done** |
+| 30 | Cataloguing wizard (labels, then only unsure files, agreement meter, rounds) | **Done** |
+| 31 | Cataloguing tab: planned files by folder, drag to change the plan and teach, notes, folders for labels | **Done** |
+| 32 | **Alpha 0.5 build** | Waiting for the go-ahead |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).
