@@ -11,7 +11,7 @@ TIPS = [
     "A repeat plan is much quicker: SortZen remembers every file it has already read.",
     "Click a column heading to sort by it; click again to reverse.",
     "Untick a folder on the Folders tab to leave it exactly where it is. SortZen still learns from it.",
-    "Exact copies are listed on the Copies tab; extra copies go to a dated “Queued for deletion” folder, "
+    "Exact copies are listed on the Copies tab; extra copies go to a “To delete” folder, "
     "never straight to the bin.",
     "Every move is written down: Edit › Undo a move puts the files back, even days later.",
     "Ask AI only looks at the files SortZen couldn't place, and shows the cost before anything is sent.",

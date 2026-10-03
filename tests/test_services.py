@@ -342,8 +342,7 @@ class CopiesTest(unittest.TestCase):
         slip = self.group("2024 T4.pdf")
         (self.downloads / "old" / "2024 T4 (1).pdf").write_text("changed", encoding="utf-8")
         result = self.service.queue_copies(self.plan.copies)
-        today = time.strftime("%Y-%m-%d")
-        queue = self.downloads / f"Queued for deletion {today}"
+        queue = self.downloads / "To delete"
         self.assertEqual(result.moved, 2)
         self.assertTrue((queue / "2024 T4.pdf").exists())
         self.assertTrue((queue / "b (1).txt").exists())
@@ -351,7 +350,7 @@ class CopiesTest(unittest.TestCase):
         self.assertTrue((self.downloads / "old" / "2024 T4 (1).pdf").exists())
         self.assertTrue(slip.kept.path and os.path.exists(slip.kept.path))
         again = self.service.make_plan()                                  # queued copies are never read or sorted
-        self.assertFalse(any("Queued for deletion" in s.path for s in again.files))
+        self.assertFalse(any("To delete" in s.path for s in again.files))
         self.assertEqual(self.service.move_runs()[0]["kind"], "duplicates")
         self.service.undo_move(result.log)
         self.assertTrue((self.downloads / "2024 T4.pdf").exists())
@@ -661,7 +660,7 @@ class CatalogTest(unittest.TestCase):
         tart = str(self.sorted / "Recipes" / "Lemon tart.txt")
         requests = self.service.delete_requests([tart, str(self.sorted / "Recipes")])
         self.assertEqual(len(requests), 1)
-        self.assertIn("Queued for deletion", requests[0].destination)
+        self.assertEqual(requests[0].destination, str(self.sorted / "To delete" / "Recipes"))   # its place kept
         result = self.service.delete(requests)
         self.assertFalse(os.path.exists(tart))
         self.assertEqual(self.category("Recipes").files, 1)                     # queued files leave the catalog

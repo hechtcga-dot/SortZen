@@ -29,11 +29,13 @@ IGNORED_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
 IGNORED_PREFIXES = ("~$",)
 TEMPORARY_EXTS = {".crdownload", ".part", ".partial", ".download", ".tmp", ".opdownload"}
 SKIPPED_FOLDER_NAMES = {"$recycle.bin", "system volume information"}
-QUEUE_FOLDER = "Queued for deletion"        # dated folders of copies waiting to be deleted; never read or sorted
+QUEUE_FOLDER = "To delete"          # files waiting for users to delete them; never read or sorted
+OLD_QUEUE_FOLDER = "Queued for deletion"     # the same, as earlier versions named it (with a date)
 
 
 def is_queue_folder(name: str) -> bool:
-    return name.lower().startswith(QUEUE_FOLDER.lower())
+    name = name.lower()
+    return name == QUEUE_FOLDER.lower() or name.startswith(OLD_QUEUE_FOLDER.lower())
 
 
 def kind_of(ext: str) -> str:

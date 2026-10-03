@@ -201,8 +201,13 @@ at 50 to 69%. Files no label fits, with a sure folder, need nothing. They are ga
 groups one answer settles (the same kind of name, a shared word, or files that look alike by
 their clues), biggest first, then the other files; files that go with another file (§7.4)
 never appear on their own. Users select files or whole groups and:
-- click a label to give it (or, when all have it, take it away); "Looks right" keeps the
-  labels shown; Labels › New label…;
+- click a label to give it (or, when all have it, take it away); with files that differ, a
+  label shows how many of them have it ("Work 3/8"), and right-click › "Take a label away"
+  (or right-click the label) takes it from whichever of them have it, "Give a label" gives it
+  to the rest; "Looks right" keeps the labels shown;
+- "Delete…" (button, right-click or the Delete key) moves the files into the "To delete"
+  folder in the folder they were added with, at once and out of the list; it asks first
+  until "Don't ask again" (Settings › General), and Undo puts them back;
 - right-click › "Note about this file…" (§7.5), "Keep “folder” together" (it moves as it
   is), "Similar to another file…" / "Different from another file…" (below), "Put in a
   folder…" (a whole group can also become a rule).
@@ -426,7 +431,7 @@ and when):
   deletion YYYY-MM-DD" inside the added folder they are in, keeping their subfolders.
 - Right before each extra moves, it is checked byte for byte against the copy kept;
   anything that is no longer an exact copy stays where it is and is listed.
-- Nothing is deleted: users delete the "Queued for deletion" folders themselves when they
+- Nothing is deleted: users delete the "To delete" folders themselves when they
   are sure. Those folders are never read or sorted. Undo puts the copies back.
 
 ## 12. Renaming
@@ -576,7 +581,7 @@ and when):
     its name, note and settings. Right-click: Labels, Move to a category (recent folders
     first), Delete, Open. A note box for the selected file shows why it goes there. Folders
     for labels are suggested (§7.2b). The Plan tab stays as the final check before moving.
-  - **Deleting** moves files into a dated "Queued for deletion" folder in the folder they
+  - **Deleting** moves files into a "To delete" folder in the folder they
     were added with (as for copies); users delete that folder themselves when sure.
   - **Adding folders**: "Add a folder…" (or right-click the empty space below the
     folders), or a folder dropped there from Explorer, adds it to the catalog as a

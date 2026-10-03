@@ -95,7 +95,7 @@ class MoveResultDialog(QDialog):
     def __init__(self, parent, result, display, undoing: bool = False, queued: bool = False):
         super().__init__(parent)
         self.undo_requested = False
-        title = "Put back" if undoing else "Queued for deletion" if queued else "Moved"
+        title = "Put back" if undoing else "Moved to “To delete”" if queued else "Moved"
         self.setWindowTitle(title)
         self.resize(600, 420 if result.failed or result.renamed else 220)
         col = QVBoxLayout(self)

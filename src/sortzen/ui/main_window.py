@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self.to_place_page.confirm.connect(self.confirm_labels)
         self.to_place_page.note_file.connect(self.note_file)
         self.to_place_page.keep_together.connect(self.keep_together)
+        self.to_place_page.delete_files.connect(self.delete_files)
         self.to_place_page.save.connect(self.save_answers)
         self.to_place_page.place_group.connect(self.place_group)
         self.to_place_page.label.connect(self.label_files)
@@ -484,16 +485,25 @@ class MainWindow(QMainWindow):
         self.place_in_category(paths, folder, confirm=False)
 
     def delete_files(self, paths: list, confirm: bool = True) -> None:
-        """Move files into "Queued for deletion" folders after confirmation; Undo puts them back."""
+        """Move files into "To delete" folders after confirmation; Undo puts them back."""
         requests = self.service.delete_requests(paths)
         if not requests or not self._free_for_job():
             return
         n = len(requests)
-        if confirm and QMessageBox.question(
-                self, "Delete files", f"Delete {n:,} file{'s' if n != 1 else ''}?\n\nThey move into a folder named "
-                "“Queued for deletion” with today's date, inside the folder you added. Delete that folder yourself "
-                "when you're sure. Edit › Undo puts them back.") != QMessageBox.StandardButton.Yes:
-            return
+        if confirm and self.service.option("ask_before_delete"):
+            from PySide6.QtWidgets import QCheckBox
+
+            box = QMessageBox(QMessageBox.Icon.Question, "Delete files",
+                              f"Delete {n:,} file{'s' if n != 1 else ''}?\n\nThey move into a folder named “To "
+                              "delete”, inside the folder you added. Delete that folder yourself when you're sure. "
+                              "Edit › Undo puts them back.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                              self)
+            never = QCheckBox("Don't ask again (change it in Edit › Settings › General)")
+            box.setCheckBox(never)
+            if box.exec() != QMessageBox.StandardButton.Yes:
+                return
+            if never.isChecked():
+                self.service.set_option("ask_before_delete", False)
         self.run_job("delete", lambda emit, token: self.service.delete(requests, emit, token))
 
     def add_to_catalog(self, folders: list) -> None:
@@ -513,10 +523,11 @@ class MainWindow(QMainWindow):
         if result.failed:
             QMessageBox.warning(self, APP_NAME, f"{len(result.failed):,} couldn't be moved:\n\n" + "\n".join(
                 f"{os.path.basename(p)}: {why}" for p, why in result.failed[:8]))
-        self.catalog_page.refresh()
         if name == "delete":
-            self.statusBar().showMessage(f"{result.moved:,} queued for deletion. Edit › Undo puts them back.", 8000)
+            self._drop_from_plan([old for old, _ in result.moves])
+            self.statusBar().showMessage(f"{result.moved:,} moved to “To delete”. Edit › Undo puts them back.", 8000)
             return
+        self.catalog_page.refresh()
         folder = getattr(self, "_placing", "")
         self.statusBar().showMessage(f"{result.moved:,} moved into “{os.path.basename(folder)}”. SortZen learns from "
                                      "them: update the plan to use it. Edit › Undo puts them back.", 8000)
@@ -524,6 +535,18 @@ class MainWindow(QMainWindow):
             suggestion = self.service.suggest_rule(self.plan, folder)
             if suggestion:
                 self.offer_rule(suggestion)
+
+    def _drop_from_plan(self, paths: list) -> None:
+        """Files that left (to the To delete folder) leave the plan and the lists on screen too."""
+        if self.plan is not None and paths:
+            gone = {os.path.normcase(p) for p in paths}
+            self.plan.files = [s for s in self.plan.files if os.path.normcase(s.path) not in gone]
+            self.plan_page.set_plan(self.plan)
+            self.catalog_page.set_plan(self.plan)
+            self.to_place_page.set_contents(self.plan, self.service.question_groups(self.plan), self.plan.questions,
+                                             self.to_place_page.folders, self.to_place_page.recent)
+            self._count_to_place()
+        self.catalog_page.refresh()
 
     def _reorganize(self, requests) -> None:
         if not self._free_for_job():
@@ -1224,7 +1247,7 @@ class MainWindow(QMainWindow):
         self.run_job("move", lambda emit, token: self.service.move(plan, rows, emit, token))
 
     def queue_copies(self, groups, confirm: bool = True) -> None:
-        """Move the ticked extra copies into "Queued for deletion" folders after confirmation."""
+        """Move the ticked extra copies into "To delete" folders after confirmation."""
         ticked = [(g, c) for g in groups for c in g.extras if c.ticked]
         if not ticked or not self._free_for_job():
             return
@@ -1232,7 +1255,7 @@ class MainWindow(QMainWindow):
         if confirm and QMessageBox.question(
                 self, "Queue copies for deletion?",
                 f"Move {len(ticked):,} extra cop{'y' if len(ticked) == 1 else 'ies'} ({size}) into folders named "
-                "“Queued for deletion” with today's date, inside the folders they are in now?\n\n"
+                "“To delete”, inside the folders you added?\n\n"
                 "Each one is checked byte for byte against the copy kept just before it moves. Nothing is "
                 "deleted: delete those folders yourself when you're sure. Edit › Undo puts the copies back.") \
                 != QMessageBox.StandardButton.Yes:

@@ -1,6 +1,6 @@
 """The Copies tab: exact copies grouped together, the copy kept and why, and the extras to queue for deletion.
 
-Ticked extras move into a dated "Queued for deletion" folder inside their added folder. Nothing is
+Ticked extras move into the "To delete" folder inside their added folder. Nothing is
 deleted: users delete those folders themselves when they are sure, and Undo puts the copies back.
 """
 from __future__ import annotations
@@ -40,13 +40,13 @@ class CopiesPage(QWidget):
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         top.addWidget(self.summary, 1)
         self.queue_button = QPushButton("Queue ticked for deletion…", objectName="primary")
-        self.queue_button.setToolTip("Moves the ticked copies into dated “Queued for deletion” folders after you "
+        self.queue_button.setToolTip("Moves the ticked copies into “To delete” folders after you "
                                      "confirm. Nothing is deleted, and Undo puts them back.")
         self.queue_button.clicked.connect(lambda: self.queue.emit(self.groups))
         top.addWidget(self.queue_button)
         col.addLayout(top)
         hint = QLabel("Files with exactly the same contents. One copy of each is kept (bold); ticked extras move "
-                      "into a “Queued for deletion” folder with today's date inside their own folder. Delete those "
+                      "into the “To delete” folder inside the folder you added. Delete those "
                       "folders yourself when you're sure. Right-click a copy to keep it instead.", objectName="hint")
         hint.setWordWrap(True)
         col.addWidget(hint)

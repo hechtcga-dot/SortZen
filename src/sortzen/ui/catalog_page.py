@@ -540,14 +540,9 @@ class CatalogPage(QWidget):
         menu = QMenu(self)
         if any(i.data(0, COMING) for i in self.files.selectedItems()):
             menu.addAction("Right folder (SortZen learns from it)", lambda: self.right_folder.emit(paths))
-        labels = menu.addMenu("Labels")
-        for name in self.service.labels():
-            action = labels.addAction(name)
-            action.setCheckable(True)
-            have = all(name in self.service.labels_of(p) for p in paths)
-            action.setChecked(have)
-            action.triggered.connect(lambda _=False, x=name, h=have: self.label.emit(paths, x, not h))
-        labels.setEnabled(bool(self.service.labels()))
+        from .to_place_page import label_menus
+
+        label_menus(menu, self.service, paths, self.label.emit)
         menu.addAction(f"Move {some} to…", lambda: self.move_files.emit(paths))
         menu.addAction(f"Delete {some}…", lambda: self.delete_files.emit(paths))
         if n == 1:

@@ -50,6 +50,7 @@ DEFAULTS = {                    # settings with on/off values, and their default
     "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
     "meaning": True,            # match files by meaning (a small model on this PC)
     "read_scans": True,         # read text in scans and pictures of documents (Windows text recognition, on this PC)
+    "ask_before_delete": True,  # ask before moving files into the "To delete" folder
 }
 AI_DEFAULTS = {                 # what the AI step may send, and how much it may spend
     "ai_enabled": True,
@@ -569,12 +570,12 @@ class AppService:
         return result
 
     def delete_requests(self, paths: list[str]) -> list[MoveRequest]:
-        """What deleting files moves: each into a dated "Queued for deletion" folder in its added folder."""
+        """What deleting files moves: each into the "To delete" folder in its added folder."""
         return [MoveRequest(p, self.queue_folder(p)) for p in dict.fromkeys(os.path.abspath(p) for p in paths)
                 if os.path.isfile(p) and not any(is_queue_folder(part) for part in p.split(os.sep))]
 
     def delete(self, requests: list[MoveRequest], emit=None, token=None) -> RunResult:
-        """Move files into "Queued for deletion" folders. Nothing is deleted; Undo puts them back."""
+        """Move files into "To delete" folders. Nothing is deleted; Undo puts them back."""
         return self.reorganize(requests, emit, token, kind="deleted")
 
     # ---------------------------------------------------------------- labels
@@ -1603,16 +1604,16 @@ class AppService:
         return result
 
     def queue_folder(self, path: str) -> str:
-        """Where a copy goes: a dated "Queued for deletion" folder inside its added folder, keeping its
+        """Where a file to delete goes: the "To delete" folder inside its added folder, keeping its
         subfolders, so it is easy to find and put back by hand."""
         place = self._root_of(path)
         root = place[0] if place else os.path.dirname(path)
         relative = os.path.relpath(os.path.dirname(os.path.abspath(path)), root)
-        queue = os.path.join(root, f"{QUEUE_FOLDER} {time.strftime('%Y-%m-%d')}")
+        queue = os.path.join(root, QUEUE_FOLDER)
         return os.path.normpath(os.path.join(queue, relative)) if relative != "." else queue
 
     def queue_copies(self, groups: list[CopyGroup], emit=None, token=None) -> RunResult:
-        """Move the ticked extra copies into "Queued for deletion" folders. Nothing is deleted.
+        """Move the ticked extra copies into "To delete" folders. Nothing is deleted.
 
         Right before each one moves, it is checked byte for byte against the copy kept; anything that
         is no longer an exact copy stays where it is.

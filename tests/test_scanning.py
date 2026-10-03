@@ -467,3 +467,13 @@ class TextRecognitionTest(unittest.TestCase):
         image.save(picture)
         text = ocr.read_text(found, picture, ".png")
         self.assertIn("INVOICE", text.upper())
+
+
+class ToDeleteFolderTest(unittest.TestCase):
+    def test_to_delete_folders_new_and_old_names(self):
+        from sortzen.scanning.file_types import is_queue_folder
+
+        self.assertTrue(is_queue_folder("To delete"))
+        self.assertTrue(is_queue_folder("Queued for deletion 2026-09-30"))     # made by earlier versions
+        self.assertFalse(is_queue_folder("To delete later notes"))
+        self.assertFalse(is_queue_folder("Taxes"))

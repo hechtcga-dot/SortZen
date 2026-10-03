@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
@@ -71,6 +72,29 @@ class FolderPicker(QWidget):
         if index >= 0:
             return self.box.itemData(index)
         return self.service.resolve_folder(text, self.plan)
+
+
+def label_menus(menu: QMenu, service, paths: list[str], emit, new_label=None) -> None:
+    """"Give a label" and "Take a label away" for the chosen files, whichever labels each of them has.
+    ``emit(paths, label, on)`` makes the change."""
+    names = service.labels()
+    have = {name: sum(1 for p in paths if name in service.labels_of(p)) for name in names}
+    n = len(paths)
+    give = menu.addMenu("Give a label")
+    for name in names:
+        if have[name] < n:
+            give.addAction(name + (f"  ({have[name]:,} of {n:,} have it)" if have[name] else ""),
+                           lambda x=name: emit(paths, x, True))
+    if new_label is not None:
+        give.addSeparator()
+        give.addAction("New label…", new_label)
+    give.setEnabled(bool(give.actions()))
+    take = menu.addMenu("Take a label away")
+    for name in names:
+        if have[name]:
+            take.addAction(name + (f"  ({have[name]:,} of {n:,} have it)" if have[name] < n else ""),
+                           lambda x=name: emit(paths, x, False))
+    take.setEnabled(bool(take.actions()))
 
 
 class FlowLayout(QLayout):
@@ -237,6 +261,7 @@ class ToPlacePage(QWidget):
     confirm = Signal(list)                       # the labels shown for these files look right
     note_file = Signal(str)                      # write a note about one file
     keep_together = Signal(str)                  # a folder whose files move together
+    delete_files = Signal(list)                  # files to move into the "To delete" folder
 
     def __init__(self, service):
         super().__init__()
@@ -271,6 +296,9 @@ class ToPlacePage(QWidget):
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemSelectionChanged.connect(self._selection_changed)
         self.tree.itemDoubleClicked.connect(lambda item, _: item.data(0, PATH) and self.open_path.emit(item.data(0, PATH)))
+        delete = QShortcut(QKeySequence.StandardKey.Delete, self.tree)
+        delete.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete.activated.connect(lambda: self.selected_paths() and self.delete_files.emit(self.selected_paths()))
         split.addWidget(self.tree)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -280,6 +308,12 @@ class ToPlacePage(QWidget):
         row = QHBoxLayout()
         self.selection = _label("", "muted", wrap=False)
         row.addWidget(self.selection, 1)
+        self.delete_button = QPushButton("Delete…")
+        self.delete_button.setToolTip("Move the selected files into a “To delete” folder now (Delete key). Nothing is "
+                                      "deleted until you delete that folder; Undo puts them back.")
+        self.delete_button.clicked.connect(lambda: self.selected_paths() and
+                                           self.delete_files.emit(self.selected_paths()))
+        row.addWidget(self.delete_button)
         self.looks_right = QPushButton("Looks right")
         self.looks_right.setToolTip("The labels shown for the selected files are right: SortZen learns from them")
         self.looks_right.clicked.connect(lambda: self.selected_paths() and self.confirm.emit(self.selected_paths()))
@@ -327,8 +361,9 @@ class ToPlacePage(QWidget):
         self.label_bar.addWidget(caption)
         for name in self.service.labels():
             button = QPushButton(name)
-            button.setToolTip("Click to give the selected files this label, click again to take it away. Labels to "
-                              "the left count more. Right-click to rename it, move it or remove it.")
+            button.setToolTip("Click to give the selected files this label, click again to take it away. Right-"
+                              "click to give it or take it away whichever files have it, or to rename, move or "
+                              "remove it. Labels to the left count more.")
             button.clicked.connect(lambda _=False, n=name: self.toggle_label(n))
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             button.customContextMenuRequested.connect(lambda pos, n=name, b=button: self._label_menu(n, b, pos))
@@ -425,9 +460,11 @@ class ToPlacePage(QWidget):
         self.selection.setText(f"{len(paths):,} file{'s' if len(paths) != 1 else ''} selected" if paths else
                                "Select files, then click a label")
         self.looks_right.setEnabled(bool(paths))
+        self.delete_button.setEnabled(bool(paths))
         for name, button in self.label_buttons.items():
-            button.setEnabled(bool(paths))
-            have = bool(paths) and all(name in self.service.labels_of(p) for p in paths)
+            some = sum(1 for p in paths if name in self.service.labels_of(p))
+            have = bool(paths) and some == len(paths)
+            button.setText(f"{name}  {some:,}/{len(paths):,}" if 0 < some < len(paths) else name)
             button.setObjectName("primary" if have else "")
             button.style().unpolish(button)
             button.style().polish(button)
@@ -440,6 +477,14 @@ class ToPlacePage(QWidget):
 
     def _label_menu(self, name: str, button, pos) -> None:
         menu = QMenu(self)
+        paths = self.selected_paths()
+        if paths:
+            some = sum(1 for p in paths if name in self.service.labels_of(p))
+            menu.addAction(f"Give it to the {len(paths):,} selected files", lambda: self.label.emit(paths, name, True))
+            take = menu.addAction(f"Take it away from the selected files ({some:,} have it)",
+                                  lambda: self.label.emit(paths, name, False))
+            take.setEnabled(bool(some))
+            menu.addSeparator()
         menu.addAction("Rename…", lambda: self.edit_label.emit(name, "rename"))
         menu.addAction("Move left (counts more)", lambda: self.edit_label.emit(name, "up"))
         menu.addAction("Move right (counts less)", lambda: self.edit_label.emit(name, "down"))
@@ -458,15 +503,7 @@ class ToPlacePage(QWidget):
         some = f"these {len(paths):,} files" if len(paths) != 1 else "this file"
         menu = QMenu(self)
         menu.addAction("Looks right (keep the labels shown)", lambda: self.confirm.emit(paths))
-        labels = menu.addMenu("Labels")
-        for name in self.service.labels():
-            action = labels.addAction(name)
-            action.setCheckable(True)
-            have = all(name in self.service.labels_of(p) for p in paths)
-            action.setChecked(have)
-            action.triggered.connect(lambda _=False, n=name, h=have: self.label.emit(paths, n, not h))
-        labels.addSeparator()
-        labels.addAction("New label…", lambda: self.new_label.emit(paths))
+        label_menus(menu, self.service, paths, self.label.emit, lambda: self.new_label.emit(paths))
         menu.addAction(f"Similar to another file…", lambda: self.pair.emit(paths, "similar"))
         menu.addAction(f"Different from another file…", lambda: self.pair.emit(paths, "different"))
         if any(self.service.pairs_of(p) for p in paths):
@@ -483,6 +520,7 @@ class ToPlacePage(QWidget):
             menu.addAction(f"Put all {len(group.paths):,} in a folder…", lambda: self._put_group(group))
         else:
             menu.addAction(f"Put {some} in a folder…", lambda: self.put_in_folder.emit(paths))
+        menu.addAction(f"Delete {some}… (to the “To delete” folder)", lambda: self.delete_files.emit(paths))
         if len(paths) == 1 and item.data(0, PATH):
             menu.addAction("Open", lambda: self.open_path.emit(paths[0]))
             menu.addAction("Open the folder it's in", lambda: self.open_path.emit(os.path.dirname(paths[0])))

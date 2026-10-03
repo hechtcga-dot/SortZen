@@ -401,6 +401,19 @@ class MainWindowTest(unittest.TestCase):
         self.window.new_label([numbers[0]], "Work")
         self.window.edit_label("Work", "up")                                # Work now counts most
         self.assertEqual(self.service.labels(), ["Work", "Scans"])
+        self.assertEqual(page.label_buttons["Work"].text(), "Work  1/4")   # one of the four selected has it
+        page.label.emit(numbers, "Work", False)                              # taken away from whichever have it
+        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans"])
+        self.window.undo()
+        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans", "Work"])
+        from PySide6.QtWidgets import QMenu
+
+        from sortzen.ui.to_place_page import label_menus
+
+        menu = QMenu()
+        label_menus(menu, self.service, numbers, lambda *a: None)
+        take = next(a.menu() for a in menu.actions() if a.text() == "Take a label away")
+        self.assertEqual([a.text() for a in take.actions()], ["Work  (1 of 4 have it)", "Scans"])
         page.toggle_label("Scans")                                           # all four have it: taken away
         self.assertEqual(self.service.labels_of(numbers[1]), [])
         self.window.undo()
@@ -498,6 +511,24 @@ class MainWindowTest(unittest.TestCase):
             self.window.ai_label_files("unsure")
             self.assertTrue(wait_until(self.app, lambda: self.window.plan is not plan and not self.service.jobs.busy))
         self.assertTrue(self.service.ai_labels())
+        page.tree.clearSelection()
+        rows = list(page.items.values())[:2]
+        for row in rows:
+            row.setSelected(True)
+        doomed = page.selected_paths()
+        self.assertEqual(len(doomed), 2)                                     # several files at once
+        with mock.patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Yes):
+            page.delete_button.click()
+        self.assertTrue(wait_until(self.app, lambda: not any(os.path.exists(p) for p in doomed)
+                                   and os.path.normcase(doomed[0]) not in page.items))
+        self.assertTrue((root / "Downloads" / "To delete").is_dir())
+        self.assertIsNone(self.window.plan.for_path(doomed[0]))               # gone from the plan and the list
+        self.service.set_option("ask_before_delete", False)
+        self.window.undo()
+        self.assertTrue(wait_until(self.app, lambda: all(os.path.exists(p) for p in doomed)
+                                   and not self.service.jobs.busy))
+        if getattr(self.window, "result_dialog", None):
+            self.window.result_dialog.close()
         self.window.finish_wizard()
         self.assertIs(self.window.tabs.currentWidget(), self.window.catalog_page)
 
