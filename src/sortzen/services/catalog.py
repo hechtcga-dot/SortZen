@@ -31,6 +31,7 @@ class Category:
     direct: list[str] = field(default_factory=list)     # names of the files directly in it
     note: str = ""
     rules: int = 0
+    chosen: int = 0                     # files users chose this folder for (placed by hand or in the plan)
     hidden: bool = False                # never a destination
     merged_into: str | None = None
     feedback: list[dict] = field(default_factory=list)
@@ -61,9 +62,15 @@ def looks_like_program(folder: str) -> bool:
     return (code >= 5 and code >= 0.4 * len(exts)) or (".exe" in exts and ".dll" in exts)
 
 
-def build(roots: list[str], edits: dict, notes: dict, rules: list, records=None) -> list[Category]:
+def build(roots: list[str], edits: dict, notes: dict, rules: list, records=None,
+          chosen: dict | None = None) -> list[Category]:
     """Every category, parents before children. ``records`` (remembered files) give counts and examples
-    without opening anything; without them the folders are listed."""
+    without opening anything; without them the folders are listed. ``chosen`` are users' choices of
+    folder by file."""
+    chosen_counts: dict[str, int] = {}
+    for destination in (chosen or {}).values():
+        if destination:
+            chosen_counts[path_key(destination)] = chosen_counts.get(path_key(destination), 0) + 1
     note_by_key = {path_key(k): v for k, v in notes.items()}
     names = {path_key(k): v for k, v in (edits.get("names") or {}).items()}
     extra = {path_key(k): list(v) for k, v in (edits.get("extra") or {}).items()}
@@ -90,6 +97,7 @@ def build(roots: list[str], edits: dict, notes: dict, rules: list, records=None)
                             merged_into=merged.get(key), feedback=feedback.get(key, []),
                             direct=sorted(files or []))
         category.rules = sum(1 for r in rules if path_key(r.destination) == key)
+        category.chosen = chosen_counts.get(key, 0)
         found[key] = category
         order.append(key)
         total = len(category.direct)

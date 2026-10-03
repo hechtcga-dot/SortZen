@@ -621,6 +621,42 @@ class CatalogTest(unittest.TestCase):
         self.service.undo_move(result.log)
         self.assertEqual(len(os.listdir(budget)), 2)
 
+    def test_files_put_into_a_category_are_learned_and_undone(self):
+        recipes, payroll = str(self.sorted / "Recipes"), str(self.sorted / "Work" / "Payroll")
+        files = self.service.category_files(recipes)
+        self.assertEqual([f["name"] for f in files], ["Apple pie.txt", "Lemon tart.txt"])
+        self.assertGreater(files[0]["size"], 0)
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        work = str(self.sorted / "Work")
+        requests = self.service.drop_requests([cake, files[0]["path"], payroll, work], payroll)
+        self.assertEqual([r.path for r in requests], [cake, files[0]["path"]])   # not into itself or where it is
+        result = self.service.place(requests)
+        moved_cake = os.path.join(payroll, "Plum cake recipe.txt")
+        self.assertTrue(os.path.isfile(moved_cake))
+        self.assertEqual(self.service.corrections()[moved_cake], payroll)       # remembered as users' choice
+        self.assertEqual(self.service.recent_destinations()[0], payroll)
+        self.assertEqual(self.category("Payroll").chosen, 2)
+        self.assertEqual(self.service.move_runs()[0]["kind"], "placed")
+        plan = self.service.make_plan()
+        self.assertEqual(plan.for_path(str(self.downloads / "Budget 2026.txt")).destination,
+                         str(self.sorted / "Work" / "Budget"))
+        self.service.undo_move(result.log)
+        self.assertTrue(os.path.isfile(cake))
+        self.assertEqual(self.service.corrections(), {})                         # the choices are forgotten
+        self.assertEqual(self.category("Payroll").chosen, 0)
+
+    def test_deleting_queues_files_and_undo_puts_them_back(self):
+        tart = str(self.sorted / "Recipes" / "Lemon tart.txt")
+        requests = self.service.delete_requests([tart, str(self.sorted / "Recipes")])
+        self.assertEqual(len(requests), 1)
+        self.assertIn("Queued for deletion", requests[0].destination)
+        result = self.service.delete(requests)
+        self.assertFalse(os.path.exists(tart))
+        self.assertEqual(self.category("Recipes").files, 1)                     # queued files leave the catalog
+        self.assertEqual(self.service.move_runs()[0]["kind"], "deleted")
+        self.service.undo_move(result.log)
+        self.assertTrue(os.path.isfile(tart))
+
 
 class CatalogSuggestionsTest(CatalogTest):
     def test_local_and_ai_suggestions_accept_and_turn_down(self):

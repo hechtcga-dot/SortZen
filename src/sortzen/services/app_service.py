@@ -361,7 +361,8 @@ class AppService:
     def catalog(self, plan: Plan | None = None) -> list:
         """Every category, parents first: from the destination folders and the folders being tidied."""
         roots = self.destination_folders() + [f["path"] for f in self.source_folders() if f["mode"] == TIDY]
-        return catalog_model.build(roots, self.catalog_edits(), self.folder_notes(), self.rules())
+        return catalog_model.build(roots, self.catalog_edits(), self.folder_notes(), self.rules(),
+                                   chosen=self.corrections())
 
     def catalog_hidden(self) -> list[str]:
         """Folders of categories files are never sent to."""
@@ -494,12 +495,67 @@ class AppService:
         return [MoveRequest(e.path, into) for e in entries
                 if not e.name.startswith((".", "~$")) and not is_queue_folder(e.name)]
 
-    def reorganize(self, requests: list[MoveRequest], emit=None, token=None) -> RunResult:
+    def reorganize(self, requests: list[MoveRequest], emit=None, token=None, kind: str = "catalog") -> RunResult:
         """Move files and folders to new places in the catalog, logged so Undo puts them back."""
         with gentle(self.option("gentle")):
-            result = self.mover.run(requests, (), emit, token, kind="catalog")
+            result = self.mover.run(requests, (), emit, token, kind=kind)
         self._carry_index(result)
         return result
+
+    # ---------------------------------------------------------------- placing files by hand
+    def category_files(self, folder: str) -> list[dict]:
+        """The files directly in a category's folder: name, path, size and when each was last changed."""
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            return []
+        found = []
+        for e in entries:
+            if e.name.startswith((".", "~$")):
+                continue
+            try:
+                if not e.is_file(follow_symlinks=False):
+                    continue
+                info = e.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            found.append({"name": e.name, "path": e.path, "size": info.st_size, "modified": info.st_mtime})
+        return sorted(found, key=lambda f: f["name"].lower())
+
+    def drop_requests(self, paths: list[str], folder: str) -> list[MoveRequest]:
+        """What putting files and folders into a category moves: everything not already directly in it,
+        and never a folder into itself or one of its own subfolders."""
+        target = path_key(folder)
+        requests = []
+        for path in dict.fromkeys(os.path.abspath(p) for p in paths):
+            if not os.path.lexists(path) or path_key(os.path.dirname(path)) == target:
+                continue
+            if os.path.isdir(path) and _inside(target, path_key(path)):
+                continue
+            requests.append(MoveRequest(path, os.path.abspath(folder)))
+        return requests
+
+    def place(self, requests: list[MoveRequest], emit=None, token=None) -> RunResult:
+        """Move what users put into categories, logged so Undo puts it back. Each file's new folder is
+        remembered as their choice: plans keep it there, learn from it and suggest rules from it."""
+        result = self.reorganize(requests, emit, token, kind="placed")
+        chosen = {new: os.path.dirname(new) for _, new in result.moves if os.path.isfile(new)}
+        if chosen:
+            current = self.corrections()
+            current.update(chosen)
+            self.settings.set("corrections", current)
+        for folder in dict.fromkeys(r.destination for r in requests):
+            self.note_destination(folder)
+        return result
+
+    def delete_requests(self, paths: list[str]) -> list[MoveRequest]:
+        """What deleting files moves: each into a dated "Queued for deletion" folder in its added folder."""
+        return [MoveRequest(p, self.queue_folder(p)) for p in dict.fromkeys(os.path.abspath(p) for p in paths)
+                if os.path.isfile(p) and not any(is_queue_folder(part) for part in p.split(os.sep))]
+
+    def delete(self, requests: list[MoveRequest], emit=None, token=None) -> RunResult:
+        """Move files into "Queued for deletion" folders. Nothing is deleted; Undo puts them back."""
+        return self.reorganize(requests, emit, token, kind="deleted")
 
     # ---------------------------------------------------------------- folder notes
     def folder_notes(self) -> dict[str, str]:
@@ -1059,6 +1115,10 @@ class AppService:
         """Put everything from one move back where it was."""
         result = self.mover.undo(log, emit)
         self._carry_index(result)
+        if any(r["log"] == log and r["kind"] == "placed" for r in self.move_runs()):
+            gone = {path_key(moved_from) for moved_from, _ in result.moves}     # forget the choices it made
+            current = self.corrections()
+            self.settings.set("corrections", {k: v for k, v in current.items() if path_key(k) not in gone})
         if any(r["log"] == log and r["kind"] == "rename" for r in self.move_runs()):
             for back_from, back_to in result.moves:
                 self._remap_paths(back_from, back_to)
