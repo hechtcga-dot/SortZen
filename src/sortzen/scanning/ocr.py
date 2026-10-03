@@ -68,7 +68,7 @@ class WindowsRecognizer:
             return asyncio.run(self._read(png))
 
     async def _read(self, png: bytes) -> str:
-        from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat
+        from winrt.windows.graphics.imaging import BitmapDecoder, BitmapPixelFormat, SoftwareBitmap
         from winrt.windows.storage.streams import DataWriter, InMemoryRandomAccessStream
 
         stream = InMemoryRandomAccessStream()
@@ -79,10 +79,9 @@ class WindowsRecognizer:
         writer.detach_stream()
         stream.seek(0)
         decoder = await BitmapDecoder.create_async(stream)
-        bitmap = await decoder.get_software_bitmap_alpha_mode_async(BitmapPixelFormat.BGRA8,
-                                                                    BitmapAlphaMode.PREMULTIPLIED) \
-            if hasattr(decoder, "get_software_bitmap_alpha_mode_async") \
-            else await decoder.get_software_bitmap_async(BitmapPixelFormat.BGRA8, BitmapAlphaMode.PREMULTIPLIED)
+        bitmap = await decoder.get_software_bitmap_async()
+        if bitmap.bitmap_pixel_format not in (BitmapPixelFormat.BGRA8, BitmapPixelFormat.GRAY8):
+            bitmap = SoftwareBitmap.convert(bitmap, BitmapPixelFormat.BGRA8)
         result = await self.engine.recognize_async(bitmap)
         return result.text or ""
 
