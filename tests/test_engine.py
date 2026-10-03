@@ -471,3 +471,44 @@ class MeaningTest(unittest.TestCase):
         self.assertEqual((homeless.destination, homeless.percent), ("/s/Payroll", ALONE_MAX))
         self.assertIsNone(unclear.destination)
         self.assertEqual(mine.destination, "/s/Recipes")
+
+
+class CatalogReviewTest(unittest.TestCase):
+    def test_split_merge_and_empty_suggestions(self):
+        from sortzen.engine.catalog_review import review
+        from sortzen.services.catalog import Category
+
+        payroll = Category("/s/Work/Payroll", "Payroll", "/s/Work", ["/s/Work/Payroll"],
+                           direct=[f"Timesheet week {i}.xlsx" for i in range(14)]
+                           + [f"Pay stub {i}.pdf" for i in range(12)] + [f"Note {i}.txt" for i in range(6)])
+        payroll.files = len(payroll.direct)
+        invoices = Category("/s/Work/Invoices", "Invoices", "/s/Work", [], files=40)
+        invoice = Category("/s/Work/Invoice", "Invoice", "/s/Work", [], files=3)
+        empty = Category("/s/Work/Later", "Later", "/s/Work", [])
+        right = Category("/s/Work/Ledgers", "Ledger", "/s/Work", [], files=2,
+                         feedback=[{"kind": "right", "text": ""}])
+        found = review([payroll, invoices, invoice, empty, right])
+        kinds = {(s.kind, s.category) for s in found}
+        self.assertIn(("merge", "/s/Work/Invoice"), kinds)
+        self.assertIn(("empty", "/s/Work/Later"), kinds)
+        self.assertNotIn("/s/Work/Ledgers", {s.category for s in found})
+        split = next(s for s in found if s.kind == "split")
+        self.assertEqual([(n, len(m)) for n, m in split.parts], [("Timesheet", 14), ("Stub", 12), ("Note", 6)])
+        merge = next(s for s in found if s.kind == "merge")
+        self.assertEqual(merge.into, "/s/Work/Invoices")
+        self.assertEqual(review([invoices, invoice], {merge.key}), [])
+
+    def test_feedback_drives_suggestions(self):
+        from sortzen.engine.catalog_review import review
+        from sortzen.services.catalog import Category
+
+        small = Category("/s/Home/Bills", "Bills", "/s/Home", [], direct=[f"Hydro bill {i}.pdf" for i in range(5)]
+                         + [f"Phone bill {i}.pdf" for i in range(4)], feedback=[{"kind": "too_broad", "text": ""}])
+        small.files = 9
+        narrow = Category("/s/Home/Gas", "Gas", "/s/Home", [], direct=["Gas bill 1.pdf"], files=1,
+                          feedback=[{"kind": "too_narrow", "text": ""}])
+        found = review([small, narrow])
+        self.assertEqual(found[0].kind, "split")                    # asked-for suggestions come first
+        self.assertEqual([n for n, _ in found[0].parts], ["Hydro", "Phone"])
+        merge = next(s for s in found if s.kind == "merge")
+        self.assertEqual(merge.into, "/s/Home/Bills")               # shares "bill" with Bills
