@@ -27,9 +27,11 @@ def _plural(n: int, word: str, many: str = "") -> str:
 
 
 def _list(lines: list[str], height: int = 90) -> QPlainTextEdit:
+    """A read-only list; ``height`` 0 lets it take the room the window has."""
     box = QPlainTextEdit("\n".join(lines))
     box.setReadOnly(True)
-    box.setMaximumHeight(height)
+    if height:
+        box.setMaximumHeight(height)
     return box
 
 
@@ -110,16 +112,17 @@ class MoveResultDialog(QDialog):
         col.addWidget(_label(done + ".", "cardTitle"))
         if result.renamed:
             col.addWidget(_label(f"{_plural(len(result.renamed), 'name')} already taken, so a number was added:"))
-            col.addWidget(_list([f"{old}  →  {new}" for old, new in result.renamed]))
+            col.addWidget(_list([f"{old}  →  {new}" for old, new in result.renamed], 0 if not result.failed else 140), 1)
         if result.failed:
             col.addWidget(_label(f"{_plural(len(result.failed), 'item')} couldn't be moved and stayed where "
                                  f"{'it was' if len(result.failed) == 1 else 'they were'}:"))
-            col.addWidget(_list([f"{display(path)}: {reason}" for path, reason in result.failed], 140))
-        col.addStretch(1)
+            col.addWidget(_list([f"{display(path)}: {reason}" for path, reason in result.failed], 140), 1)
+        if not (result.renamed or result.failed):
+            col.addStretch(1)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         if queued and result.moved:
-            col.insertWidget(1, _label("Nothing has been deleted. The copies are in folders named “Queued for "
-                                       "deletion” with today's date; delete those folders yourself when you're "
+            col.insertWidget(1, _label("Nothing has been deleted. The copies are in folders named “To delete” "
+                                       "inside the folders you added; delete those folders yourself when you're "
                                        "sure."))
         if not undoing and result.moved:
             undo = QPushButton("Undo this move")
@@ -134,8 +137,8 @@ class MoveResultDialog(QDialog):
         self.accept()
 
 
-KIND_TEXT = {"move": "Move", "duplicates": "Copies queued for deletion", "rename": "Folder renamed",
-             "catalog": "Catalog reorganized", "placed": "Put into a category", "deleted": "Files queued for deletion"}
+KIND_TEXT = {"move": "Move", "duplicates": "Copies moved to “To delete”", "rename": "Folder renamed",
+             "catalog": "Catalog reorganized", "placed": "Put into a category", "deleted": "Files moved to “To delete”"}
 
 
 class RunsDialog(QDialog):

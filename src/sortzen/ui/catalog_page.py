@@ -450,6 +450,7 @@ class CatalogPage(QWidget):
         while self.suggestion_box.count():
             widget = self.suggestion_box.takeAt(0).widget()
             if widget is not None:
+                widget.hide()               # gone at once, not when Qt gets round to deleting it
                 widget.deleteLater()
         if not suggestions:
             self.suggestion_box.addWidget(_label("No suggestions right now. Give feedback on a category, or ask "

@@ -72,6 +72,7 @@ class FoldersPage(QWidget):
         self.tree.setColumnWidth(0, 420)
         self.tree.setColumnWidth(1, 80)
         self.tree.setColumnWidth(2, 90)
+        self.tree.setColumnWidth(3, 260)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
         self.tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
