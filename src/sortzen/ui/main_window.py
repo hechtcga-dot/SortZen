@@ -762,7 +762,7 @@ class MainWindow(QMainWindow):
         groups = self.service.file_groups(plan)
         self.to_place_page.set_contents(plan, groups, plan.questions, self.service.destination_choices(plan),
                                          self.service.recent_destinations(plan))
-        listed = bool(self.service.to_place(plan) or plan.questions)
+        listed = bool(self.service.unsure_files(plan) or plan.questions)
         if listed and self.tabs.indexOf(self.to_place_page) < 0:
             self.tabs.insertTab(self.tabs.indexOf(self.plan_page), self.to_place_page, "To place")
         elif not listed and self.tabs.indexOf(self.to_place_page) >= 0:
@@ -804,18 +804,6 @@ class MainWindow(QMainWindow):
         return True
 
     def _show_labels(self) -> None:
-        """Files' folders follow their labels in the plan on screen (a new plan does the rest)."""
-        from ..engine.plan import Reason
-
-        if self.plan is not None:
-            corrections = {os.path.normcase(k): v for k, v in self.service.corrections().items()}
-            for s in self.plan.files:
-                labels = self.service.labels_of(s.path)
-                chosen = corrections.get(os.path.normcase(s.path))
-                if labels and chosen:
-                    s.destination, s.percent, s.new_folder = chosen, 100, not os.path.isdir(chosen)
-                    s.reasons = [Reason(True, "Your labels: " + ", ".join(labels))]
-            self.plan_page.refresh()
         self.to_place_page.refresh_rows()
         self._count_to_place()
 
@@ -825,34 +813,19 @@ class MainWindow(QMainWindow):
             n = len(paths)
             self.statusBar().showMessage(
                 f"{n:,} file{'s' if n != 1 else ''} {'labelled' if on else 'no longer labelled'} “{name}”. "
-                "Update the plan to let SortZen learn from it for similar files.", 6000)
+                "Update the plan to let SortZen learn from it.", 6000)
 
-    def new_label(self, paths: list | None = None, name: str | None = None, folder: str | None = None) -> None:
-        """Make a label and choose the folder files with it go to; then give it to the selected files."""
+    def new_label(self, paths: list | None = None, name: str | None = None) -> None:
+        """Make a label (it goes last: the least important); then give it to the selected files."""
         if name is None:
             name, ok = QInputDialog.getText(self, "New label", "Name of the label (for example Work, Taxes or "
                                             "Photo session):")
             if not ok or not name.strip():
                 return
-        if folder is None:
-            folder = self._label_folder(name.strip(), self.service.label_folder_choices(name.strip()))
-            if not folder:
-                return
-        if self._label_change(f"New label {name.strip()}", lambda: self.service.add_label(name, folder)):
+        if self._label_change(f"New label {name.strip()}", lambda: self.service.add_label(name)):
             self.to_place_page._fill_labels()
             if paths:
                 self.label_files(paths, " ".join(name.split()), True)
-
-    def _label_folder(self, name: str, choices: list[str]) -> str | None:
-        labels = [("Files go to " + self.service.display(f) + ("" if os.path.isdir(f) else "  (a new folder)"))
-                  for f in choices] + ["Choose another folder…"]
-        chosen, ok = QInputDialog.getItem(self, "Where files with this label go",
-                                          f"Files labelled “{name}” go to:", labels, 0, False)
-        if not ok:
-            return None
-        if chosen == labels[-1]:
-            return QFileDialog.getExistingDirectory(self, f"Folder for files labelled “{name}”") or None
-        return choices[labels.index(chosen)]
 
     def edit_label(self, name: str, action: str, value: str | None = None) -> None:
         if action == "rename":
@@ -861,12 +834,12 @@ class MainWindow(QMainWindow):
                 if not ok or not value.strip():
                     return
             self._label_change(f"Rename label {name}", lambda: self.service.rename_label(name, value))
-        elif action == "folder":
-            if value is None:
-                value = self._label_folder(name, self.service.label_folder_choices(name))
-                if not value:
-                    return
-            self._label_change(f"Change the folder of {name}", lambda: self.service.set_label_folder(name, value))
+        elif action in ("up", "down"):
+            order = self.service.labels()
+            i = order.index(name)
+            j = max(0, i - 1) if action == "up" else min(len(order) - 1, i + 1)
+            order[i], order[j] = order[j], order[i]
+            self._label_change("Change label order", lambda: self.service.set_label_order(order))
         elif action == "remove":
             self._label_change(f"Remove label {name}", lambda: self.service.remove_label(name))
         self.to_place_page._fill_labels()

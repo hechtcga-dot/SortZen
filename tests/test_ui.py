@@ -394,26 +394,23 @@ class MainWindowTest(unittest.TestCase):
         numbers = page.selected_paths()
         self.assertEqual(len(numbers), 4)                                    # a whole group at once
         scans = str(root / "Sorted" / "Documents" / "Scans")
-        self.window.new_label(numbers, "Scans", scans)
+        self.window.new_label(numbers, "Scans")
         self.assertEqual(list(page.label_buttons), ["Scans"])
-        self.assertEqual(self.service.corrections()[numbers[0]], scans)
-        row = page.items[os.path.normcase(numbers[0])]
-        self.assertEqual((row.text(1), row.text(2)), ("Scans", "Sorted/Documents/Scans"))
-        self.assertEqual(self.window.plan.for_path(numbers[0]).reasons[0].text, "Your labels: Scans")
-        self.window.new_label([numbers[0]], "Work", str(root / "Sorted" / "Documents" / "Work"))
-        self.assertEqual(self.service.label_destination(self.service.labels_of(numbers[0])),
-                         os.path.join(scans, "Work"))                       # labels together choose the folder
+        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans"])
+        self.assertEqual(page.items[os.path.normcase(numbers[0])].text(1), "Scans")
+        self.window.new_label([numbers[0]], "Work")
+        self.window.edit_label("Work", "up")                                # Work now counts most
+        self.assertEqual(self.service.labels(), ["Work", "Scans"])
         page.toggle_label("Scans")                                           # all four have it: taken away
         self.assertEqual(self.service.labels_of(numbers[1]), [])
         self.window.undo()
-        self.window.undo()
         self.assertEqual(self.service.labels_of(numbers[1]), ["Scans"])
-        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans"])
+        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans", "Work"])
         payroll = root / "Sorted" / "Documents" / "Work" / "Payroll"
         other = str(next(payroll.iterdir()))
         self.window.pair_files([numbers[2]], "similar", other)
         self.assertEqual(self.service.pairs_of(numbers[2]), [("similar", other)])
-        self.assertIn("You said: similar to “", page.items[os.path.normcase(numbers[2])].text(4))
+        self.assertIn("You said: similar to “", page.items[os.path.normcase(numbers[2])].text(3))
         self.window.undo()
         self.assertEqual(self.service.pairs_of(numbers[2]), [])
         group = next(g for g in page.groups if g.title == "4 PDFs whose names are only numbers")

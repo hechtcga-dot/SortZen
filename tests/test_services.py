@@ -671,51 +671,72 @@ class CatalogTest(unittest.TestCase):
 
 
 class LabelsTest(CatalogTest):
-    def test_labels_choose_folders_together(self):
-        work, recipes = str(self.sorted / "Work"), str(self.sorted / "Recipes")
-        self.assertEqual(self.service.label_folder_choices("work"), [work, str(self.sorted / "work")])
-        self.service.add_label("Work")
-        self.service.add_label("Taxes")                                      # no folder yet: a new one
-        self.service.add_label("Payroll")
-        self.service.add_label("Baking", recipes)
+    def test_label_list_priority_rename_and_remove(self):
+        for name in ("Work", "Baking", "Taxes"):
+            self.service.add_label(name)
         with self.assertRaises(ValueError):
             self.service.add_label("taxes")
-        with self.assertRaises(ValueError):
-            self.service.add_label("a/b")
-        self.assertEqual(self.service.labels()[1], {"name": "Taxes", "folder": str(self.sorted / "Taxes")})
-        d = self.service.label_destination
-        self.assertEqual(d(["Work"]), work)
-        self.assertEqual(d(["Taxes", "Work"]), os.path.join(work, "Taxes"))     # made-first label leads
-        self.assertEqual(d(["Work", "Payroll"]), os.path.join(work, "Payroll"))  # a label inside goes deeper
-        self.assertIsNone(d([]))
+        self.service.set_label_order(["Taxes", "Work"])
+        self.assertEqual(self.service.labels(), ["Taxes", "Work", "Baking"])   # the first counts most
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        self.service.set_labels([cake], "Baking", True)
+        self.service.rename_label("Baking", "Cakes")
+        self.assertEqual(self.service.labels_of(cake), ["Cakes"])
+        self.service.remove_label("Cakes")
+        self.assertEqual((self.service.labels(), self.service.labels_of(cake)), (["Taxes", "Work"], []))
 
-    def test_labelled_files_go_to_their_folder_and_can_be_unlabelled(self):
-        work = str(self.sorted / "Work")
+    def test_guessed_labels_users_changes_and_learning(self):
         cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
-        self.service.add_label("Work")
-        self.service.add_label("Taxes")
-        self.service.set_labels([cake, budget], "Work", True)
-        self.service.set_labels([budget], "Taxes", True)
-        self.assertEqual(self.service.labels_of(budget), ["Work", "Taxes"])
-        self.assertEqual(self.service.corrections()[cake], work)
-        self.assertEqual(self.service.corrections()[budget], os.path.join(work, "Taxes"))
+        self.service.add_label("Recipe")
+        self.service.add_label("Budget")
+        plan = self.service.make_plan()
+        self.assertEqual(self.service.label_guesses(cake)[0][:2], ("Recipe", 85))   # its name says so
+        self.assertEqual(self.service.labels_of(str(self.sorted / "Recipes" / "Apple pie.txt")), ["Recipe"])
+        self.assertEqual(self.service.learned_since_plan(), 0)
+        self.service.set_labels([budget], "Recipe", True)                  # guessed Budget is kept, Recipe added
+        self.assertEqual(self.service.label_guesses(budget), [("Budget", 100, "You"), ("Recipe", 100, "You")])
+        self.service.set_labels([budget], "Recipe", False)
+        self.service.set_labels([budget], "Budget", False)
+        self.assertEqual(self.service.labels_of(budget), [])                # users took every label away
+        self.assertEqual(self.service.learned_since_plan(), 3)
+        self.assertFalse(self.service.ready_to_recatalog())
+        self.assertIn(budget, [s.path for s in self.service.unsure_files(plan)] + [budget])
+
+    def test_labels_lead_to_folders_and_label_rules(self):
+        from sortzen.engine.rules import Rule
+
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        recipes = str(self.sorted / "Recipes")
+        self.service.add_label("Sweet")
+        for name in ("Apple pie.txt", "Lemon tart.txt"):
+            self.service.set_labels([str(self.sorted / "Recipes" / name)], "Sweet", True)
+        self.service.set_labels([cake], "Sweet", True)
+        plan = self.service.make_plan()
+        self.assertEqual(plan.for_path(cake).destination, recipes)
+        self.service.add_rule(Rule("", str(self.sorted / "Work"), label="Sweet"))
+        self.assertEqual(self.service.rules()[0].label, "Sweet")
+        plan = self.service.make_plan()
+        s = plan.for_path(cake)
+        self.assertEqual((s.destination, s.percent), (str(self.sorted / "Work"), 100))
+        self.assertIn("Files labelled “Sweet”", s.reasons[0].text)
+
+    def test_file_notes_and_kept_together_folders(self):
+        budget = str(self.downloads / "Budget 2026.txt")
+        self.service.set_file_note(budget, "this is a recipes thing, not work")
+        self.assertEqual(self.service.file_note(budget), "this is a recipes thing, not work")
         plan = self.service.make_plan()
         s = plan.for_path(budget)
-        self.assertEqual((s.destination, s.percent), (os.path.join(work, "Taxes"), 100))
-        self.assertEqual(s.reasons[0].text, "Your labels: Work, Taxes")
-        self.assertEqual([x.path for x in self.service.to_place(plan)], [budget, cake])   # labelled ones stay listed
-        self.service.rename_label("Taxes", "Tax")
-        self.assertEqual(self.service.corrections()[budget], os.path.join(work, "Tax"))
-        self.service.remove_label("Tax")
-        self.assertEqual(self.service.corrections()[budget], work)
-        self.service.set_labels([budget, cake], "Work", False)
-        self.assertEqual(self.service.corrections(), {})                     # their labels' folders are forgotten
-        self.assertEqual(self.service.file_labels(), {})
-
-    def test_suggested_labels_follow_sortzens_guess(self):
-        self.service.add_label("Baking", str(self.sorted / "Recipes"))
-        cake = str(self.downloads / "Plum cake recipe.txt")
-        self.assertEqual(self.service.suggested_labels(self.plan).get(cake), ["Baking"])
+        self.assertEqual(s.destination, str(self.sorted / "Recipes"))
+        self.assertTrue(s.reasons[0].text.startswith("Your note:"))
+        trip = self.downloads / "Trip photos"
+        trip.mkdir()
+        (trip / "beach.txt").write_text("beach day", encoding="utf-8")
+        self.service.keep_folder_together(str(trip))
+        plan = self.service.make_plan()
+        folder = next(f for f in plan.folders if f.path == str(trip))
+        self.assertEqual(folder.reasons[0].text, "Your answer")
+        with self.assertRaises(ValueError):
+            self.service.keep_folder_together(str(self.sorted / "Recipes"))
 
     def test_similar_and_different_change_percentages_only(self):
         cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")

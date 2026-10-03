@@ -33,6 +33,9 @@ from ..tasks.gentle import gentle
 from . import catalog as catalog_model, moving, plan_view, profile
 
 AUTONOMY_DEFAULT = 90
+LABEL_SURE = 70             # a guessed label this sure needs no check
+LEARNED_ENOUGH = 10         # changes from users before SortZen offers to catalog again
+NOTE_PERCENT = 85           # a note that names a folder makes SortZen this sure
 DEFAULTS = {                    # settings with on/off values, and their defaults
     "gentle": False,            # "Be gentle with my computer": lowest priority, short rests
     "read_google_drive": False,  # read file contents on Google Drive (may download them)
@@ -108,6 +111,7 @@ class AppService:
         self.mover = Mover(self.paths.runs_dir)
         self.ai_answers = AIAnswers(self.paths.database_path)
         self._records: dict = {}            # the last plan's files, by path
+        self._guesses: dict = {}            # labels SortZen guessed for them, by path key
         self._embedder = None               # the meaning model (loaded when first needed)
         self._ai_catalog: list = []          # the AI's last suggestions for the catalog
 
@@ -328,6 +332,7 @@ class AppService:
             else:
                 current[p] = os.path.abspath(destination)
         self.settings.set("corrections", current)
+        self._learned(len(paths))
         return previous
 
     def restore_corrections(self, previous: dict[str, str | None]) -> None:
@@ -561,145 +566,218 @@ class AppService:
         return self.reorganize(requests, emit, token, kind="deleted")
 
     # ---------------------------------------------------------------- labels
-    def labels(self) -> list[dict]:
-        """Users' labels in the order they were made: {"name": "Taxes", "folder": where files with it go}."""
-        return [dict(x) for x in (self.settings.get("labels") or {}).get("names") or []]
+    def labels(self) -> list[str]:
+        """Users' labels, the most important first (the order is their priority)."""
+        return [x if isinstance(x, str) else x.get("name", "") for x in self._label_data().get("names") or []]
 
-    def file_labels(self) -> dict[str, list[str]]:
-        """Labels by file."""
-        return {k: list(v) for k, v in ((self.settings.get("labels") or {}).get("files") or {}).items()}
+    def _label_data(self) -> dict:
+        return dict(self.settings.get("labels") or {})
 
-    def labels_of(self, path: str) -> list[str]:
-        key = path_key(path)
-        return next((v for k, v in self.file_labels().items() if path_key(k) == key), [])
+    def _save_label_data(self, **parts) -> None:
+        data = self._label_data()
+        data.update(parts)              # an empty list is kept: users took every label away
+        self.settings.set("labels", data)
 
-    def _save_labels(self, names: list[dict], files: dict[str, list[str]]) -> None:
-        self.settings.set("labels", {"names": names, "files": {k: v for k, v in files.items() if v}})
+    def users_labels(self) -> dict[str, list[str]]:
+        """The labels users gave files themselves, by file."""
+        return {k: list(v) for k, v in (self._label_data().get("files") or {}).items()}
 
-    def label_folder_choices(self, name: str) -> list[str]:
-        """Folders a new label could send files to: folders already named like it (shallowest first), then a
-        new folder with its name."""
-        wanted = name.strip().lower()
-        found = sorted((f for f in self.destination_choices() if os.path.basename(f).lower() == wanted),
-                       key=lambda f: (f.count(os.sep), f.lower()))
-        new = self.resolve_folder(name.strip())
-        return found + ([new] if new and all(path_key(new) != path_key(f) for f in found) else [])
+    def ai_labels(self) -> dict[str, list[list]]:
+        """Labels the AI gave files: [label, percent], by file."""
+        return {k: [list(x) for x in v] for k, v in (self._label_data().get("ai") or {}).items()}
 
-    def add_label(self, name: str, folder: str | None = None) -> dict:
-        """A new label and the folder files with it go to (by default a folder named like it)."""
+    def add_label(self, name: str) -> str:
         name = " ".join((name or "").split())
         if not name:
             raise FolderError("Type a name for the label.")
-        bad = sorted(set(name) & set('\\/:*?"<>|'))
-        if bad:
-            raise FolderError(f"Labels can't contain {' '.join(bad)}")
-        names = self.labels()
-        if any(x["name"].lower() == name.lower() for x in names):
+        if any(x.lower() == name.lower() for x in self.labels()):
             raise FolderError(f"There is already a label “{name}”.")
-        choices = [folder] if folder else self.label_folder_choices(name)
-        if not choices:
-            raise FolderError("Add a destination folder first: labels need a place to send files.")
-        label = {"name": name, "folder": os.path.abspath(choices[0])}
-        self._save_labels(names + [label], self.file_labels())
-        return label
+        self._save_label_data(names=self.labels() + [name])
+        return name
+
+    def set_label_order(self, names: list[str]) -> None:
+        """A new priority: the first label counts most when SortZen guesses."""
+        known = self.labels()
+        self._save_label_data(names=[n for n in names if n in known] + [n for n in known if n not in names])
 
     def rename_label(self, old: str, new: str) -> None:
         new = " ".join((new or "").split())
-        names = self.labels()
-        if not new or any(x["name"].lower() == new.lower() and x["name"] != old for x in names):
+        if not new or any(x.lower() == new.lower() and x != old for x in self.labels()):
             raise FolderError(f"There is already a label “{new}”." if new else "Type a name for the label.")
-        files = self.file_labels()
-        before = self._label_places(files)
-        for x in names:
-            if x["name"] == old:
-                x["name"] = new
-        self._save_labels(names, {k: [new if v == old else v for v in labels] for k, labels in files.items()})
-        self._relabel(before)
-
-    def set_label_folder(self, name: str, folder: str) -> None:
-        names = self.labels()
-        before = self._label_places([k for k, v in self.file_labels().items() if name in v])
-        for x in names:
-            if x["name"] == name:
-                x["folder"] = os.path.abspath(folder)
-        self._save_labels(names, self.file_labels())
-        self._relabel(before)
+        swap = lambda v: [new if x == old else x for x in v]                       # noqa: E731
+        self._save_label_data(names=swap(self.labels()),
+                              files={k: swap(v) for k, v in self.users_labels().items()},
+                              ai={k: [[new if a == old else a, b] for a, b in v] for k, v in self.ai_labels().items()})
+        self._guesses = {}
 
     def remove_label(self, name: str) -> None:
-        """Take a label away from every file and forget it."""
-        files = self.file_labels()
-        before = self._label_places([k for k, v in files.items() if name in v])
-        self._save_labels([x for x in self.labels() if x["name"] != name],
-                          {k: [x for x in v if x != name] for k, v in files.items()})
-        self._relabel(before)
+        """Forget a label, on every file."""
+        self._save_label_data(names=[x for x in self.labels() if x != name],
+                              files={k: [x for x in v if x != name] for k, v in self.users_labels().items()},
+                              ai={k: [x for x in v if x[0] != name] for k, v in self.ai_labels().items()})
+        self._guesses = {}
+
+    def label_guesses(self, path: str) -> list[tuple[str, int, str]]:
+        """Every label a file has, surest first: (label, percent, who or why). Users' own labels are 100%."""
+        key = path_key(path)
+        mine = next((v for k, v in self.users_labels().items() if path_key(k) == key), None)
+        if mine is not None:
+            return [(label, 100, "You") for label in mine]
+        ai = next((v for k, v in self.ai_labels().items() if path_key(k) == key), None)
+        if ai:
+            return [(a, int(b), "AI") for a, b in sorted(ai, key=lambda x: -x[1])]
+        return list(getattr(self, "_guesses", {}).get(key, []))
+
+    def labels_of(self, path: str, sure: int = 50) -> list[str]:
+        """The labels a file has (users' own, or guessed at least this sure)."""
+        return [label for label, percent, _ in self.label_guesses(path) if percent >= sure]
 
     def set_labels(self, paths: list[str], name: str, on: bool) -> None:
-        """Give files a label (or take it away). The folder for all of a file's labels becomes its destination."""
-        files = self.file_labels()
-        before = self._label_places(paths)
+        """Give files a label, or take it away. A file's labels become users' own: what SortZen or the AI
+        guessed for it is kept, with this change."""
+        files = self.users_labels()
         for path in paths:
             key = next((k for k in files if path_key(k) == path_key(path)), os.path.abspath(path))
-            labels = [x for x in files.get(key, []) if x != name]
+            labels = [x for x in (files[key] if key in files else self.labels_of(path)) if x != name]
             files[key] = labels + [name] if on else labels
-        self._save_labels(self.labels(), files)
-        self._relabel(before)
+        self._save_label_data(files=files)
+        self._learned(len(paths))
 
-    def _label_places(self, paths) -> dict[str, str | None]:
-        return {p: self.label_destination(self.labels_of(p)) for p in paths}
+    def guess_labels(self, emit=None) -> int:
+        """Label the files SortZen knows on this PC (users' and the AI's labels are kept). Returns how many
+        files have a label now."""
+        from ..engine.labeling import guess_labels
 
-    def label_destination(self, labels: list[str]) -> str | None:
-        """Where a file with these labels goes. Labels are taken in the order they were made: a label whose
-        folder is inside the folder so far goes deeper, one whose folder holds it adds nothing, and any other
-        adds a subfolder with its name ("Work" and "Taxes": Work/Taxes)."""
-        folders = {x["name"]: x["folder"] for x in self.labels()}
-        ordered = [x["name"] for x in self.labels() if x["name"] in labels and folders.get(x["name"])]
-        if not ordered:
-            return None
-        place = folders[ordered[0]]
-        for name in ordered[1:]:
-            folder = folders[name]
-            if _inside(path_key(folder), path_key(place)):
-                place = folder
-            elif not _inside(path_key(place), path_key(folder)):
-                place = os.path.join(place, name)
-        return os.path.normpath(place)
-
-    def _relabel(self, before: dict[str, str | None]) -> None:
-        """Files' destinations follow their labels (``before``: where their labels sent them). A file with no
-        labels left forgets the folder its labels chose; a folder users picked some other way stays."""
-        current = self.corrections()
-        for path, old in before.items():
-            key = next((k for k in current if path_key(k) == path_key(path)), os.path.abspath(path))
-            place = self.label_destination(self.labels_of(path))
-            if place:
-                current[key] = place
-            elif old and key in current and path_key(current[key]) == path_key(old):
-                del current[key]
-        self.settings.set("corrections", current)
-
-    def suggested_labels(self, plan: Plan) -> dict[str, list[str]]:
-        """Labels that fit where SortZen would send unlabelled files: the labels whose folders hold it."""
         names = self.labels()
-        if not names:
-            return {}
-        labelled = {path_key(k) for k in self.file_labels()}
+        if not names or not self._records:
+            self._guesses = {}
+            return 0
+        if emit:
+            emit(Status("Labelling", f"{len(self._records):,} files"))
+        known = {k: v for k, v in self.users_labels().items()}
+        for k, v in self.ai_labels().items():
+            known.setdefault(k, [a for a, b in v if b >= 50])
+        guesses = guess_labels(list(self._records.values()), names, known, self.file_notes())
+        self._guesses = {path_key(k): v for k, v in guesses.items()}
+        return sum(1 for r in self._records.values() if self.labels_of(r.path))
+
+    def _effective_labels(self) -> dict[str, list[tuple[str, int]]]:
         found = {}
-        for s in plan.files:
-            if not s.destination or path_key(s.path) in labelled:
-                continue
-            fits = [x["name"] for x in names if _inside(path_key(s.destination), path_key(x["folder"]))]
-            if fits:
-                found[s.path] = fits
+        for r in self._records.values():
+            labels = [(label, percent) for label, percent, _ in self.label_guesses(r.path) if percent >= 50]
+            if labels:
+                found[r.path] = labels
         return found
 
-    def _label_reasons(self, plan: Plan) -> None:
+    def _apply_labels(self, plan: Plan) -> None:
+        """Labels as evidence for folders (from the folders' labelled files and where users put files)."""
+        from ..engine.labeling import folder_labels, label_evidence
+
+        names = self.labels()
+        if not names:
+            return
+        labelled = self._effective_labels()
+        if not labelled:
+            return
+        valid = self._ai_valid(plan)
+        folders = {}
+        for r in self._records.values():
+            folder = os.path.dirname(r.path)
+            if (r.role == "destination" or valid(folder)) and not self.is_left_out(folder):
+                folders[os.path.normcase(folder)] = folder
+        corrections = self.corrections()
+        corrected = {path_key(p) for p in corrections}
+        label_evidence(plan, labelled, folder_labels(labelled, corrections), names, self.display,
+                       lambda p: path_key(p) in corrected, folders)
+
+    def unsure_files(self, plan: Plan) -> list:
+        """The files from the folders being sorted that need users: no sure label, or no sure folder."""
+        level = self.autonomy()
+        corrections = {path_key(p) for p in self.corrections()}
+        mine = {path_key(p) for p in self.users_labels()}
+        found = []
+        for s in plan.files:
+            record = self._records.get(s.path)
+            if record is None or record.role != "source" or s.topic or self.is_left_out(s.path):
+                continue
+            guesses = self.label_guesses(s.path)
+            label_unsure = bool(self.labels()) and path_key(s.path) not in mine and \
+                (not guesses or guesses[0][1] < LABEL_SURE)
+            folder_unsure = path_key(s.path) not in corrections and (s.destination is None or s.percent < level)
+            if label_unsure or folder_unsure:
+                found.append(s)
+        return found
+
+    # ---------------------------------------------------------------- learning
+    def _learned(self, n: int = 1) -> None:
+        self.settings.set("learned_since_plan", int(self.settings.get("learned_since_plan") or 0) + n)
+
+    def learned_since_plan(self) -> int:
+        """Changes users made since the plan was last made (labels, files placed, rules, notes)."""
+        return int(self.settings.get("learned_since_plan") or 0)
+
+    def ready_to_recatalog(self) -> bool:
+        return self.learned_since_plan() >= LEARNED_ENOUGH
+
+    # ---------------------------------------------------------------- file notes and kept-together folders
+    def file_notes(self) -> dict[str, str]:
+        """What users wrote about single files ("this one is for the 2023 audit")."""
+        return dict(self.settings.get("file_notes") or {})
+
+    def file_note(self, path: str) -> str:
+        key = path_key(path)
+        return next((v for k, v in self.file_notes().items() if path_key(k) == key), "")
+
+    def set_file_note(self, path: str, text: str) -> None:
+        notes = {k: v for k, v in self.file_notes().items() if path_key(k) != path_key(path)}
+        if (text or "").strip():
+            notes[os.path.abspath(path)] = text.strip()
+        self.settings.set("file_notes", notes)
+        self._learned()
+
+    def _apply_file_notes(self, plan: Plan) -> None:
+        """A note that names a folder sends the file there (users' words, so quite sure)."""
+        from ..engine.features import words as words_of
         from ..engine.plan import Reason
 
-        files = {path_key(k): v for k, v in self.file_labels().items()}
+        notes = {path_key(k): v for k, v in self.file_notes().items()}
+        if not notes:
+            return
+        corrected = {path_key(p) for p in self.corrections()}
+        valid = self._ai_valid(plan)
+        folders = {os.path.dirname(r.path) for r in self._records.values()
+                   if r.role == "destination" or valid(os.path.dirname(r.path))}
+        named = [(f, set(words_of(os.path.basename(f)))) for f in folders]
         for s in plan.files:
-            labels = files.get(path_key(s.path))
-            if labels and s.percent == 100:
-                s.reasons = [Reason(True, "Your labels: " + ", ".join(labels))]
+            note = notes.get(path_key(s.path))
+            if not note or path_key(s.path) in corrected:
+                continue
+            said = set(words_of(note))
+            fits = [(len(w), f) for f, w in named if w and w <= said]
+            if not fits:
+                continue
+            target = max(fits)[1]
+            if not s.destination or os.path.normcase(s.destination) != os.path.normcase(target):
+                if s.destination:
+                    s.runner_up = (s.destination, s.percent)
+                s.destination, s.new_folder = target, False
+            s.percent = max(s.percent, NOTE_PERCENT)
+            s.reasons.insert(0, Reason(True, f"Your note: “{note[:80]}”"))
+
+    def keep_folder_together(self, folder: str) -> None:
+        """A rule for a folder being sorted: everything in it moves together, as it is."""
+        from ..engine.overview import _folder_choices, folder_key
+        from ..engine.plan import KEEP_TOGETHER
+
+        source = next((f for f in self.source_folders() if _inside(path_key(folder), path_key(f["path"]))), None)
+        if source is None or path_key(source["path"]) == path_key(folder):
+            raise FolderError("Only folders inside a folder being sorted can be kept together.")
+        choices = _folder_choices(source["mode"])
+        keep = next((i for i, c in enumerate(choices) if c.outcome == KEEP_TOGETHER), None)
+        if keep is None:
+            raise FolderError("Folders being tidied stay where they are already.")
+        self.save_answers({folder_key(os.path.abspath(folder)): keep})
+        self._learned()
 
     # ---------------------------------------------------------------- similar and different
     def pairs(self) -> dict[str, list[list[str]]]:
@@ -752,12 +830,6 @@ class AppService:
         apply_pairs(plan, similar or [], different or [], home_of, self.display, lambda p: path_key(p) in corrected)
 
     # ---------------------------------------------------------------- to place
-    def to_place(self, plan: Plan) -> list:
-        """The files SortZen couldn't settle by itself, and the files users labelled: Suggestions, unsure first."""
-        unsure = {r.path for r in self._ai_unsure(plan)}
-        labelled = {path_key(k) for k in self.file_labels()}
-        return [s for s in plan.files if (s.path in unsure and not s.topic) or path_key(s.path) in labelled]
-
     def known_files(self) -> list[str]:
         """Every file SortZen knows from the last plan (to pick one a file is similar to or different from)."""
         return sorted(self._records, key=str.lower)
@@ -789,7 +861,7 @@ class AppService:
         for r in self.settings.get("rules") or []:
             try:
                 found.append(Rule(str(r.get("word") or ""), str(r["destination"]), str(r.get("ext") or ""),
-                                  str(r.get("shape") or ""), str(r.get("example") or "")))
+                                  str(r.get("shape") or ""), str(r.get("example") or ""), str(r.get("label") or "")))
             except (KeyError, TypeError):
                 continue
         return found
@@ -798,12 +870,14 @@ class AppService:
         """Save a rule. Returns the rules before, for Undo."""
         before = list(self.settings.get("rules") or [])
         self.settings.set("rules", before + [_rule_dict(rule)])
+        self._learned()
         return before
 
     def remove_rule(self, rule: Rule) -> list[dict]:
         before = list(self.settings.get("rules") or [])
         self.settings.set("rules", [r for r in before if Rule(r.get("word") or "", r["destination"], r.get("ext") or "",
-                                                              r.get("shape") or "").key != rule.key])
+                                                              r.get("shape") or "", label=r.get("label") or "").key
+                                    != rule.key])
         return before
 
     def restore_rules(self, before: list) -> None:
@@ -850,8 +924,16 @@ class AppService:
         others = [(s.path, s.destination, s.percent) for s in plan.files
                   if path_key(s.path) not in corrected and s.path in self._records
                   and self._records[s.path].role == "source" and not self.is_left_out(s.path)]
-        return suggest_rule(examples, os.path.abspath(destination), others, self.rules(),
-                            set(self.settings.get("declined_rules") or []))
+        declined = set(self.settings.get("declined_rules") or [])
+        if self.labels():
+            from ..engine.labeling import suggest_label_rule
+
+            labelled = [self.labels_of(p) for p, d in corrections.items() if d and path_key(d) == target]
+            found = suggest_label_rule(labelled, os.path.abspath(destination),
+                                       [(*o, self.labels_of(o[0])) for o in others], self.rules(), declined)
+            if found:
+                return found
+        return suggest_rule(examples, os.path.abspath(destination), others, self.rules(), declined)
 
     def _apply_meaning(self, plan: Plan) -> None:
         """Meaning as evidence for unsure files (skipped when the meaning model isn't installed)."""
@@ -889,7 +971,7 @@ class AppService:
             apply_rules(plan, rules, lambda f: not self.is_left_out(f)
                         and not any(is_queue_folder(part) for part in f.split(os.sep)),
                         lambda p: p in self._records and self._records[p].role == "source"
-                        and not self.is_left_out(p), self.display)
+                        and not self.is_left_out(p), self.display, self.labels_of)
 
     # ---------------------------------------------------------------- renaming folders
     def rename_folder(self, plan: Plan | None, folder: str, new_name: str, emit=None) -> RunResult | None:
@@ -934,7 +1016,7 @@ class AppService:
         mapping = {old: new}
         data = self.settings.data
         for key in ("corrections", "rules", "recent_destinations", "sources", "destinations", "left_out",
-                    "folder_notes", "catalog", "labels", "pairs"):
+                    "folder_notes", "catalog", "labels", "pairs", "file_notes"):
             if key in data:
                 data[key] = profile.remap(data[key], mapping)
         self.settings.save()
@@ -1030,13 +1112,16 @@ class AppService:
         merged = self.catalog_edits().get("merged") or {}
         if merged:                  # files for a merged category go to the one it was merged into
             rename_planned(plan, merged)
+        self.guess_labels(emit)
         self._apply_rules(plan)
         if self.option("meaning"):
             emit(Status("Matching by meaning", f"{len(records):,} files"))
             self._apply_meaning(plan)
         self._apply_ai(plan)
+        self._apply_labels(plan)
+        self._apply_file_notes(plan)
         self._apply_pairs(plan)
-        self._label_reasons(plan)
+        self.settings.set("learned_since_plan", 0)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
         return plan
@@ -1449,6 +1534,8 @@ def _rule_dict(rule: Rule) -> dict:
     found = {"word": rule.word, "ext": rule.ext, "destination": rule.destination}
     if rule.shape:
         found.update(shape=rule.shape, example=rule.example)
+    if rule.label:
+        found["label"] = rule.label
     return found
 
 

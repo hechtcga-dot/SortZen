@@ -228,7 +228,7 @@ class ToPlacePage(QWidget):
     save = Signal(dict)                          # question key -> choice number, a folder, or None
     label = Signal(list, str, bool)              # files, label, on or off
     new_label = Signal(list)                     # make a label, then give it to these files
-    edit_label = Signal(str, str)                # label, "rename" / "folder" / "remove"
+    edit_label = Signal(str, str)                # label, "rename" / "up" / "down" / "remove"
     pair = Signal(list, str)                     # files, "similar" or "different"
     forget_pairs = Signal(list)
     put_in_folder = Signal(list)                 # files to send to a folder chosen from a list
@@ -247,8 +247,8 @@ class ToPlacePage(QWidget):
         self.title = _label("To place", "pageTitle", wrap=False)
         col.addWidget(self.title)
         col.addWidget(_label("Give files labels such as Work, Taxes or Photo session: select files (Shift- or "
-                             "Ctrl-click, or a whole group) and click a label. A file's labels together choose its "
-                             "folder (Work and Taxes: Work/Taxes), and SortZen suggests labels for files like them. "
+                             "Ctrl-click, or a whole group) and click a label. Labels to the left count most. SortZen "
+                             "guesses labels for the rest and learns which folders they belong in. "
                              "Right-click to say a file is similar to, or different from, another file; that teaches "
                              "SortZen and moves nothing. Everything is remembered and can be undone.", "hint"))
         bar = QWidget(objectName="labelBar")
@@ -258,8 +258,8 @@ class ToPlacePage(QWidget):
 
         split = QSplitter(Qt.Orientation.Vertical)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["File", "Labels", "Goes to", "SortZen's guess", "Why"])
-        for column, width in enumerate((300, 160, 220, 240)):
+        self.tree.setHeaderLabels(["File", "Labels", "SortZen's guess", "Why"])
+        for column, width in enumerate((300, 220, 280)):
             self.tree.setColumnWidth(column, width)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setAlternatingRowColors(True)
@@ -318,16 +318,15 @@ class ToPlacePage(QWidget):
         caption.setMinimumHeight(QPushButton("X").sizeHint().height())
         caption.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.label_bar.addWidget(caption)
-        for x in self.service.labels():
-            button = QPushButton(x["name"])
-            button.setToolTip(f"Files with this label go to {self.service.display(x['folder'])}. Click to give the "
-                              "selected files this label, click again to take it away. Right-click to rename it, "
-                              "change its folder or remove it.")
-            button.clicked.connect(lambda _=False, n=x["name"]: self.toggle_label(n))
+        for name in self.service.labels():
+            button = QPushButton(name)
+            button.setToolTip("Click to give the selected files this label, click again to take it away. Labels to "
+                              "the left count more. Right-click to rename it, move it or remove it.")
+            button.clicked.connect(lambda _=False, n=name: self.toggle_label(n))
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            button.customContextMenuRequested.connect(lambda pos, n=x["name"], b=button: self._label_menu(n, b, pos))
+            button.customContextMenuRequested.connect(lambda pos, n=name, b=button: self._label_menu(n, b, pos))
             self.label_bar.addWidget(button)
-            self.label_buttons[x["name"]] = button
+            self.label_buttons[name] = button
         new = QPushButton("+ New label…")
         new.clicked.connect(lambda: self.new_label.emit(self.selected_paths()))
         self.label_bar.addWidget(new)
@@ -337,8 +336,8 @@ class ToPlacePage(QWidget):
         self.items: dict[str, SortItem] = {}
         if self.plan is None:
             return
-        suggestions = {os.path.normcase(s.path): s for s in self.service.to_place(self.plan)}
-        labelled = {os.path.normcase(k) for k in self.service.file_labels()}
+        suggestions = {os.path.normcase(s.path): s for s in self.service.unsure_files(self.plan)}
+        labelled = {os.path.normcase(k) for k in self.service.users_labels()}
         placed = set()
         for group in self.groups:
             lean = f" · most lean towards {self.service.display(group.suggestion)}" if group.suggestion else ""
@@ -382,29 +381,22 @@ class ToPlacePage(QWidget):
         """Labels, folders and reasons as they are now (after labelling, without a new plan)."""
         if self.plan is None:
             return
-        suggested = self.service.suggested_labels(self.plan)
         muted = self.palette().placeholderText()
         for item in self.items.values():
             s = item.suggestion
-            labels = self.service.labels_of(s.path)
-            if labels:
-                item.setText(1, ", ".join(labels))
-                item.setForeground(1, self.palette().text())
-                item.setText(2, self.service.display(self.service.label_destination(labels) or ""))
-            else:
-                guess = suggested.get(s.path)
-                item.setText(1, ", ".join(f"{n}?" for n in guess) if guess else "")
-                item.setForeground(1, muted)
-                item.setToolTip(1, "Suggested from SortZen's guess: click the label to agree" if guess else "")
-                item.setText(2, "")
-            item.setText(3, f"{s.percent}% · {self.service.display(s.destination)}" if s.destination else "No folder fits")
-            item.setToolTip(3, item.text(3))
+            guesses = self.service.label_guesses(s.path)
+            mine = bool(guesses) and guesses[0][2] == "You"
+            item.setText(1, ", ".join(g[0] if mine else f"{g[0]}? {g[1]}%" for g in guesses))
+            item.setForeground(1, self.palette().text() if mine else muted)
+            item.setToolTip(1, "\n".join(f"{g[0]}: {g[1]}% ({g[2]})" for g in guesses))
+            item.setText(2, f"{s.percent}% · {self.service.display(s.destination)}" if s.destination else "No folder fits")
+            item.setToolTip(2, item.text(2))
             said = self.service.pairs_of(s.path)
             why = [f"You said: {'similar to' if kind == 'similar' else 'different from'} “{os.path.basename(other)}”"
                    for kind, other in said]
             why += [r.text for r in s.reasons[:2] if not r.text.startswith("You said")]
-            item.setText(4, "; ".join(why))
-            item.setToolTip(4, "\n".join(why))
+            item.setText(3, "; ".join(why))
+            item.setToolTip(3, "\n".join(why))
         self._selection_changed()
 
     # ---------------------------------------------------------------- choosing
@@ -438,7 +430,8 @@ class ToPlacePage(QWidget):
     def _label_menu(self, name: str, button, pos) -> None:
         menu = QMenu(self)
         menu.addAction("Rename…", lambda: self.edit_label.emit(name, "rename"))
-        menu.addAction("Change its folder…", lambda: self.edit_label.emit(name, "folder"))
+        menu.addAction("Move left (counts more)", lambda: self.edit_label.emit(name, "up"))
+        menu.addAction("Move right (counts less)", lambda: self.edit_label.emit(name, "down"))
         menu.addAction("Remove the label", lambda: self.edit_label.emit(name, "remove"))
         menu.exec(button.mapToGlobal(pos))
 
@@ -454,12 +447,12 @@ class ToPlacePage(QWidget):
         some = f"these {len(paths):,} files" if len(paths) != 1 else "this file"
         menu = QMenu(self)
         labels = menu.addMenu("Labels")
-        for x in self.service.labels():
-            action = labels.addAction(x["name"])
+        for name in self.service.labels():
+            action = labels.addAction(name)
             action.setCheckable(True)
-            have = all(x["name"] in self.service.labels_of(p) for p in paths)
+            have = all(name in self.service.labels_of(p) for p in paths)
             action.setChecked(have)
-            action.triggered.connect(lambda _=False, n=x["name"], h=have: self.label.emit(paths, n, not h))
+            action.triggered.connect(lambda _=False, n=name, h=have: self.label.emit(paths, n, not h))
         labels.addSeparator()
         labels.addAction("New label…", lambda: self.new_label.emit(paths))
         menu.addAction(f"Similar to another file…", lambda: self.pair.emit(paths, "similar"))
@@ -487,5 +480,5 @@ class ToPlacePage(QWidget):
 
     def count(self) -> int:
         unlabelled = sum(1 for k, item in getattr(self, "items", {}).items()
-                         if not self.service.labels_of(item.suggestion.path))
+                         if not self.service.labels_of(item.suggestion.path, 70))
         return unlabelled + sum(1 for c in self.cards if c.question.answer is None)
