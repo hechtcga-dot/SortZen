@@ -620,3 +620,49 @@ class CatalogTest(unittest.TestCase):
         self.assertEqual(self.service.move_runs()[0]["kind"], "catalog")
         self.service.undo_move(result.log)
         self.assertEqual(len(os.listdir(budget)), 2)
+
+
+class CatalogSuggestionsTest(CatalogTest):
+    def test_local_and_ai_suggestions_accept_and_turn_down(self):
+        import json
+
+        from sortzen.ai.provider import AIProvider, AIResponse, TokenUsage
+
+        payroll = str(self.sorted / "Work" / "Payroll")
+        for i in range(5):
+            (Path(payroll) / f"Timesheet week {i}.txt").write_text("hours", encoding="utf-8")
+        (Path(payroll) / "Holiday schedule.txt").write_text("days off", encoding="utf-8")
+        self.service.category_feedback(payroll, "too_broad", "timesheets are mixed in")
+        local = self.service.catalog_suggestions()
+        split = next(s for s in local if s.kind == "split" and s.category == payroll)
+        self.assertEqual(split.parts[0][0], "Timesheet")
+        requests = self.service.split_requests(split)
+        self.assertEqual(len(requests), 5)
+        result = self.service.reorganize(requests)
+        self.assertEqual(len(os.listdir(Path(payroll) / "Timesheet")), 5)
+        self.service.undo_move(result.log)
+        self.assertFalse((Path(payroll) / "Timesheet").exists())
+
+        numbers = {os.path.basename(c.path): n for n, c in enumerate(self.service.catalog(), start=1)}
+
+        class Reviewer(AIProvider):
+            sent = []
+
+            def generate_json(self, model, contents):
+                Reviewer.sent.append(contents[0])
+                return AIResponse(json.dumps({"suggestions": [
+                    {"kind": "rename", "category": numbers["Recipes"], "name": "Cooking", "why": "clearer"},
+                    {"kind": "merge", "category": numbers["Budget"], "into": numbers["Payroll"], "why": "same"},
+                    {"kind": "new", "category": numbers["Work"], "name": "Contracts", "note": "signed contracts"},
+                    {"kind": "rename", "category": 999, "name": "Nowhere"}]}), TokenUsage(800, 200, 1000))
+
+        found = self.service.ask_ai_about_catalog(provider=Reviewer())
+        self.assertEqual([s.kind for s in found], ["rename", "merge", "new"])
+        self.assertIn("feedback: too broad - timesheets are mixed in", Reviewer.sent[0])
+        self.assertNotIn("pay register march", Reviewer.sent[0])          # never file contents
+        self.assertEqual(found[0].source, "Gemini")
+        self.assertGreater(self.service.ai_spent(), 0)
+        self.service.decline_suggestion(found[0])
+        waiting = self.service.catalog_suggestions()
+        self.assertNotIn(found[0].key, {s.key for s in waiting})
+        self.assertIn(found[1].key, {s.key for s in waiting})

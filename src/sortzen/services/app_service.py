@@ -109,6 +109,7 @@ class AppService:
         self.ai_answers = AIAnswers(self.paths.database_path)
         self._records: dict = {}            # the last plan's files, by path
         self._embedder = None               # the meaning model (loaded when first needed)
+        self._ai_catalog: list = []          # the AI's last suggestions for the catalog
 
     # ---------------------------------------------------------------- AI service
     def ai_service(self) -> str:
@@ -360,8 +361,7 @@ class AppService:
     def catalog(self, plan: Plan | None = None) -> list:
         """Every category, parents first: from the destination folders and the folders being tidied."""
         roots = self.destination_folders() + [f["path"] for f in self.source_folders() if f["mode"] == TIDY]
-        records = list(self._records.values()) if self._records else None
-        return catalog_model.build(roots, self.catalog_edits(), self.folder_notes(), self.rules(), records)
+        return catalog_model.build(roots, self.catalog_edits(), self.folder_notes(), self.rules())
 
     def catalog_hidden(self) -> list[str]:
         """Folders of categories files are never sent to."""
@@ -409,6 +409,60 @@ class AppService:
         if kind not in catalog_model.FEEDBACK:
             raise ValueError(f"Unknown feedback: {kind}")
         self._set_catalog(catalog_model.with_feedback(self.catalog_edits(), folder, kind, text))
+
+    def catalog_suggestions(self, categories: list | None = None) -> list:
+        """Improvements to the catalog worked out on the PC, with the AI's last ones still waiting."""
+        from ..engine.catalog_review import review
+
+        categories = categories if categories is not None else self.catalog()
+        declined = set(self.catalog_edits().get("declined") or [])
+        waiting = [s for s in self._ai_catalog if s.key not in declined]
+        return waiting + review(categories, declined)
+
+    def decline_suggestion(self, suggestion) -> None:
+        """Never suggest this again."""
+        edits = self.catalog_edits()
+        edits["declined"] = list(edits.get("declined") or []) + [suggestion.key]
+        self._set_catalog(edits)
+        self._ai_catalog = [s for s in self._ai_catalog if s.key != suggestion.key]
+
+    def catalog_ai_estimate(self) -> dict:
+        from ..ai import catalog_review as ai_review
+
+        service = SERVICES[self.ai_service()]
+        return {"service": service.name, "local": service.key == "ollama",
+                "cost": ai_review.estimate(service.key, self.catalog(), self.display),
+                "categories": len(self.catalog())}
+
+    def ask_ai_about_catalog(self, emit=None, token=None, provider=None) -> list:
+        """The AI service's suggestions for the catalog (names, counts, notes, a few example names and
+        feedback are sent; never file contents)."""
+        from ..ai import catalog_review as ai_review
+
+        emit = emit or (lambda event: None)
+        categories = self.catalog()
+        service = SERVICES[self.ai_service()]
+        emit(Status(f"Asking {service.name} about the catalog", f"{len(categories):,} categories"))
+        try:
+            provider = provider or self.provider()
+            reply = provider.generate_json(self.model(), [ai_review.request(categories, self.display)])
+        except Exception as exc:
+            raise AIProblem(explain(exc, service.name, self.model())) from exc
+        from ..ai.costs import cost
+        self._add_spent(cost(service.key, reply.usage.input_tokens, reply.usage.output_tokens))
+        declined = set(self.catalog_edits().get("declined") or [])
+        self._ai_catalog = [s for s in ai_review.parse(reply.text, categories, self.display, service.name)
+                            if s.key not in declined]
+        return self._ai_catalog
+
+    def split_requests(self, suggestion) -> list[MoveRequest]:
+        """The moves a split makes: each part's files into a subfolder named after it."""
+        requests = []
+        for name, members in suggestion.parts:
+            folder = os.path.join(suggestion.category, name)
+            requests += [MoveRequest(os.path.join(suggestion.category, n), folder) for n in members
+                         if os.path.exists(os.path.join(suggestion.category, n))]
+        return requests
 
     def add_subcategory(self, parent: str, name: str, note: str = "") -> str:
         """A new, empty subfolder for a category, with what belongs in it. Returns its folder."""
