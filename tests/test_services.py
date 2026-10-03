@@ -670,6 +670,74 @@ class CatalogTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(tart))
 
 
+class LabelsTest(CatalogTest):
+    def test_labels_choose_folders_together(self):
+        work, recipes = str(self.sorted / "Work"), str(self.sorted / "Recipes")
+        self.assertEqual(self.service.label_folder_choices("work"), [work, str(self.sorted / "work")])
+        self.service.add_label("Work")
+        self.service.add_label("Taxes")                                      # no folder yet: a new one
+        self.service.add_label("Payroll")
+        self.service.add_label("Baking", recipes)
+        with self.assertRaises(ValueError):
+            self.service.add_label("taxes")
+        with self.assertRaises(ValueError):
+            self.service.add_label("a/b")
+        self.assertEqual(self.service.labels()[1], {"name": "Taxes", "folder": str(self.sorted / "Taxes")})
+        d = self.service.label_destination
+        self.assertEqual(d(["Work"]), work)
+        self.assertEqual(d(["Taxes", "Work"]), os.path.join(work, "Taxes"))     # made-first label leads
+        self.assertEqual(d(["Work", "Payroll"]), os.path.join(work, "Payroll"))  # a label inside goes deeper
+        self.assertIsNone(d([]))
+
+    def test_labelled_files_go_to_their_folder_and_can_be_unlabelled(self):
+        work = str(self.sorted / "Work")
+        cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
+        self.service.add_label("Work")
+        self.service.add_label("Taxes")
+        self.service.set_labels([cake, budget], "Work", True)
+        self.service.set_labels([budget], "Taxes", True)
+        self.assertEqual(self.service.labels_of(budget), ["Work", "Taxes"])
+        self.assertEqual(self.service.corrections()[cake], work)
+        self.assertEqual(self.service.corrections()[budget], os.path.join(work, "Taxes"))
+        plan = self.service.make_plan()
+        s = plan.for_path(budget)
+        self.assertEqual((s.destination, s.percent), (os.path.join(work, "Taxes"), 100))
+        self.assertEqual(s.reasons[0].text, "Your labels: Work, Taxes")
+        self.assertEqual([x.path for x in self.service.to_place(plan)], [budget, cake])   # labelled ones stay listed
+        self.service.rename_label("Taxes", "Tax")
+        self.assertEqual(self.service.corrections()[budget], os.path.join(work, "Tax"))
+        self.service.remove_label("Tax")
+        self.assertEqual(self.service.corrections()[budget], work)
+        self.service.set_labels([budget, cake], "Work", False)
+        self.assertEqual(self.service.corrections(), {})                     # their labels' folders are forgotten
+        self.assertEqual(self.service.file_labels(), {})
+
+    def test_suggested_labels_follow_sortzens_guess(self):
+        self.service.add_label("Baking", str(self.sorted / "Recipes"))
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        self.assertEqual(self.service.suggested_labels(self.plan).get(cake), ["Baking"])
+
+    def test_similar_and_different_change_percentages_only(self):
+        cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
+        tart = str(self.sorted / "Recipes" / "Lemon tart.txt")
+        before = self.plan.for_path(budget)
+        self.service.pair_files([budget], tart, "similar", self.plan)
+        after = self.plan.for_path(budget)
+        self.assertIn("You said it's like “Lemon tart.txt”", " ".join(r.text for r in after.reasons))
+        self.assertEqual(self.service.pairs_of(budget), [("similar", tart)])
+        self.service.pair_files([cake], tart, "different")
+        self.assertEqual(self.service.pairs_of(budget), [("similar", tart)])
+        plan = self.service.make_plan()
+        self.assertLessEqual(plan.for_path(cake).percent, 60)
+        self.assertNotIn(os.path.normcase(cake), {os.path.normcase(p) for p in self.service.corrections()})
+        self.service.pair_files([budget], tart, "different")                 # replaces what was said before
+        self.assertEqual(self.service.pairs_of(budget), [("different", tart)])
+        self.service.forget_pairs([budget, cake])
+        self.assertEqual(self.service.pairs(), {"similar": [], "different": []})
+        self.assertTrue(os.path.isfile(cake) and os.path.isfile(budget))   # nothing moved
+        self.assertIsNotNone(before)
+
+
 class CatalogSuggestionsTest(CatalogTest):
     def test_local_and_ai_suggestions_accept_and_turn_down(self):
         import json
