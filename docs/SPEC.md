@@ -106,7 +106,15 @@ decision; when the code and this file disagree, this file wins until it is chang
   program details (.exe: product and company, read through Windows). Google link files
   count as documents, spreadsheets, presentations or forms; the account they belong to is
   not recorded.
-- PDFs with no typed text are marked as scans (reading them needs OCR, after the alpha).
+- Also read: older Word, Excel and PowerPoint files (.doc, .xls, .ppt: their text and
+  title), Outlook emails (.msg) and saved emails (.eml: subject, sender's name, the
+  beginning of the message), RTF, OpenDocument (.odt, .ods, .odp) and web pages.
+- **Text in scans and pictures** (Settings › General, on by default): scanned PDFs (no
+  typed text) and pictures that aren't camera photos, such as screenshots and scans, are
+  read with the text recognition built into Windows 10 and 11, on the PC; nothing is sent
+  anywhere. A scanned PDF's first page is drawn as a picture first. Each file is read once
+  and remembered; files read before this was available are read once more. Without
+  Windows text recognition (or its language), files are sorted by name and details.
 - Text is kept up to 20,000 characters per file. Files over 50 MB (other than photos,
   archives and programs) are sorted by name and details only.
 - A damaged file is still listed and sorted by name and details, with the reason shown.

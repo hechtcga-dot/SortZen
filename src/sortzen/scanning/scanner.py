@@ -77,6 +77,7 @@ class Scanner:
         self.protected = protected_roots() if protected is None else [path_key(p) for p in protected]
         self.read_google_drive = read_google_drive
         self.pause = 0.0            # seconds to rest after each file read ("Be gentle with my computer")
+        self.ocr = None             # text recognition for scans and pictures of documents, when switched on
 
     def scan(self, root, role: str, recursive: bool, exclude=(), emit=None, token=None,
              listing=None, names_only=()) -> ScanSummary:
@@ -113,11 +114,11 @@ class Scanner:
                 names = bool(names_keys) and any(_inside(key, n) for n in names_keys)
                 if (previous and previous.size == st.st_size and previous.modified_ns == st.st_mtime_ns
                         and previous.cloud_only == cloud and previous.role == role
-                        and (names or not previous.details.get("names_only")) and not needs_reread(previous)):
+                        and (names or not previous.details.get("names_only")) and not needs_reread(previous, self.ocr is not None)):
                     record = previous
                     summary.remembered += 1
                 else:
-                    record = self._read(path, str(root), role, st, cloud, contents=not names)
+                    record = self._read(path, str(root), role, st, cloud, contents=not names, ocr=self.ocr)
                     if record is None:
                         summary.skip("in use")
                         continue
@@ -215,7 +216,7 @@ class Scanner:
                     emit(Status("Listing files", f"{name}: {len(entries):,} found"))
 
     @staticmethod
-    def _read(path: str, root: str, role: str, st, cloud: bool, contents: bool = True) -> FileRecord | None:
+    def _read(path: str, root: str, role: str, st, cloud: bool, contents: bool = True, ocr=None) -> FileRecord | None:
         name = os.path.basename(path)
         ext = os.path.splitext(name)[1].lower()
         record = FileRecord(path=path, root=path_key(root), role=role, name=name, ext=ext, kind=kind_of(ext),
@@ -233,7 +234,7 @@ class Scanner:
             record.error = f"Couldn't read the file: {exc}"[:300]
             return record
         try:
-            record.details, record.text = read_contents(Path(path), record.kind, ext, st.st_size)
+            record.details, record.text = read_contents(Path(path), record.kind, ext, st.st_size, ocr)
             if ext in REREAD_EXTS:
                 record.details["reader"] = READER_VERSION
         except Exception as exc:  # damaged or unusual file: sorted by name and details

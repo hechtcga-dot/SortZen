@@ -64,7 +64,23 @@ def self_test(report_path: str) -> int:
         from PIL import Image  # noqa: F401
 
         genai.Client(api_key="self-test")          # the AI library loads (no network call)
+        import io
+
+        import pypdfium2
+        from pypdf import PdfWriter
+
+        blank = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.write(blank)
+        pdf = pypdfium2.PdfDocument(blank.getvalue())
+        pdf[0].render(scale=0.5).to_pil()           # scanned pages can be drawn for text recognition
+        pdf.close()
         checks["libraries"] = True
+        from ..scanning import ocr
+
+        found = ocr.recognizer()
+        checks["text_recognition"] = "available" if found else ocr.why_unavailable()
         window = MainWindow(AppService())
         window.show()
         app.processEvents()
@@ -72,7 +88,7 @@ def self_test(report_path: str) -> int:
         window.close()
     except Exception:
         checks["error"] = traceback.format_exc()
-    ok = bool(checks) and all(v is True for v in checks.values())
+    ok = bool(checks) and all(v is True for k, v in checks.items() if k != "text_recognition")
     checks["ok"] = ok
     try:
         with open(report_path, "w", encoding="utf-8") as f:

@@ -10,6 +10,9 @@ from PySide6.QtWidgets import (
 from .ai_widgets import AIServiceBox, PrivacyListsBox, PrivacyModeBox, hint
 
 OPTION_TEXT = {
+    "read_scans": ("Read text in scans and pictures of documents",
+                   "Uses the text recognition built into Windows, on this PC: nothing is sent anywhere. Scanned "
+                   "PDFs and pictures that aren't camera photos (screenshots, scans) are read once and remembered."),
     "gentle": ("Be gentle with my computer", "SortZen works at the lowest priority with short rests, so other "
                                              "programs stay quick and the fan stays quiet. Plans take a little longer."),
     "stop_reading_learned": ("Stop reading left-out folders once SortZen has learned enough from them",
@@ -59,7 +62,7 @@ class SettingsWindow(QDialog):
         g.addWidget(self.ask_all)
         g.addWidget(hint("Nothing goes to Ready: every file waits in Review for you."))
         self.options = {}
-        for name in ("gentle",):
+        for name in ("read_scans", "gentle"):
             g.addWidget(self._option(name))
         self.tabs.addTab(_page(general), "General")
 

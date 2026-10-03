@@ -26,6 +26,7 @@ from ..engine.planner import SORT_OUT, TIDY
 from ..mover import Mover, MoveRequest, RunResult
 from ..mover.mover import same_contents
 from ..scanning.file_types import GOOGLE_LINKS, QUEUE_FOLDER, is_queue_folder
+from ..scanning import ocr
 from ..scanning.scanner import Scanner
 from ..tasks import Estimate, JobRunner, Progress, Status
 from ..tasks.gentle import gentle
@@ -36,6 +37,7 @@ DEFAULTS = {                    # settings with on/off values, and their default
     "gentle": False,            # "Be gentle with my computer": lowest priority, short rests
     "read_google_drive": False,  # read file contents on Google Drive (may download them)
     "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
+    "read_scans": True,         # read text in scans and pictures of documents (Windows text recognition, on this PC)
 }
 AI_DEFAULTS = {                 # what the AI step may send, and how much it may spend
     "ai_enabled": True,
@@ -513,6 +515,7 @@ class AppService:
         emit = emit or (lambda event: None)
         self.scanner.read_google_drive = self.option("read_google_drive")
         self.scanner.pause = GENTLE_PAUSE if self.option("gentle") else 0.0
+        self.scanner.ocr = ocr.recognizer() if self.option("read_scans") else None
         sources = self.source_folders()
         if not sources:
             raise FolderError("Add a folder to sort first.")

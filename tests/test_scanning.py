@@ -387,11 +387,83 @@ class MoreFileTypesTest(unittest.TestCase):
     def test_older_reads_of_new_kinds_are_read_again(self):
         from sortzen.scanning.readers import READER_VERSION, needs_reread
 
-        old = SimpleNamespace(ext=".doc", details={})
-        self.assertTrue(needs_reread(old))
-        self.assertFalse(needs_reread(SimpleNamespace(ext=".doc", details={"reader": READER_VERSION})))
-        self.assertFalse(needs_reread(SimpleNamespace(ext=".pdf", details={})))
+        def record(ext, details):
+            return SimpleNamespace(ext=ext, kind="", size=1000, cloud_only=False, details=details)
+
+        self.assertTrue(needs_reread(record(".doc", {})))
+        self.assertFalse(needs_reread(record(".doc", {"reader": READER_VERSION})))
+        self.assertFalse(needs_reread(record(".pdf", {})))
 
     def test_web_page(self):
         _, text = self.read("page.html", "<html><head><style>p{}</style></head><body>Garden &amp; seeds</body></html>")
         self.assertEqual(text, "Garden & seeds")
+
+
+class TextRecognitionTest(unittest.TestCase):
+    """Scans and pictures of documents are read with text recognition; camera photos are not."""
+
+    class Fake:
+        def __init__(self):
+            self.pictures = []
+
+        def read(self, png):
+            self.pictures.append(png)
+            return "Northgate invoice 454 total due"
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.dir.name)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_scanned_pdf_and_screenshot_are_read_camera_photo_is_not(self):
+        from PIL import Image
+
+        from sortzen.scanning.readers import read_contents
+        from tests.fixtures.make_test_folders import write_pdf
+
+        scan = self.base / "48213.pdf"
+        write_pdf(scan, [])                                  # a page with no typed text
+        fake = self.Fake()
+        details, text = read_contents(scan, "pdf", ".pdf", scan.stat().st_size, fake)
+        self.assertTrue(details["ocr"])
+        self.assertIn("Northgate invoice", text)
+        self.assertTrue(fake.pictures[0].startswith(b"\x89PNG"))
+        shot = self.base / "Screenshot 2024-05-01.png"
+        Image.effect_noise((400, 300), 60).convert("RGB").save(shot)
+        details, text = read_contents(shot, "image", ".png", shot.stat().st_size, fake)
+        self.assertIn("Northgate", text)
+        typed = self.base / "typed.pdf"
+        write_pdf(typed, ["Already has words"])
+        _, text = read_contents(typed, "pdf", ".pdf", typed.stat().st_size, fake)
+        self.assertNotIn("Northgate", text)                  # PDFs with text aren't read again
+        self.assertEqual(len(fake.pictures), 2)
+
+    def test_remembered_scans_are_read_once_recognition_is_available(self):
+        from sortzen.scanning.readers import needs_reread
+
+        scan = SimpleNamespace(ext=".pdf", kind="pdf", size=50_000, cloud_only=False, details={"no_text": True})
+        self.assertFalse(needs_reread(scan, ocr=False))
+        self.assertTrue(needs_reread(scan, ocr=True))
+        scan.details["ocr_tried"] = True
+        self.assertFalse(needs_reread(scan, ocr=True))
+        photo = SimpleNamespace(ext=".jpg", kind="image", size=900_000, cloud_only=False,
+                                details={"camera": "Pixelcam PX-9"})
+        self.assertFalse(needs_reread(photo, ocr=True))
+
+    @unittest.skipUnless(os.name == "nt", "Windows text recognition needs Windows")
+    def test_windows_reads_a_picture_of_text(self):
+        from PIL import Image, ImageDraw, ImageFont
+
+        from sortzen.scanning import ocr
+
+        found = ocr.recognizer()
+        if found is None:
+            self.skipTest(ocr.why_unavailable())
+        picture = self.base / "note.png"
+        image = Image.new("RGB", (900, 220), "white")
+        ImageDraw.Draw(image).text((30, 60), "INVOICE 2024 GARDEN", fill="black", font=ImageFont.load_default(64))
+        image.save(picture)
+        text = ocr.read_text(found, picture, ".png")
+        self.assertIn("INVOICE", text.upper())

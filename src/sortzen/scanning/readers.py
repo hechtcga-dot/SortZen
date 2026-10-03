@@ -17,6 +17,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from .file_types import GOOGLE_LINKS
+from .ocr import read_text, wants_ocr
 
 logging.getLogger("pypdf").setLevel(logging.ERROR)     # damaged PDFs are recorded, not printed
 
@@ -40,8 +41,23 @@ _CORE = {
 _EXIF_MAKE, _EXIF_MODEL, _EXIF_DATETIME, _EXIF_IFD, _EXIF_TAKEN = 0x010F, 0x0110, 0x0132, 0x8769, 0x9003
 
 
-def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str]:
-    ext = ext.lower()
+def read_contents(path: Path, kind: str, ext: str, size: int, ocr=None) -> tuple[dict, str]:
+    """Details and text. ``ocr`` (a text recognizer) reads scans and pictures of documents."""
+    details, text = _read_contents(path, kind, ext.lower(), size)
+    if ocr is not None and wants_ocr(ext.lower(), kind, size, details):
+        details["ocr_tried"] = True
+        try:
+            found = read_text(ocr, path, ext.lower())
+        except Exception as exc:          # an unusual picture: sorted by name and details
+            details["ocr_error"] = f"{type(exc).__name__}: {exc}"[:200]
+            found = ""
+        if found.strip():
+            details["ocr"] = True
+            text = _cap(f"{text}\n{found}" if text else found)
+    return details, text
+
+
+def _read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str]:
     if size > MAX_CONTENT_BYTES and kind not in ("image", "archive", "installer"):
         return {}, ""
     if ext in GOOGLE_LINKS:
@@ -77,10 +93,15 @@ def read_contents(path: Path, kind: str, ext: str, size: int) -> tuple[dict, str
     return {}, ""
 
 
-def needs_reread(record) -> bool:
-    """A remembered file this version reads better than the version that read it."""
-    return record.ext in REREAD_EXTS and record.details.get("reader", 1) < READER_VERSION \
-        and not record.details.get("names_only")
+def needs_reread(record, ocr: bool = False) -> bool:
+    """A remembered file this version reads better than the version that read it, or a scan or picture
+    of a document not yet read with text recognition (when ``ocr`` is available)."""
+    if record.details.get("names_only") or record.cloud_only:
+        return False
+    if record.ext in REREAD_EXTS and record.details.get("reader", 1) < READER_VERSION:
+        return True
+    return ocr and not record.details.get("ocr_tried") and wants_ocr(record.ext, record.kind, record.size,
+                                                                     record.details)
 
 
 def _cap(text: str) -> str:

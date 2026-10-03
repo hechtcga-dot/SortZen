@@ -5,7 +5,7 @@
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).resolve().parent
 SRC = ROOT / "src"
@@ -19,9 +19,13 @@ datas = [
     (str(ROOT / "packaging" / "sortzen.ico"), "sortzen/ui/assets"),
 ]
 datas += collect_data_files("google.genai")
+datas += collect_data_files("pypdfium2") + collect_data_files("pypdfium2_raw")    # drawing scanned PDF pages
+binaries = collect_dynamic_libs("pypdfium2_raw")
 hiddenimports = collect_submodules("google.genai", filter=lambda name: ".tests" not in name) + [
     "PySide6.QtSvg", "keyring.backends.Windows", "win32ctypes.core",
 ]
+if sys.platform.startswith("win"):                  # Windows text recognition
+    hiddenimports += collect_submodules("winrt")
 
 # Qt parts SortZen does not use (a smaller program that starts faster).
 excludes = [
@@ -40,6 +44,7 @@ a = Analysis(
     [str(ROOT / "packaging" / "launcher.py")],
     pathex=[str(SRC)],
     datas=datas,
+    binaries=binaries,
     hiddenimports=hiddenimports,
     excludes=excludes,
     noarchive=False,
