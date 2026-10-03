@@ -29,6 +29,7 @@ class AIFolder:
     path: str
     shown: str                      # as users see it, e.g. "Sorted/Documents/Work"
     examples: list[str] = field(default_factory=list)
+    note: str = ""                  # what users wrote about the folder
 
 
 @dataclass
@@ -82,7 +83,8 @@ class AISorter:
         lines += ["", "Folders:"]
         for number, f in enumerate(folders, start=1):
             examples = "; ".join(f.examples)
-            lines.append(f"{number}: {f.shown}" + (f" (e.g. {examples})" if examples else ""))
+            lines.append(f"{number}: {f.shown}" + (f" [holds: {f.note}]" if f.note else "")
+                         + (f" (e.g. {examples})" if examples else ""))
         return "\n".join(lines)
 
     def request(self, folders: list[AIFolder], batch: list[AIFile], with_content: bool, pictures: bool = True) -> list:

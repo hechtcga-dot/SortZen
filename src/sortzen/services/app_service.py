@@ -348,6 +348,27 @@ class AppService:
         recent = [f for f in self.settings.get("recent_destinations") or [] if path_key(f) != path_key(folder)]
         self.settings.set("recent_destinations", [folder, *recent][:RECENT_DESTINATIONS])
 
+    # ---------------------------------------------------------------- folder notes
+    def folder_notes(self) -> dict[str, str]:
+        """What users wrote about folders ("pay stubs, T4s, timesheets"), by folder."""
+        return dict(self.settings.get("folder_notes") or {})
+
+    def set_folder_note(self, folder: str, text: str) -> dict[str, str]:
+        """Write (or, with empty text, remove) a folder's note. Returns the notes before, for Undo."""
+        before = self.folder_notes()
+        notes = {k: v for k, v in before.items() if path_key(k) != path_key(folder)}
+        if (text or "").strip():
+            notes[os.path.abspath(folder)] = text.strip()
+        self.settings.set("folder_notes", notes)
+        return before
+
+    def restore_folder_notes(self, before: dict[str, str]) -> None:
+        self.settings.set("folder_notes", dict(before))
+
+    def folder_note(self, folder: str) -> str:
+        key = path_key(folder)
+        return next((v for k, v in self.folder_notes().items() if path_key(k) == key), "")
+
     # ---------------------------------------------------------------- rules
     def rules(self) -> list[Rule]:
         found = []
@@ -468,7 +489,8 @@ class AppService:
         """Choices, rules, recent folders and added folders that point into a renamed folder follow it."""
         mapping = {old: new}
         data = self.settings.data
-        for key in ("corrections", "rules", "recent_destinations", "sources", "destinations", "left_out"):
+        for key in ("corrections", "rules", "recent_destinations", "sources", "destinations", "left_out",
+                    "folder_notes"):
             if key in data:
                 data[key] = profile.remap(data[key], mapping)
         self.settings.save()
@@ -553,7 +575,8 @@ class AppService:
         started = time.perf_counter()
         planner = Planner(records, [Source(f["path"], f["mode"]) for f in sources],
                           [c.root for c in counts[len(sources):]],
-                          answers=self.answers(), corrections=self.corrections(), left_out=self.left_out())
+                          answers=self.answers(), corrections=self.corrections(), left_out=self.left_out(),
+                          notes=self.folder_notes())
         plan = planner.plan()
         plan.copies = find_copies(records, plan, self.is_left_out)
         self._records = {r.path: r for r in records}
@@ -718,8 +741,9 @@ class AppService:
         folders = [f for f in self.destination_choices(plan) if valid(f)]
         folders.sort(key=lambda f: -len(files_in.get(f, [])))
         folders = sorted(folders[:AI_MAX_FOLDERS], key=lambda f: self.display(f).lower())
-        listed = [AIFolder(f, self.display(f), [privacy.scrub_name(n) for n in sorted(files_in.get(f, []))[:AI_EXAMPLES]])
-                  for f in folders]
+        notes = {path_key(k): v for k, v in self.folder_notes().items()}
+        listed = [AIFolder(f, self.display(f), [privacy.scrub_name(n) for n in sorted(files_in.get(f, []))[:AI_EXAMPLES]],
+                           notes.get(path_key(f), "")) for f in folders]
         unsure = self._ai_unsure(plan)
         remembered = self.ai_answers.get_many([answer_key(r) for r in unsure])
         sending = self.ai_value("ai_privacy") == privacy.BEGINNING
