@@ -18,14 +18,19 @@ src/sortzen/
                        privacy.py (scrubbing, name-only rules, previews), costs.py (prices),
                        sorter.py (two passes in batches, spending cap)
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
-  scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, text, photos, zip,
-                       programs), fingerprints, scanner (skip rules, remembered results)
+  scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, older Office files,
+                       emails, RTF, OpenDocument, web pages, text, photos, zip, programs),
+                       ocr.py (Windows text recognition for scans and pictures), fingerprints,
+                       scanner (skip rules, remembered results)
+  meaning/             matching by meaning: a static embedding model on the PC (the model
+                       itself is downloaded by packaging/get_meaning_model.py, not committed)
   engine/              sorting engine (never touches files): features.py (clues from names,
                        contents, kinds), planner.py (folder profiles, suggestions, percentages,
                        reasons, corrections), overview.py (subfolders, kept-together folders,
                        topics, questions, answers, programs, versions and copies),
                        duplicates.py (exact copies, the copy
-                       kept and why), ai_evidence.py (AI answers as evidence), rules.py (rules
+                       kept and why), ai_evidence.py (AI answers as evidence), meaning.py (meaning
+                       as evidence), rules.py (rules
                        users make, rule suggestions, renamed planned folders), groups.py
                        (groups of unsure files), plan.py (Suggestion, FolderSuggestion, Topic, Question,
                        Plan)
@@ -45,7 +50,8 @@ src/sortzen/
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
                        settings_window.py,
                        sortable.py (click-to-sort columns), theme, fonts (OFL), icon
-packaging/             launcher.py (entry point), sortzen.spec (PyInstaller program folder),
+packaging/             launcher.py (entry point), get_meaning_model.py (downloads the meaning
+                       model before tests and builds), sortzen.spec (PyInstaller program folder),
                        sortzen.iss (per-user Inno Setup installer), make_icon.py, README.txt
                        (shipped with each build), BUILD_WINDOWS.bat (local build)
 tests/                 unittest suites (window tests run offscreen)
@@ -63,7 +69,9 @@ pip install -r requirements-dev.txt
 python -m unittest discover -s tests -t .           # run tests (must stay green)
 python packaging/launcher.py                        # run the program
 python tests/fixtures/make_test_folders.py OUT      # build the test folders in OUT
+python packaging/get_meaning_model.py               # download the meaning model (once)
 python -m tests.engine_score                        # grade the engine against the answer key
+python -m tests.meaning_score                       # grade matching by meaning (needs the model)
 python packaging/launcher.py --self-test=out.json   # start, check bundled pieces, exit
 python packaging/launcher.py --remove-data          # forget keys, delete settings (uninstaller)
 ```

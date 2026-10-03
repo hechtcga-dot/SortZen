@@ -164,6 +164,17 @@ overview of what is there:
 - When AI is on, it receives the folder tree and the topic summaries once per run
   (names only, as the privacy settings allow) to suggest homes and structure.
 
+- **Matching by meaning** (Settings › General, on by default): a small model on the PC
+  (a static embedding model of about 30 MB, bundled with the program; nothing is sent
+  anywhere) turns a file's name, title and the start of its text into a meaning, and each
+  folder that can receive files into a meaning profile: the average of its files, its name
+  and its note. For files SortZen isn't sure about:
+  - when the closest folder by meaning is the one SortZen suggests, the percentage rises
+    a little ("By meaning, most like what is in “Payroll”"), up to 95%;
+  - when SortZen had no good suggestion and one folder is clearly closest, that folder is
+    suggested at 65% at most, so the file waits in Review with the reason shown.
+  Files users placed, files placed by rules and topic members keep what they have.
+
 ### 2. To place: groups and questions
 The **To place** tab (between Folders and Plan) holds what SortZen couldn't settle:
 - **Groups of files with no clear home**: the files waiting in Review from the folders

@@ -444,3 +444,30 @@ class FolderNotesTest(unittest.TestCase):
             after = service.make_plan().for_path(sheet)
             self.assertEqual(after.destination, str(base / "Sorted" / "Payroll"))
             self.assertTrue(any("Your note on “Payroll” mentions “timesheet”" in r.text for r in after.reasons))
+
+
+class MeaningTest(unittest.TestCase):
+    def test_meaning_raises_agreeing_and_suggests_for_homeless_files(self):
+        import numpy as np
+
+        from sortzen.engine.meaning import ALONE_MAX, apply_meaning
+        from sortzen.engine.plan import Plan, Reason, Suggestion
+
+        folders = ["/s/Payroll", "/s/Recipes"]
+        matrix = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+        plan = Plan(files=[Suggestion("/d/q3 hours.txt", "/d", "/s/Payroll", 60),
+                           Suggestion("/d/stub.txt", "/d", None, 0),
+                           Suggestion("/d/odd.txt", "/d", None, 0),
+                           Suggestion("/d/mine.txt", "/d", "/s/Recipes", 100, [Reason(True, "You chose this folder")])])
+        vectors = {"/d/q3 hours.txt": np.array([0.9, 0.1], dtype=np.float32),
+                   "/d/stub.txt": np.array([0.95, 0.05], dtype=np.float32),
+                   "/d/odd.txt": np.array([0.5, 0.5], dtype=np.float32),       # no folder clearly closer
+                   "/d/mine.txt": np.array([1.0, 0.0], dtype=np.float32)}
+        changed = apply_meaning(np, plan, vectors, folders, matrix, lambda p: p)
+        agreeing, homeless, unclear, mine = plan.files
+        self.assertEqual(changed, 2)
+        self.assertEqual(agreeing.percent, 72)                             # 60 + 40 * 0.3
+        self.assertIn("By meaning", agreeing.reasons[0].text)
+        self.assertEqual((homeless.destination, homeless.percent), ("/s/Payroll", ALONE_MAX))
+        self.assertIsNone(unclear.destination)
+        self.assertEqual(mine.destination, "/s/Recipes")
