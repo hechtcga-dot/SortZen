@@ -1,4 +1,4 @@
-SortZen 0.3 - README
+SortZen 0.4 - README
 ====================
 
 SortZen sorts messy folders, such as Downloads or a cloud drive, into the right folders.
@@ -9,7 +9,7 @@ Every move can be undone.
 
 Installing
 ----------
-1. Run SortZen-Setup-0.3.0.exe. No administrator rights are needed; SortZen installs for
+1. Run SortZen-Setup-0.4.0.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over an
    earlier version keeps your settings, answers and choices.
 2. SortZen isn't code-signed yet, so Windows may show "Windows protected your PC".
@@ -68,8 +68,21 @@ Your privacy
   uninstall, SortZen asks whether to remove them and your saved API keys too.
 
 
-What's new in 0.3
+What's new in 0.4
 -----------------
+- Catalog tab: your categories and subcategories as a tree built from your folders, with
+  their files, notes, rules and example files. Rename a category, add a subcategory, write
+  what belongs in it, give it another folder (for example on a cloud drive), merge it into
+  another, or say "Don't put files here". Everything can be undone.
+- Feedback on each category: "Looks right", "Too broad: split it", "Too narrow: merge it",
+  "Wrong name", or a comment in your own words.
+- Suggestions to accept or turn down: SortZen proposes splits, merges and empty categories
+  from your feedback, and "Ask AI to review..." asks the AI service for improvements
+  (names, counts, notes, a few example names and your feedback are sent; never file
+  contents; the cost is shown first).
+
+Also in 0.3
+-----------
 - To place tab (instead of Questions): files with no clear home in groups, such as
   "39 PDFs whose names are only numbers". Pick or type a folder and "Put them there" sends
   the whole group; "Also files like these in future plans" makes a rule. Questions can be

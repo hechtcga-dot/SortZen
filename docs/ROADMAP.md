@@ -50,7 +50,7 @@ moves files after the plan is confirmed.
 | 23 | Catalog: categories from folders, edits, hidden and merged categories in plans | **Done** |
 | 24 | Catalog feedback and suggestions (on the PC and from the AI) | **Done** |
 | 25 | Catalog tab | **Done** |
-| 26 | **Alpha 0.4 build** | To do |
+| 26 | **Alpha 0.4 build** | **Done** |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).
