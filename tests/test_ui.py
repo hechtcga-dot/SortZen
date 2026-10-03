@@ -451,6 +451,8 @@ class MainWindowTest(unittest.TestCase):
         self.assertFalse(made.exists())
         budget = str(root / "Sorted" / "Documents" / "Work" / "Budget")
         files = len(os.listdir(budget))
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))
+        self.window.run_job("count", lambda emit, token: time.sleep(1) or [])   # a count still running
         self.window.merge_category(budget, payroll, move_files=True)
         self.assertTrue(wait_until(self.app, lambda: getattr(self.window, "result_dialog", None) is not None))
         self.assertEqual(os.listdir(budget), [])

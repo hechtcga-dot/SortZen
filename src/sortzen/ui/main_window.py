@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
             self._reorganize(requests)
 
     def _reorganize(self, requests) -> None:
-        if self.service.jobs.busy:
+        if not self._free_for_job():
             return
         self.progress = ProgressWindow(self, "Reorganizing the catalog", estimate=max(2.0, len(requests) / 50))
         self.progress.stop.connect(self.service.stop_job)
@@ -424,7 +424,7 @@ class MainWindow(QMainWindow):
         self.catalog_page.refresh()
 
     def ask_ai_about_catalog(self, confirm: bool = True) -> None:
-        if self.service.jobs.busy:
+        if not self._free_for_job():
             return
         if not self.service.ai_ready():
             QMessageBox.information(self, APP_NAME, "Choose an AI service and its key first (Edit › Settings › AI).")
@@ -821,7 +821,7 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- moving
     def move_rows(self, rows, confirm: bool = True) -> None:
         """Show what will move; after confirmation move it in the background."""
-        if not rows or self.plan is None or self.service.jobs.busy:
+        if not rows or self.plan is None or not self._free_for_job():
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -841,7 +841,7 @@ class MainWindow(QMainWindow):
     def queue_copies(self, groups, confirm: bool = True) -> None:
         """Move the ticked extra copies into "Queued for deletion" folders after confirmation."""
         ticked = [(g, c) for g in groups for c in g.extras if c.ticked]
-        if not ticked or self.service.jobs.busy:
+        if not ticked or not self._free_for_job():
             return
         size = human_size(sum(g.size for g, _ in ticked))
         if confirm and QMessageBox.question(
@@ -859,7 +859,7 @@ class MainWindow(QMainWindow):
 
     def ask_ai(self, confirm: bool = True) -> None:
         """Ask the AI service about unsure files after showing what is sent and what it may cost."""
-        if self.plan is None or self.service.jobs.busy:
+        if self.plan is None or not self._free_for_job():
             return
         if confirm and not AskAIDialog(self, self.service, self.plan).exec():
             return
@@ -892,10 +892,7 @@ class MainWindow(QMainWindow):
 
     def undo_run(self, log: str, confirm: bool = True) -> None:
         """Put everything from one move back where it was, in the background."""
-        if self.service.jobs.busy and self.service.jobs.current.name == "count":
-            self.service.jobs.current.join(30)          # counting is quick; let it finish
-        if self.service.jobs.busy:
-            QMessageBox.information(self, APP_NAME, "SortZen is still working. Try again when it has finished.")
+        if not self._free_for_job():
             return
         run = next((r for r in self.service.move_runs() if r["log"] == log), None)
         if run is None or run["undone"]:
@@ -957,6 +954,15 @@ class MainWindow(QMainWindow):
         self.undo_action.setText(f"Undo {self.undo_stack[-1][0].lower()}" if self.undo_stack else "Undo")
 
     # ---------------------------------------------------------------- background jobs
+    def _free_for_job(self) -> bool:
+        """True when nothing runs in the background; a file count is let finish first."""
+        if self.service.jobs.busy and self.service.jobs.current.name == "count":
+            self.service.jobs.current.join(30)          # counting is quick; let it finish
+        if self.service.jobs.busy:
+            QMessageBox.information(self, APP_NAME, "SortZen is still working. Try again when it has finished.")
+            return False
+        return True
+
     def run_job(self, name: str, work):
         """Start ``work(emit, token)`` in the background; its events update the status bar."""
         return self.service.run_job(name, work, self.bridge.post)
@@ -975,8 +981,9 @@ class MainWindow(QMainWindow):
         elif isinstance(event, Log):
             self.statusBar().showMessage(event.message, 5000)
         elif isinstance(event, (JobFinished, JobFailed)):
-            if self.service.jobs.current:
-                self.service.jobs.current.join(5)    # the job reports just before its thread ends
+            job = self.service.jobs.current
+            if job and job.name == event.name:
+                job.join(5)                          # the job reports just before its thread ends
             self._job_ended(event)
 
     def _job_ended(self, event) -> None:
@@ -986,8 +993,9 @@ class MainWindow(QMainWindow):
         else:
             log.info("%s finished", event.name)
         if isinstance(event, JobFinished):
-            self._close_progress()
-            self.statusBar().showMessage("Ready")
+            if event.name != "count":                # a count has no window; a later job's stays open
+                self._close_progress()
+                self.statusBar().showMessage("Ready")
             if event.name == "count":
                 self.folders_page.set_counts(event.result or [])
                 if self._plan_waiting:
@@ -1010,7 +1018,8 @@ class MainWindow(QMainWindow):
                 else:
                     self.show_plan(event.result)
         elif isinstance(event, JobFailed):
-            self._close_progress()
+            if event.name != "count":
+                self._close_progress()
             if event.name == "count" and self._plan_waiting:
                 self._plan_waiting = False
                 self.make_plan()
@@ -1019,7 +1028,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
             if event.name in ("ai", "catalog-ai"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
-            if event.name in ("move", "undo-move", "queue"):
+            if event.name in ("move", "undo-move", "queue", "catalog-move"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
                                     "is written down; Edit › Undo a move puts it back.")
 
