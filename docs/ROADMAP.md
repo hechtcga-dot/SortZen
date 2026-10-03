@@ -52,6 +52,14 @@ moves files after the plan is confirmed.
 | 25 | Catalog tab | **Done** |
 | 26 | **Alpha 0.4 build** | **Done** |
 
+### Alpha 0.5
+| # | Phase | Status |
+|---|-------|--------|
+| 27 | Catalog: files dragged onto categories (and from Explorer), learned as users' choice; delete to a queued folder; folders added | **Done** |
+| 28 | Labels (several per file, choosing the folder together) and similar / different files as evidence | **Done** |
+| 29 | To place tab rebuilt around labels | **Done** |
+| 30 | **Alpha 0.5 build** | Waiting for the go-ahead |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is

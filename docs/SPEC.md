@@ -175,18 +175,41 @@ overview of what is there:
     suggested at 65% at most, so the file waits in Review with the reason shown.
   Files users placed, files placed by rules and topic members keep what they have.
 
-### 2. To place: groups and questions
-The **To place** tab (between Folders and Plan) holds what SortZen couldn't settle:
-- **Groups of files with no clear home**: the files waiting in Review from the folders
-  being sorted, gathered by the kind of name they have ("39 PDFs whose names are only
-  numbers", "17 PDFs named like “INV10197.pdf”") or a word they share ("13 files with
-  “letter” in the name"); at least 3 files each, biggest first, 30 at most. Each group
-  shows the folder most of its files lean towards, a folder box (recently chosen folders
-  first, then every folder; a folder can be typed as shown, e.g. "Sorted/Work/Scans", or
-  as the name of a new folder, which is made in the first destination folder), Browse…,
-  and "Put them there". "Also files like these in future plans" makes a rule for them
-  (names that are only numbers, names like “IMG_1234”, or the shared word, with the
-  file type). "Show the files" lists them. Placing a group can be undone.
+### 2. To place: labels, similar files, groups and questions
+The **To place** tab (between Folders and Plan) holds what SortZen couldn't settle, as one
+list: the files waiting in Review from the folders being sorted, gathered into groups by
+the kind of name they have ("39 PDFs whose names are only numbers", "17 PDFs named like
+“INV10197.pdf”") or a word they share ("13 files with “letter” in the name"; at least 3
+files each, biggest first, 30 at most, each with the folder most of its files lean
+towards), then "Other files SortZen isn't sure about", then "Labelled". Each file shows its
+labels, where its labels send it, SortZen's guess with its percentage, and why. Files are
+chosen with Shift- or Ctrl-click, or a whole group at once.
+- **Labels**: users make labels ("Work", "Taxes", "Photo session") in the label bar or
+  with right-click › Labels › New label…. Each label has a folder: one already named like
+  it (the shallowest), a new folder with its name in the first destination folder, or any
+  folder chosen. Clicking a label gives it to the selected files; clicking it again when
+  they all have it takes it away. A file can have several labels, and they choose its
+  folder together, taken in the order the labels were made: a label whose folder is inside
+  the folder so far goes deeper, one whose folder holds it adds nothing, and any other adds
+  a subfolder named after it (Work and Taxes: Work/Taxes). A labelled file goes to that
+  folder at 100% ("Your labels: Work, Taxes"), counts as an example of the folder, and
+  feeds rule suggestions. Files without labels show, greyed, the labels that fit SortZen's
+  guess ("Taxes?"). Labels can be renamed, given another folder or removed (right-click a
+  label); files follow at once.
+- **Similar to / different from**: right-click › "Similar to another file…" or "Different
+  from another file…", then pick the file by typing part of its name. This is evidence,
+  never a move: "similar to" makes SortZen surer when its guess is the other file's folder
+  (halfway towards 100%, at most 95%), leans an unsure file (no folder, or under 60%)
+  towards it at 60%, and makes a guess elsewhere less sure (80% of its percentage).
+  "Different from" drops a guess for the other file's folder to at most 30%, or switches to
+  the runner-up. The other file's folder is where it is, or where the plan sends it. What
+  was said shows in the Why column and can be forgotten (right-click).
+- **Put in a folder**: right-click a group › "Put all in a folder…" (a folder box, recent
+  folders first, typed as shown, e.g. "Sorted/Work/Scans", or a new folder's name, which is
+  made in the first destination folder; "Also files like these in future plans" makes a
+  rule for them), or right-click files › "Put in a folder…".
+- Every label, label change and similar/different can be undone; "Update the plan" makes
+  the plan again with them.
 - **Questions**, most important first and at most 10 per run, each with its suggested
   answers and "Another folder:" with the same folder box. Each question names what was
   found and offers choices, e.g.:
@@ -500,6 +523,22 @@ and when):
       is shown; the AI suggests renames, merges, splits (subcategories with the words of
       the files that belong in them) and new subcategories.
   - Catalog edits are saved with profiles and follow renamed folders.
+- **0.5**: everything in 0.4, plus:
+  - **Catalog files**: below the categories, the files in the selected category (name,
+    size, when changed; "Show files" hides them). Files, several at a time, and categories
+    are dragged onto a category, or dropped onto it from Windows Explorer; after
+    confirmation they move there, logged like any move, and each file's new folder is
+    remembered as users' choice, so plans keep it there, learn from it for similar files
+    and suggest rules. A category moved into another keeps its name, note and settings.
+    Undo puts everything back and forgets the choices. Right-click files: Move to a category
+    (recent folders first), Delete, Open; the Delete key deletes.
+  - **Deleting** moves files into a dated "Queued for deletion" folder in the folder they
+    were added with (as for copies); users delete that folder themselves when sure.
+  - **Adding folders**: "Add a folder…" (or right-click the empty space below the
+    categories), or a folder dropped there from Explorer, adds it to the catalog as a
+    destination folder; Add a subcategory makes a new folder inside a category.
+  - **Labels** and **similar / different** on the To place tab (§7.2), which lists every
+    unsure file instead of one card per group.
 - Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned
