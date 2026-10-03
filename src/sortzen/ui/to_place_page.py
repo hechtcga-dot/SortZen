@@ -1,20 +1,27 @@
-"""The To place tab: groups of files SortZen couldn't place, and its questions, each answered with any folder.
+"""The To place tab: the files SortZen couldn't place, labelled by users, and its questions.
 
-A group ("39 PDFs whose names are only numbers") goes to the folder picked or typed, in one go, and
-can become a rule for files like them in future plans. A question can take one of its suggested
-answers or any other folder.
+Users make labels ("Work", "Taxes", "Photo session"), select files (several at once, or a whole group
+such as "39 PDFs whose names are only numbers") and click a label. A file's labels together choose its
+folder (Work and Taxes: Work/Taxes), and SortZen suggests labels for files like them. Users can also say
+a file is similar to, or different from, another file: that makes SortZen surer or less sure, and
+never moves anything by itself. A group can go to any folder in one go, and become a rule. A question
+can take one of its suggested answers or any other folder.
 """
 from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QRadioButton,
-    QScrollArea, QVBoxLayout, QWidget,
+    QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame,
+    QHBoxLayout, QLabel, QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QPushButton, QRadioButton,
+    QScrollArea, QSplitter, QTreeWidget, QVBoxLayout, QWidget,
 )
 
-MAX_NAMES_SHOWN = 60
+from .sortable import SortItem, natural
+
+PATH = Qt.ItemDataRole.UserRole
+MAX_PICKED_SHOWN = 300
 
 
 def _label(text: str, name: str = "", wrap: bool = True) -> QLabel:
@@ -66,47 +73,123 @@ class FolderPicker(QWidget):
         return self.service.resolve_folder(text, self.plan)
 
 
-class GroupCard(QFrame):
-    def __init__(self, page, group, folders, recent):
-        super().__init__(objectName="card")
-        self.group = group
+class FlowLayout(QLayout):
+    """Buttons in rows that wrap when the window is narrow."""
+
+    def __init__(self, parent=None, spacing: int = 6):
+        super().__init__(parent)
+        self._items = []
+        self.setSpacing(spacing)
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._place(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._place(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        return size
+
+    def _place(self, rect, move: bool) -> int:
+        x, y, line = rect.x(), rect.y(), 0
+        for item in self._items:
+            hint = item.sizeHint()
+            if x + hint.width() > rect.right() and line > 0:
+                x, y, line = rect.x(), y + line + self.spacing(), 0
+            if move:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + self.spacing()
+            line = max(line, hint.height())
+        return y + line - rect.y()
+
+
+class GroupDialog(QDialog):
+    """Send a whole group to one folder, and, when ticked, files like them in future plans."""
+
+    def __init__(self, parent, service, plan, group, folders, recent):
+        super().__init__(parent)
+        self.setWindowTitle("Put them in a folder")
+        self.setMinimumWidth(620)
         col = QVBoxLayout(self)
-        col.setContentsMargins(14, 12, 14, 12)
-        col.setSpacing(6)
-        lean = f" · most lean towards {page.service.display(group.suggestion)}" if group.suggestion else \
-            " · no folder fits them yet"
-        col.addWidget(_label(group.title + lean, "cardTitle"))
-        self.picker = FolderPicker(page.service, page.plan, folders, recent, group.suggestion)
-        row = QHBoxLayout()
-        row.addWidget(self.picker, 1)
-        self.put = QPushButton("Put them there", objectName="primary")
-        self.put.clicked.connect(self._put)
-        row.addWidget(self.put)
-        col.addLayout(row)
-        under = QHBoxLayout()
+        lean = f"Most lean towards {service.display(group.suggestion)}." if group.suggestion else \
+            "No folder fits them yet."
+        col.addWidget(_label(f"{group.title}. {lean}"))
+        self.picker = FolderPicker(service, plan, folders, recent, group.suggestion)
+        col.addWidget(self.picker)
         self.rule = QCheckBox("Also files like these in future plans (makes a rule)")
-        under.addWidget(self.rule)
-        under.addStretch(1)
-        self.toggle = QPushButton(f"Show the {len(group.paths):,} files")
-        self.toggle.setFlat(True)
-        self.toggle.clicked.connect(self._toggle)
-        under.addWidget(self.toggle)
-        col.addLayout(under)
-        names = [os.path.basename(p) for p in group.paths[:MAX_NAMES_SHOWN]]
-        more = len(group.paths) - len(names)
-        self.names = _label(", ".join(names) + (f" … and {more:,} more" if more > 0 else ""), "hint")
-        self.names.hide()
-        col.addWidget(self.names)
-        self.page = page
+        col.addWidget(self.rule)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.addButton("Put them there", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        col.addWidget(buttons)
 
-    def _toggle(self) -> None:
-        self.names.setVisible(not self.names.isVisible())
-        self.toggle.setText(("Hide" if self.names.isVisible() else "Show") + f" the {len(self.group.paths):,} files")
 
-    def _put(self) -> None:
-        folder = self.picker.folder()
-        if folder:
-            self.page.place_group.emit(self.group, folder, self.rule.isChecked())
+class FilePickerDialog(QDialog):
+    """Pick the file the selected files are similar to, or different from: type part of its name."""
+
+    def __init__(self, parent, files: list[str], display, title: str, prompt: str):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(640, 460)
+        self.files, self.display, self.chosen = files, display, None
+        col = QVBoxLayout(self)
+        col.addWidget(_label(prompt))
+        self.search = QLineEdit(placeholderText="Type part of the file's name")
+        self.search.textChanged.connect(self._fill)
+        col.addWidget(self.search)
+        self.list = QListWidget()
+        self.list.itemDoubleClicked.connect(lambda _: self._accept())
+        col.addWidget(self.list, 1)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        col.addWidget(buttons)
+        self._fill("")
+
+    def _fill(self, text: str) -> None:
+        words = text.lower().split()
+        self.list.clear()
+        shown = 0
+        for path in self.files:
+            if all(w in os.path.basename(path).lower() for w in words):
+                item = QListWidgetItem(f"{os.path.basename(path)}    ·    {self.display(os.path.dirname(path))}")
+                item.setData(PATH, path)
+                self.list.addItem(item)
+                shown += 1
+                if shown >= MAX_PICKED_SHOWN:
+                    break
+        if self.list.count():
+            self.list.setCurrentRow(0)
+
+    def _accept(self) -> None:
+        item = self.list.currentItem()
+        if item is not None:
+            self.chosen = item.data(PATH)
+            self.accept()
 
 
 class QuestionCard(QFrame):
@@ -143,56 +226,266 @@ class QuestionCard(QFrame):
 class ToPlacePage(QWidget):
     place_group = Signal(object, str, bool)      # group, folder, also make a rule
     save = Signal(dict)                          # question key -> choice number, a folder, or None
+    label = Signal(list, str, bool)              # files, label, on or off
+    new_label = Signal(list)                     # make a label, then give it to these files
+    edit_label = Signal(str, str)                # label, "rename" / "folder" / "remove"
+    pair = Signal(list, str)                     # files, "similar" or "different"
+    forget_pairs = Signal(list)
+    put_in_folder = Signal(list)                 # files to send to a folder chosen from a list
+    update_plan = Signal()
+    open_path = Signal(str)
 
     def __init__(self, service):
         super().__init__()
         self.service = service
         self.plan = None
+        self.groups = []
         self.cards: list[QuestionCard] = []
-        self.group_cards: list[GroupCard] = []
+        self.label_buttons: dict[str, QPushButton] = {}
         col = QVBoxLayout(self)
         col.setContentsMargins(16, 12, 16, 12)
         self.title = _label("To place", "pageTitle", wrap=False)
         col.addWidget(self.title)
-        col.addWidget(_label("Files SortZen couldn't place by itself, in groups you can send to one folder in one go, "
-                             "and its questions. Pick a folder from the list, type a folder (or a name for a new "
-                             "one), or browse. Everything is remembered and can be undone.", "hint"))
+        col.addWidget(_label("Give files labels such as Work, Taxes or Photo session: select files (Shift- or "
+                             "Ctrl-click, or a whole group) and click a label. A file's labels together choose its "
+                             "folder (Work and Taxes: Work/Taxes), and SortZen suggests labels for files like them. "
+                             "Right-click to say a file is similar to, or different from, another file; that teaches "
+                             "SortZen and moves nothing. Everything is remembered and can be undone.", "hint"))
+        bar = QWidget(objectName="labelBar")
+        bar.setStyleSheet("#labelBar { background: transparent; }")
+        self.label_bar = FlowLayout(bar)
+        col.addWidget(bar)
+
+        split = QSplitter(Qt.Orientation.Vertical)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["File", "Labels", "Goes to", "SortZen's guess", "Why"])
+        for column, width in enumerate((300, 160, 220, 240)):
+            self.tree.setColumnWidth(column, width)
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.itemSelectionChanged.connect(self._selection_changed)
+        self.tree.itemDoubleClicked.connect(lambda item, _: item.data(0, PATH) and self.open_path.emit(item.data(0, PATH)))
+        split.addWidget(self.tree)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        col.addWidget(self.scroll, 1)
+        split.addWidget(self.scroll)
+        split.setSizes([480, 220])
+        col.addWidget(split, 1)
         row = QHBoxLayout()
-        row.addStretch(1)
+        self.selection = _label("", "muted", wrap=False)
+        row.addWidget(self.selection, 1)
+        refresh = QPushButton("Update the plan")
+        refresh.setToolTip("Make the plan again with your labels and what you said about similar files")
+        refresh.clicked.connect(self.update_plan)
+        row.addWidget(refresh)
         self.button = QPushButton("Save answers and update the plan", objectName="primary")
         self.button.clicked.connect(lambda: self.save.emit(self.answers()))
         row.addWidget(self.button)
         col.addLayout(row)
+        self._selection_changed()
 
+    # ---------------------------------------------------------------- filling
     def set_contents(self, plan, groups, questions, folders: list[str], recent: list[str]) -> None:
-        self.plan = plan
+        self.plan, self.groups, self.folders, self.recent = plan, groups, folders, recent
+        self._fill_labels()
+        self._fill_files()
         body = QWidget()
-        col = QVBoxLayout(body)
-        col.setSpacing(10)
-        self.cards, self.group_cards = [], []
-        if groups:
-            col.addWidget(_label(f"Groups of files with no clear home ({len(groups)})", "sectionCaps"))
-            for group in groups:
-                card = GroupCard(self, group, folders, recent)
-                self.group_cards.append(card)
-                col.addWidget(card)
+        q = QVBoxLayout(body)
+        q.setSpacing(10)
+        self.cards = []
         if questions:
-            col.addWidget(_label(f"Questions ({len(questions)})", "sectionCaps"))
-            for q in questions:
-                card = QuestionCard(self, q, folders, recent)
+            q.addWidget(_label(f"Questions ({len(questions)})", "sectionCaps"))
+            for question in questions:
+                card = QuestionCard(self, question, folders, recent)
                 self.cards.append(card)
-                col.addWidget(card)
-        if not groups and not questions:
-            col.addWidget(_label("Nothing to place: SortZen settled everything on its own.", "hint"))
-        col.addStretch(1)
+                q.addWidget(card)
+        q.addStretch(1)
         self.scroll.setWidget(body)
+        self.scroll.setVisible(bool(questions))
         self.button.setVisible(bool(questions))
+
+    def _fill_labels(self) -> None:
+        while self.label_bar.count():
+            widget = self.label_bar.takeAt(0).widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+        self.label_buttons = {}
+        caption = _label("Labels:", "sectionCaps", wrap=False)
+        caption.setMinimumHeight(QPushButton("X").sizeHint().height())
+        caption.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.label_bar.addWidget(caption)
+        for x in self.service.labels():
+            button = QPushButton(x["name"])
+            button.setToolTip(f"Files with this label go to {self.service.display(x['folder'])}. Click to give the "
+                              "selected files this label, click again to take it away. Right-click to rename it, "
+                              "change its folder or remove it.")
+            button.clicked.connect(lambda _=False, n=x["name"]: self.toggle_label(n))
+            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            button.customContextMenuRequested.connect(lambda pos, n=x["name"], b=button: self._label_menu(n, b, pos))
+            self.label_bar.addWidget(button)
+            self.label_buttons[x["name"]] = button
+        new = QPushButton("+ New label…")
+        new.clicked.connect(lambda: self.new_label.emit(self.selected_paths()))
+        self.label_bar.addWidget(new)
+
+    def _fill_files(self) -> None:
+        self.tree.clear()
+        self.items: dict[str, SortItem] = {}
+        if self.plan is None:
+            return
+        suggestions = {os.path.normcase(s.path): s for s in self.service.to_place(self.plan)}
+        labelled = {os.path.normcase(k) for k in self.service.file_labels()}
+        placed = set()
+        for group in self.groups:
+            lean = f" · most lean towards {self.service.display(group.suggestion)}" if group.suggestion else ""
+            parent = self._heading(group.title + lean, group)
+            for path in group.paths:
+                s = suggestions.get(os.path.normcase(path))
+                if s is not None:
+                    self._file_row(parent, s)
+                    placed.add(os.path.normcase(path))
+        rest = [s for k, s in suggestions.items() if k not in placed and k not in labelled]
+        if rest:
+            parent = self._heading(f"Other files SortZen isn't sure about ({len(rest):,})")
+            for s in rest:
+                self._file_row(parent, s)
+        done = [s for k, s in suggestions.items() if k not in placed and k in labelled]
+        if done:
+            parent = self._heading(f"Labelled ({len(done):,})")
+            for s in done:
+                self._file_row(parent, s)
+        self.tree.expandAll()
+        self.refresh_rows()
+
+    def _heading(self, text: str, group=None) -> SortItem:
+        item = SortItem(self.tree, [text])
+        item.group = group
+        item.setFirstColumnSpanned(True)
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        return item
+
+    def _file_row(self, parent, s) -> None:
+        item = SortItem(parent, [os.path.basename(s.path)])
+        item.setData(0, PATH, s.path)
+        item.setToolTip(0, s.path)
+        item.set_key(0, natural(os.path.basename(s.path)))
+        item.suggestion = s
+        self.items[os.path.normcase(s.path)] = item
+
+    def refresh_rows(self) -> None:
+        """Labels, folders and reasons as they are now (after labelling, without a new plan)."""
+        if self.plan is None:
+            return
+        suggested = self.service.suggested_labels(self.plan)
+        muted = self.palette().placeholderText()
+        for item in self.items.values():
+            s = item.suggestion
+            labels = self.service.labels_of(s.path)
+            if labels:
+                item.setText(1, ", ".join(labels))
+                item.setForeground(1, self.palette().text())
+                item.setText(2, self.service.display(self.service.label_destination(labels) or ""))
+            else:
+                guess = suggested.get(s.path)
+                item.setText(1, ", ".join(f"{n}?" for n in guess) if guess else "")
+                item.setForeground(1, muted)
+                item.setToolTip(1, "Suggested from SortZen's guess: click the label to agree" if guess else "")
+                item.setText(2, "")
+            item.setText(3, f"{s.percent}% · {self.service.display(s.destination)}" if s.destination else "No folder fits")
+            item.setToolTip(3, item.text(3))
+            said = self.service.pairs_of(s.path)
+            why = [f"You said: {'similar to' if kind == 'similar' else 'different from'} “{os.path.basename(other)}”"
+                   for kind, other in said]
+            why += [r.text for r in s.reasons[:2] if not r.text.startswith("You said")]
+            item.setText(4, "; ".join(why))
+            item.setToolTip(4, "\n".join(why))
+        self._selection_changed()
+
+    # ---------------------------------------------------------------- choosing
+    def selected_paths(self) -> list[str]:
+        """The selected files, with every file of a selected group."""
+        found = []
+        for item in self.tree.selectedItems():
+            if item.data(0, PATH):
+                found.append(item.data(0, PATH))
+            else:
+                found += [item.child(i).data(0, PATH) for i in range(item.childCount())]
+        return list(dict.fromkeys(found))
+
+    def _selection_changed(self) -> None:
+        paths = self.selected_paths()
+        self.selection.setText(f"{len(paths):,} file{'s' if len(paths) != 1 else ''} selected" if paths else
+                               "Select files, then click a label")
+        for name, button in self.label_buttons.items():
+            button.setEnabled(bool(paths))
+            have = bool(paths) and all(name in self.service.labels_of(p) for p in paths)
+            button.setObjectName("primary" if have else "")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def toggle_label(self, name: str) -> None:
+        paths = self.selected_paths()
+        if paths:
+            on = not all(name in self.service.labels_of(p) for p in paths)
+            self.label.emit(paths, name, on)
+
+    def _label_menu(self, name: str, button, pos) -> None:
+        menu = QMenu(self)
+        menu.addAction("Rename…", lambda: self.edit_label.emit(name, "rename"))
+        menu.addAction("Change its folder…", lambda: self.edit_label.emit(name, "folder"))
+        menu.addAction("Remove the label", lambda: self.edit_label.emit(name, "remove"))
+        menu.exec(button.mapToGlobal(pos))
+
+    def _menu(self, pos) -> None:
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        if not item.isSelected():
+            self.tree.setCurrentItem(item)
+        paths = self.selected_paths()
+        if not paths:
+            return
+        some = f"these {len(paths):,} files" if len(paths) != 1 else "this file"
+        menu = QMenu(self)
+        labels = menu.addMenu("Labels")
+        for x in self.service.labels():
+            action = labels.addAction(x["name"])
+            action.setCheckable(True)
+            have = all(x["name"] in self.service.labels_of(p) for p in paths)
+            action.setChecked(have)
+            action.triggered.connect(lambda _=False, n=x["name"], h=have: self.label.emit(paths, n, not h))
+        labels.addSeparator()
+        labels.addAction("New label…", lambda: self.new_label.emit(paths))
+        menu.addAction(f"Similar to another file…", lambda: self.pair.emit(paths, "similar"))
+        menu.addAction(f"Different from another file…", lambda: self.pair.emit(paths, "different"))
+        if any(self.service.pairs_of(p) for p in paths):
+            menu.addAction("Forget what I said about similar files", lambda: self.forget_pairs.emit(paths))
+        menu.addSeparator()
+        group = getattr(item, "group", None)
+        if group is not None and not item.data(0, PATH):
+            menu.addAction(f"Put all {len(group.paths):,} in a folder…", lambda: self._put_group(group))
+        else:
+            menu.addAction(f"Put {some} in a folder…", lambda: self.put_in_folder.emit(paths))
+        if len(paths) == 1 and item.data(0, PATH):
+            menu.addAction("Open", lambda: self.open_path.emit(paths[0]))
+            menu.addAction("Open the folder it's in", lambda: self.open_path.emit(os.path.dirname(paths[0])))
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _put_group(self, group) -> None:
+        dialog = GroupDialog(self, self.service, self.plan, group, self.folders, self.recent)
+        if dialog.exec() and dialog.picker.folder():
+            self.place_group.emit(group, dialog.picker.folder(), dialog.rule.isChecked())
 
     def answers(self) -> dict:
         return {card.question.key: card.answer() for card in self.cards}
 
     def count(self) -> int:
-        return len(self.group_cards) + sum(1 for c in self.cards if c.question.answer is None)
+        unlabelled = sum(1 for k, item in getattr(self, "items", {}).items()
+                         if not self.service.labels_of(item.suggestion.path))
+        return unlabelled + sum(1 for c in self.cards if c.question.answer is None)

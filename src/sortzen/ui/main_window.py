@@ -106,6 +106,14 @@ class MainWindow(QMainWindow):
         self.to_place_page = ToPlacePage(self.service)
         self.to_place_page.save.connect(self.save_answers)
         self.to_place_page.place_group.connect(self.place_group)
+        self.to_place_page.label.connect(self.label_files)
+        self.to_place_page.new_label.connect(self.new_label)
+        self.to_place_page.edit_label.connect(self.edit_label)
+        self.to_place_page.pair.connect(self.pair_files)
+        self.to_place_page.forget_pairs.connect(self.forget_pairs)
+        self.to_place_page.put_in_folder.connect(self.put_in_folder)
+        self.to_place_page.update_plan.connect(self.make_plan)
+        self.to_place_page.open_path.connect(self.open_folder)
         self.plan_page = PlanPage(self.service)
         self.plan_page.change_destination.connect(self.change_destination)
         self.plan_page.leave_in_place.connect(self.leave_in_place)
@@ -754,15 +762,12 @@ class MainWindow(QMainWindow):
         groups = self.service.file_groups(plan)
         self.to_place_page.set_contents(plan, groups, plan.questions, self.service.destination_choices(plan),
                                          self.service.recent_destinations(plan))
-        waiting = self.to_place_page.count()
-        if (groups or plan.questions) and self.tabs.indexOf(self.to_place_page) < 0:
+        listed = bool(self.service.to_place(plan) or plan.questions)
+        if listed and self.tabs.indexOf(self.to_place_page) < 0:
             self.tabs.insertTab(self.tabs.indexOf(self.plan_page), self.to_place_page, "To place")
-        elif not (groups or plan.questions) and self.tabs.indexOf(self.to_place_page) >= 0:
+        elif not listed and self.tabs.indexOf(self.to_place_page) >= 0:
             self.tabs.removeTab(self.tabs.indexOf(self.to_place_page))
-        if self.tabs.indexOf(self.to_place_page) >= 0:
-            self.tabs.setTabText(self.tabs.indexOf(self.to_place_page),
-                                 f"To place ({waiting:,})" if waiting else "To place")
-        open_questions = waiting
+        open_questions = self._count_to_place()
         if plan.copies:
             if self.tabs.indexOf(self.copies_page) < 0:
                 self.tabs.insertTab(self.tabs.indexOf(self.plan_page) + 1, self.copies_page, "Copies")
@@ -773,6 +778,131 @@ class MainWindow(QMainWindow):
         self.copies_action.setEnabled(bool(plan.copies))
         self.ai_action.setEnabled(True)
         self.tabs.setCurrentWidget(self.to_place_page if open_questions else self.plan_page)
+
+    def _count_to_place(self) -> int:
+        waiting = self.to_place_page.count()
+        if self.tabs.indexOf(self.to_place_page) >= 0:
+            self.tabs.setTabText(self.tabs.indexOf(self.to_place_page),
+                                 f"To place ({waiting:,})" if waiting else "To place")
+        return waiting
+
+    # ---------------------------------------------------------------- labels and similar files
+    def _label_change(self, text: str, change) -> bool:
+        """Make a change to labels or similar files that Undo puts back; the plan shows it at once."""
+        before = self.service.settings_snapshot()
+        try:
+            change()
+        except ValueError as exc:
+            QMessageBox.information(self, "Labels", str(exc))
+            return False
+
+        def undo():
+            self.service.restore_settings(before)
+            self._show_labels()
+        self._push_undo(text, undo)
+        self._show_labels()
+        return True
+
+    def _show_labels(self) -> None:
+        """Files' folders follow their labels in the plan on screen (a new plan does the rest)."""
+        from ..engine.plan import Reason
+
+        if self.plan is not None:
+            corrections = {os.path.normcase(k): v for k, v in self.service.corrections().items()}
+            for s in self.plan.files:
+                labels = self.service.labels_of(s.path)
+                chosen = corrections.get(os.path.normcase(s.path))
+                if labels and chosen:
+                    s.destination, s.percent, s.new_folder = chosen, 100, not os.path.isdir(chosen)
+                    s.reasons = [Reason(True, "Your labels: " + ", ".join(labels))]
+            self.plan_page.refresh()
+        self.to_place_page.refresh_rows()
+        self._count_to_place()
+
+    def label_files(self, paths: list, name: str, on: bool) -> None:
+        if paths and self._label_change(f"Label {name}" if on else f"Take away {name}",
+                                        lambda: self.service.set_labels(paths, name, on)):
+            n = len(paths)
+            self.statusBar().showMessage(
+                f"{n:,} file{'s' if n != 1 else ''} {'labelled' if on else 'no longer labelled'} “{name}”. "
+                "Update the plan to let SortZen learn from it for similar files.", 6000)
+
+    def new_label(self, paths: list | None = None, name: str | None = None, folder: str | None = None) -> None:
+        """Make a label and choose the folder files with it go to; then give it to the selected files."""
+        if name is None:
+            name, ok = QInputDialog.getText(self, "New label", "Name of the label (for example Work, Taxes or "
+                                            "Photo session):")
+            if not ok or not name.strip():
+                return
+        if folder is None:
+            folder = self._label_folder(name.strip(), self.service.label_folder_choices(name.strip()))
+            if not folder:
+                return
+        if self._label_change(f"New label {name.strip()}", lambda: self.service.add_label(name, folder)):
+            self.to_place_page._fill_labels()
+            if paths:
+                self.label_files(paths, " ".join(name.split()), True)
+
+    def _label_folder(self, name: str, choices: list[str]) -> str | None:
+        labels = [("Files go to " + self.service.display(f) + ("" if os.path.isdir(f) else "  (a new folder)"))
+                  for f in choices] + ["Choose another folder…"]
+        chosen, ok = QInputDialog.getItem(self, "Where files with this label go",
+                                          f"Files labelled “{name}” go to:", labels, 0, False)
+        if not ok:
+            return None
+        if chosen == labels[-1]:
+            return QFileDialog.getExistingDirectory(self, f"Folder for files labelled “{name}”") or None
+        return choices[labels.index(chosen)]
+
+    def edit_label(self, name: str, action: str, value: str | None = None) -> None:
+        if action == "rename":
+            if value is None:
+                value, ok = QInputDialog.getText(self, "Rename label", f"New name for “{name}”:", text=name)
+                if not ok or not value.strip():
+                    return
+            self._label_change(f"Rename label {name}", lambda: self.service.rename_label(name, value))
+        elif action == "folder":
+            if value is None:
+                value = self._label_folder(name, self.service.label_folder_choices(name))
+                if not value:
+                    return
+            self._label_change(f"Change the folder of {name}", lambda: self.service.set_label_folder(name, value))
+        elif action == "remove":
+            self._label_change(f"Remove label {name}", lambda: self.service.remove_label(name))
+        self.to_place_page._fill_labels()
+        self.to_place_page.refresh_rows()
+
+    def pair_files(self, paths: list, kind: str, other: str | None = None) -> None:
+        """Say files are similar to, or different from, another file. It changes percentages, never moves."""
+        if not paths:
+            return
+        if other is None:
+            from .to_place_page import FilePickerDialog
+
+            word = "similar to" if kind == "similar" else "different from"
+            dialog = FilePickerDialog(self, self.service.known_files(), self.service.display,
+                                      f"Which file is it {word}?",
+                                      f"Pick the file {'these are' if len(paths) > 1 else 'this is'} {word}. SortZen "
+                                      f"becomes {'surer of' if kind == 'similar' else 'less sure of'} that file's "
+                                      "folder; nothing moves.")
+            if not dialog.exec() or not dialog.chosen:
+                return
+            other = dialog.chosen
+        if self._label_change("Similar files" if kind == "similar" else "Different files",
+                              lambda: self.service.pair_files(paths, other, kind, self.plan)):
+            self.plan_page.refresh()
+            self.to_place_page.refresh_rows()
+            self.statusBar().showMessage("Remembered. SortZen uses it in every plan; nothing moved.", 6000)
+
+    def forget_pairs(self, paths: list) -> None:
+        self._label_change("Forget similar files", lambda: self.service.forget_pairs(paths))
+        self.statusBar().showMessage("Forgotten. Update the plan to see SortZen's own suggestion.", 6000)
+
+    def put_in_folder(self, paths: list) -> None:
+        if self.plan is not None:
+            keys = {os.path.normcase(p) for p in paths}
+            self.change_destination([s for s in self.plan.files if os.path.normcase(s.path) in keys])
+            self.to_place_page.refresh_rows()
 
     def place_group(self, group, folder: str, make_rule: bool) -> None:
         """Send a whole group of unsure files to one folder (and files like them later, with a rule)."""

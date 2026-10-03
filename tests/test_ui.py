@@ -373,8 +373,10 @@ class MainWindowTest(unittest.TestCase):
             self.assertIsNone(self.window.rename_folder(str(root / "Sorted" / "Music"), "Bad/Name", confirm=False))
         self.assertIn("can't contain", warned.call_args.args[2])
 
-    def test_to_place_groups_and_any_folder_answers(self):
+    def test_to_place_labels_similar_files_and_groups(self):
         import shutil
+
+        from sortzen.ui.to_place_page import GroupDialog
 
         root = Path(self.dir.name) / "folders"
         shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
@@ -386,21 +388,45 @@ class MainWindowTest(unittest.TestCase):
         self.window.make_plan()
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
         page = self.window.to_place_page
-        titles = [c.group.title for c in page.group_cards]
-        self.assertIn("4 PDFs whose names are only numbers", titles)
-        card = next(c for c in page.group_cards if c.group.title == "4 PDFs whose names are only numbers")
-        card.picker.box.setEditText("Sorted/Documents/Scans")       # a new folder, typed as shown
-        self.assertEqual(card.picker.folder(), str(root / "Sorted" / "Documents" / "Scans"))
-        card.rule.setChecked(True)
+        heading = next(page.tree.topLevelItem(i) for i in range(page.tree.topLevelItemCount())
+                       if page.tree.topLevelItem(i).text(0).startswith("4 PDFs whose names are only numbers"))
+        heading.setSelected(True)
+        numbers = page.selected_paths()
+        self.assertEqual(len(numbers), 4)                                    # a whole group at once
+        scans = str(root / "Sorted" / "Documents" / "Scans")
+        self.window.new_label(numbers, "Scans", scans)
+        self.assertEqual(list(page.label_buttons), ["Scans"])
+        self.assertEqual(self.service.corrections()[numbers[0]], scans)
+        row = page.items[os.path.normcase(numbers[0])]
+        self.assertEqual((row.text(1), row.text(2)), ("Scans", "Sorted/Documents/Scans"))
+        self.assertEqual(self.window.plan.for_path(numbers[0]).reasons[0].text, "Your labels: Scans")
+        self.window.new_label([numbers[0]], "Work", str(root / "Sorted" / "Documents" / "Work"))
+        self.assertEqual(self.service.label_destination(self.service.labels_of(numbers[0])),
+                         os.path.join(scans, "Work"))                       # labels together choose the folder
+        page.toggle_label("Scans")                                           # all four have it: taken away
+        self.assertEqual(self.service.labels_of(numbers[1]), [])
+        self.window.undo()
+        self.window.undo()
+        self.assertEqual(self.service.labels_of(numbers[1]), ["Scans"])
+        self.assertEqual(self.service.labels_of(numbers[0]), ["Scans"])
+        payroll = root / "Sorted" / "Documents" / "Work" / "Payroll"
+        other = str(next(payroll.iterdir()))
+        self.window.pair_files([numbers[2]], "similar", other)
+        self.assertEqual(self.service.pairs_of(numbers[2]), [("similar", other)])
+        self.assertIn("You said: similar to “", page.items[os.path.normcase(numbers[2])].text(4))
+        self.window.undo()
+        self.assertEqual(self.service.pairs_of(numbers[2]), [])
+        group = next(g for g in page.groups if g.title == "4 PDFs whose names are only numbers")
+        dialog = GroupDialog(page, self.service, self.window.plan, group, [], [])
+        dialog.picker.box.setEditText("Sorted/Documents/Scans")              # a folder typed as shown
+        self.assertEqual(dialog.picker.folder(), scans)
+        dialog.close()
         first = self.window.plan
-        card.put.click()
+        page.place_group.emit(group, scans, True)
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not first and not self.service.jobs.busy))
         moved = self.window.plan.for_path(str(root / "Downloads" / "77.pdf"))
-        self.assertEqual((moved.destination, moved.percent), (str(root / "Sorted" / "Documents" / "Scans"), 100))
+        self.assertEqual((moved.destination, moved.percent), (scans, 100))
         self.assertEqual(len(self.service.rules()), 1)
-        self.assertNotIn("4 PDFs whose names are only numbers", [c.group.title for c in page.group_cards])
-        self.window.undo()
-        self.assertEqual((self.service.rules(), self.service.corrections()), ([], {}))
         if page.cards:                                              # questions take any folder too
             question = page.cards[0]
             question.picker.box.setEditText("Sorted/Projects/Typed")
