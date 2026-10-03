@@ -49,6 +49,9 @@ jobs:
           pip install wheel
           pip install --force-reinstall --no-deps --no-cache-dir --no-binary pyinstaller "pyinstaller>=6,<7"
 
+      - name: Meaning model
+        run: python packaging/get_meaning_model.py
+
       - name: Run tests
         run: python -m unittest discover -s tests -t . -v
 

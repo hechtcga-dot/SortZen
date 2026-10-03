@@ -21,6 +21,10 @@ datas = [
 datas += collect_data_files("google.genai")
 datas += collect_data_files("pypdfium2") + collect_data_files("pypdfium2_raw")    # drawing scanned PDF pages
 binaries = collect_dynamic_libs("pypdfium2_raw")
+MODEL = SRC / "sortzen" / "meaning" / "model"            # packaging/get_meaning_model.py downloads it
+if not (MODEL / "model.safetensors").exists():
+    raise SystemExit("The meaning model is missing: run python packaging/get_meaning_model.py first")
+datas.append((str(MODEL), "sortzen/meaning/model"))
 hiddenimports = collect_submodules("google.genai", filter=lambda name: ".tests" not in name) + [
     "PySide6.QtSvg", "keyring.backends.Windows", "win32ctypes.core",
 ]
@@ -37,7 +41,7 @@ excludes = [
     "PySide6.QtDesigner", "PySide6.QtHelp", "PySide6.QtTest", "PySide6.QtSql", "PySide6.QtNetworkAuth",
     "PySide6.QtWebSockets", "PySide6.QtHttpServer", "PySide6.QtSpatialAudio", "PySide6.QtTextToSpeech",
     "PySide6.QtNetwork", "PySide6.QtOpenGL", "PySide6.QtOpenGLWidgets", "PySide6.QtPrintSupport",
-    "matplotlib", "numpy", "pandas", "IPython", "pytest",
+    "matplotlib", "pandas", "IPython", "pytest",
 ]
 
 a = Analysis(
