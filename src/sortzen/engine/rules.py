@@ -33,8 +33,11 @@ class Rule:
     ext: str = ""               # ".pdf"; "" for any type
     shape: str = ""             # a name shape ("#", "img_#"); "" for a word rule
     example: str = ""           # a name it was made from, for describing it
+    label: str = ""             # files with this label (instead of a word or shape)
 
-    def matches(self, name: str) -> bool:
+    def matches(self, name: str, labels=()) -> bool:
+        if self.label:
+            return self.label.lower() in {x.lower() for x in labels}
         if self.ext and os.path.splitext(name)[1].lower() != self.ext:
             return False
         if self.shape:
@@ -43,10 +46,13 @@ class Rule:
 
     @property
     def key(self) -> str:
-        return f"{self.word}|{self.ext}|{self.shape}|{os.path.normcase(os.path.abspath(self.destination))}"
+        label = f"|label:{self.label.lower()}" if self.label else ""
+        return f"{self.word}|{self.ext}|{self.shape}{label}|{os.path.normcase(os.path.abspath(self.destination))}"
 
     def describe(self, display=lambda p: p) -> str:
         kind = f" ({self.ext.lstrip('.').upper()} files)" if self.ext else ""
+        if self.label:
+            return f"Files labelled “{self.label}” go to {display(self.destination)}"
         if self.shape:
             what = "Names that are only numbers" if self.shape == "#" else f"Names like “{self.example or self.shape}”"
             return f"{what}{kind} go to {display(self.destination)}"
@@ -62,10 +68,11 @@ class RuleSuggestion:
 
 def _ordered(rules: list[Rule]) -> list[Rule]:
     """The most specific rules first (a word and a type before a word alone); later rules before earlier."""
-    return sorted(reversed(rules), key=lambda r: (not r.shape, not r.ext))
+    return sorted(reversed(rules), key=lambda r: (not r.shape, not r.ext, bool(r.label)))
 
 
-def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lambda p: p) -> int:
+def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lambda p: p,
+                labels_of=lambda path: ()) -> int:
     """Place matching files by the rules. Returns how many files a rule placed."""
     ordered = _ordered(rules)
     placed = 0
@@ -73,7 +80,8 @@ def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lamb
         if s.percent >= 100 or not is_source(s.path):
             continue
         name = os.path.basename(s.path)
-        rule = next((r for r in ordered if r.matches(name) and is_valid(r.destination)), None)
+        labels = labels_of(s.path)
+        rule = next((r for r in ordered if r.matches(name, labels) and is_valid(r.destination)), None)
         if rule is None:
             continue
         if s.destination and os.path.normcase(s.destination) != os.path.normcase(rule.destination):

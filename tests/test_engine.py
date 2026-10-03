@@ -549,3 +549,68 @@ class PairsTest(unittest.TestCase):
         self.assertFalse(a.reasons[0].supports)
         self.assertEqual((b.destination, b.percent, b.runner_up), ("/s/Work", 50, ("/s/Tax", DIFFERENT_MAX)))
         self.assertEqual((c.destination, c.percent), ("/s/Work", 80))       # already elsewhere: unchanged
+
+
+class LabelingTest(unittest.TestCase):
+    def record(self, path, text=""):
+        from sortzen.scanning.records import FileRecord
+
+        return FileRecord(path=path, root="/s", role="source", name=os.path.basename(path),
+                          ext=os.path.splitext(path)[1].lower(), kind="document", size=10, modified_ns=0, text=text)
+
+    def test_labels_guessed_from_words_notes_and_similar_files(self):
+        from sortzen.engine.labeling import guess_labels
+
+        records = [self.record("/d/Tax return 2023.pdf"), self.record("/d/Photos/Wedding/img_01.jpg"),
+                   self.record("/d/Lakeview invoice 4410.pdf", "invoice lakeview supplies"),
+                   self.record("/d/Lakeview invoice 4411.pdf", "invoice lakeview supplies"),
+                   self.record("/d/scan.pdf"), self.record("/d/notes.txt", "garden plan")]
+        known = {"/d/Lakeview invoice 4410.pdf": ["Work"]}
+        guesses = guess_labels(records, ["Work", "Tax", "Photo"], known, {"/d/scan.pdf": "my tax slip"})
+        self.assertEqual(guesses["/d/Tax return 2023.pdf"][0][:2], ("Tax", 85))
+        self.assertIn("its name", guesses["/d/Tax return 2023.pdf"][0][2])
+        self.assertEqual(guesses["/d/Photos/Wedding/img_01.jpg"][0][0], "Photo")      # from its folder
+        self.assertEqual(guesses["/d/scan.pdf"][0][:2], ("Tax", 90))                   # from users' note
+        work = guesses["/d/Lakeview invoice 4411.pdf"][0]
+        self.assertEqual(work[0], "Work")
+        self.assertIn("Like “Lakeview invoice 4410.pdf”", work[2])
+        self.assertNotIn("/d/Lakeview invoice 4410.pdf", guesses)                     # already labelled
+        self.assertNotIn("/d/notes.txt", guesses)
+
+    def test_labels_lead_files_to_folders_by_priority(self):
+        from sortzen.engine.labeling import folder_labels, label_evidence, priority_weights
+        from sortzen.engine.plan import Plan, Suggestion
+
+        self.assertEqual(priority_weights(["A", "B", "C"]), {"A": 1.0, "B": 0.75, "C": 0.5})
+        labelled = {"/s/Tax/a.pdf": [("Tax", 90)], "/s/Tax/b.pdf": [("Tax", 80)],
+                    "/s/Work/c.pdf": [("Work", 90)], "/s/Work/d.pdf": [("Work", 90)],
+                    "/in/x.pdf": [("Tax", 90)], "/in/y.pdf": [("Work", 100), ("Tax", 60)],
+                    "/in/z.pdf": [("Tax", 90)]}
+        profiles = folder_labels(labelled, {"/in/y.pdf": "/s/Elsewhere"})
+        self.assertEqual(profiles[os.path.normcase("/s/Tax")][""], 2)
+        plan = Plan(files=[Suggestion("/in/x.pdf", "/in", None, 0), Suggestion("/in/y.pdf", "/in", "/s/Work", 70),
+                           Suggestion("/in/z.pdf", "/in", "/s/Work", 92)])
+        folders = {os.path.normcase(f): f for f in ("/s/Tax", "/s/Work")}
+        n = label_evidence(plan, labelled, profiles, ["Work", "Tax"], str, folders=folders)
+        x, y, z = plan.files
+        self.assertEqual(n, 2)
+        self.assertEqual(x.destination, "/s/Tax")
+        self.assertGreaterEqual(x.percent, 80)
+        self.assertIn("Labelled “Tax”", x.reasons[0].text)
+        self.assertEqual(y.destination, "/s/Work")                  # Work is above Tax: it counts more
+        self.assertGreater(y.percent, 70)
+        self.assertEqual((z.destination, z.percent), ("/s/Work", 92))   # sure elsewhere: left alone
+
+    def test_label_rules_suggested_and_applied(self):
+        from sortzen.engine.labeling import suggest_label_rule
+        from sortzen.engine.plan import Plan, Suggestion
+        from sortzen.engine.rules import apply_rules
+
+        others = [("/in/a.pdf", None, 0, ["Tax"]), ("/in/b.pdf", "/s/Work", 95, ["Work"])]
+        found = suggest_label_rule([["Tax"], ["Tax", "Work"], ["Tax"]], "/s/Tax", others, [], set())
+        self.assertEqual(found.rule.describe(), "Files labelled “Tax” go to /s/Tax")
+        self.assertEqual(found.matches, ["/in/a.pdf"])
+        self.assertIsNone(suggest_label_rule([["Tax"], ["Tax"]], "/s/Tax", others, [], set()))
+        plan = Plan(files=[Suggestion("/in/a.pdf", "/in", None, 0)])
+        apply_rules(plan, [found.rule], lambda f: True, lambda p: True, str, lambda p: ["Tax"])
+        self.assertEqual((plan.files[0].destination, plan.files[0].percent), ("/s/Tax", 100))
