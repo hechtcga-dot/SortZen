@@ -296,3 +296,21 @@ class ErrorsAndModelsTest(unittest.TestCase):
             service.set_model("my-own-model", "gemini")
             self.assertEqual(service.model_choices("gemini"),
                              [SERVICES["gemini"].default_model, "gemini-b", "gemini-c", "my-own-model"])
+
+
+class LabelerTest(unittest.TestCase):
+    def test_list_and_labels_are_parsed_from_the_list_only(self):
+        from sortzen.ai import labeler
+
+        request = labeler.list_request(["Tax 2023.pdf"], ["Sorted/Taxes"], ["Work"])
+        self.assertIn("keep them and add what is missing: Work", request)
+        self.assertIn("never 'PDF' or 'Subtitles'", request)
+        self.assertEqual(labeler.parse_list('{"labels": [{"name": " Photo  session ", "why": "pictures"}, "Taxes"]}'),
+                         [("Photo session", "pictures"), ("Taxes", "")])
+        self.assertEqual(labeler.parse_list("not json"), [])
+        text = labeler.label_request(["Taxes", "Work"], [{"name": "a.pdf", "folder": "Downloads", "text": "T4 slip"}])
+        self.assertIn("1: a.pdf (in Downloads) | begins: T4 slip", text)
+        found = labeler.parse_labels('{"files": [{"n": 1, "labels": [{"label": "taxes", "sure": 120}, '
+                                     '{"label": "Cats"}]}, {"n": 9, "labels": ["Work"]}]}', ["Taxes", "Work"], 2)
+        self.assertEqual(found, {1: [("Taxes", 100)]})
+        self.assertGreater(labeler.label_cost("gemini", ["Taxes"], [{"name": "a", "folder": "b"}] * 90), 0)

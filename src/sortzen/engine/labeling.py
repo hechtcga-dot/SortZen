@@ -192,3 +192,22 @@ def suggest_label_rule(examples: list[list[str]], destination: str, others: list
         if gain and not harm and (best is None or count > best.examples):
             best = RuleSuggestion(rule, count, gain)
     return best
+
+
+HOME_SHARE = 0.6            # a folder is a label's home when this share of its files carry the label
+HOME_FILES = 3
+
+
+def label_homes(profiles: dict[str, Counter], labels: list[str]) -> dict[str, tuple[str, float]]:
+    """Each label's home folder (by normcase path), when one holds mostly files with that label: (folder, share)."""
+    homes = {}
+    for label in labels:
+        best = None
+        for key, counts in profiles.items():
+            files, have = counts[""], counts.get(label, 0.0)
+            if files >= HOME_FILES and have >= HOME_FILES * 0.7 and have / files >= HOME_SHARE:
+                if best is None or have > best[2]:
+                    best = (key, have / files, have)
+        if best:
+            homes[label] = (best[0], best[1])
+    return homes

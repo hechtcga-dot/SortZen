@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 import os
 import re
 import time
@@ -35,6 +36,12 @@ from . import catalog as catalog_model, moving, plan_view, profile
 AUTONOMY_DEFAULT = 90
 LABEL_SURE = 70             # a guessed label this sure needs no check
 LEARNED_ENOUGH = 10         # changes from users before SortZen offers to catalog again
+CHECKS_KEPT = 200           # users' checks of SortZen's guesses remembered
+CHECKS_SHOWN = 50           # the agreement shown is over this many latest checks
+CHECKS_ENOUGH = 30          # at least this many checks, at AGREE_ENOUGH or more, and SortZen has learned enough
+AGREE_ENOUGH = 0.9
+AI_LABEL_SAMPLE = 300       # files the AI labels first; SortZen labels the rest from them
+LABEL_FOLDER_FILES = 5      # unsure files with one label and no folder before a new folder is suggested
 NOTE_PERCENT = 85           # a note that names a folder makes SortZen this sure
 DEFAULTS = {                    # settings with on/off values, and their defaults
     "gentle": False,            # "Be gentle with my computer": lowest priority, short rests
@@ -322,9 +329,13 @@ class AppService:
     def corrections(self) -> dict[str, str]:
         return dict(self.settings.get("corrections") or {})
 
-    def correct(self, paths: list[str], destination: str | None) -> dict[str, str | None]:
-        """Remember chosen destinations (None forgets them). Returns the previous ones, for Undo."""
+    def correct(self, paths: list[str], destination: str | None,
+                guessed: dict[str, str | None] | None = None) -> dict[str, str | None]:
+        """Remember chosen destinations (None forgets them). Returns the previous ones, for Undo.
+        ``guessed``: where SortZen would have put each file, to check its guesses."""
         current = self.corrections()
+        if guessed and destination:
+            self._check([bool(guessed.get(p)) and path_key(guessed[p]) == path_key(destination) for p in paths])
         previous = {p: current.get(p) for p in paths}
         for p in paths:
             if destination is None:
@@ -634,14 +645,48 @@ class AppService:
 
     def set_labels(self, paths: list[str], name: str, on: bool) -> None:
         """Give files a label, or take it away. A file's labels become users' own: what SortZen or the AI
-        guessed for it is kept, with this change."""
+        guessed for it is kept, with this change. Each change checks SortZen's guess."""
         files = self.users_labels()
+        checks = []
         for path in paths:
             key = next((k for k in files if path_key(k) == path_key(path)), os.path.abspath(path))
+            if key not in files:
+                guessed = self.labels_of(path)
+                checks.append((name in guessed) == on)
             labels = [x for x in (files[key] if key in files else self.labels_of(path)) if x != name]
             files[key] = labels + [name] if on else labels
         self._save_label_data(files=files)
+        self._check(checks)
         self._learned(len(paths))
+
+    def confirm_labels(self, paths: list[str]) -> None:
+        """Users agree with the labels SortZen or the AI gave these files: they become users' own."""
+        files = self.users_labels()
+        checks = []
+        for path in paths:
+            if any(path_key(k) == path_key(path) for k in files):
+                continue
+            files[os.path.abspath(path)] = self.labels_of(path)
+            checks.append(True)
+        self._save_label_data(files=files)
+        self._check(checks)
+        self._learned(len(checks))
+
+    # ---------------------------------------------------------------- how well SortZen guesses
+    def _check(self, agreed: list[bool]) -> None:
+        if agreed:
+            checks = list(self.settings.get("checks") or []) + [1 if a else 0 for a in agreed]
+            self.settings.set("checks", checks[-CHECKS_KEPT:])
+
+    def agreement(self) -> tuple[int, int]:
+        """How often SortZen's guess was what users chose, over the latest checks: (agreed, checks)."""
+        checks = list(self.settings.get("checks") or [])[-CHECKS_SHOWN:]
+        return sum(checks), len(checks)
+
+    def learned_enough(self) -> bool:
+        """SortZen's guesses have matched users' choices often enough that the rest can be left to it."""
+        agreed, total = self.agreement()
+        return total >= CHECKS_ENOUGH and agreed >= AGREE_ENOUGH * total
 
     def guess_labels(self, emit=None) -> int:
         """Label the files SortZen knows on this PC (users' and the AI's labels are kept). Returns how many
@@ -723,6 +768,170 @@ class AppService:
             if label_unsure or folder_unsure:
                 found.append(s)
         return found
+
+    # ---------------------------------------------------------------- folders for labels
+    def label_folder_suggestions(self, plan: Plan) -> list:
+        """Where labels' files belong: "Files labelled Taxes go to Documents/Taxes" when a folder holds mostly
+        files with that label, or a new folder for a label whose files have no home. Accepting makes a rule;
+        a new folder is made when files first move into it. Never for files that go with another file."""
+        from ..engine.labeling import folder_labels, label_homes
+        from ..engine.rules import Rule
+
+        names = self.labels()
+        if not names or not self._records:
+            return []
+        labelled = {p: v for p, v in self._effective_labels().items() if p not in plan.companions}
+        corrections = self.corrections()
+        valid = self._ai_valid(plan)
+        places = {os.path.normcase(os.path.dirname(r.path)) for r in self._records.values()
+                  if (r.role == "destination" or valid(os.path.dirname(r.path)))
+                  and not self.is_left_out(os.path.dirname(r.path))}
+        profiles = {k: v for k, v in folder_labels(labelled, corrections).items() if k in places}
+        homes = label_homes(profiles, names)
+        known = {r.key for r in self.rules()} | set(self.settings.get("declined_rules") or [])
+        level = self.autonomy()
+        unsure = [s for s in plan.files if s.path in labelled and s.path not in plan.companions
+                  and path_key(s.path) not in {path_key(p) for p in corrections}]
+        found = []
+        for label in names:
+            mine = [s for s in unsure if label in [x for x, _ in labelled[s.path]]]
+            if label in homes:
+                folder = next((os.path.dirname(r.path) for r in self._records.values()
+                               if os.path.normcase(os.path.dirname(r.path)) == homes[label][0]), homes[label][0])
+                rule = Rule("", folder, label=label)
+                gain = [s for s in mine if not s.destination or path_key(s.destination) != path_key(folder)]
+                if rule.key not in known and gain:
+                    found.append(LabelFolderSuggestion(
+                        rule, f"Files labelled “{label}” go to {self.display(folder)}",
+                        f"{round(homes[label][1] * 100)}% of the files there are labelled “{label}”; "
+                        f"{len(gain):,} more would go there", len(gain)))
+            else:
+                homeless = [s for s in mine if s.destination is None or s.percent < level]
+                parent = (self.destination_folders() or [None])[0]
+                if len(homeless) >= LABEL_FOLDER_FILES and parent:
+                    rule = Rule("", os.path.join(parent, label), label=label)
+                    if rule.key not in known:
+                        found.append(LabelFolderSuggestion(
+                            rule, f"Make a folder “{label}” in {self.display(parent)} for files labelled “{label}”",
+                            f"{len(homeless):,} files labelled “{label}” have no clear home", len(homeless),
+                            new_folder=True))
+        return sorted(found, key=lambda x: -x.files)
+
+    # ---------------------------------------------------------------- AI labels
+    def _label_files_info(self, records: list) -> list[dict]:
+        sending = self.ai_value("ai_privacy") == privacy.BEGINNING
+        name_folders, name_words = self.ai_value("ai_name_only_folders"), self.ai_value("ai_name_only_words")
+        found = []
+        for r in records:
+            content = sending and not r.cloud_only and not privacy.name_only(r.path, name_folders, name_words)
+            found.append({"path": r.path, "name": privacy.scrub_name(r.name),
+                          "folder": self.display(os.path.dirname(r.path)),
+                          "text": privacy.beginning(r.text) if content and r.text else ""})
+        return found
+
+    def _label_sample(self, size: int = AI_LABEL_SAMPLE) -> list:
+        """Files to ask the AI about first: spread over every folder, so SortZen can learn the rest from them."""
+        from ..engine.companions import is_companion
+
+        done = {path_key(p) for p in self.users_labels()} | {path_key(p) for p in self.ai_labels()}
+        by_folder: dict[str, list] = {}
+        for r in sorted(self._records.values(), key=lambda r: r.path.lower()):
+            if path_key(r.path) not in done and not is_companion(r.name):
+                by_folder.setdefault(os.path.dirname(r.path), []).append(r)
+        queues = sorted(by_folder.values(), key=len, reverse=True)
+        sample = []
+        while queues and len(sample) < size:
+            for queue in list(queues):
+                sample.append(queue.pop(0))
+                if not queue:
+                    queues.remove(queue)
+                if len(sample) >= size:
+                    break
+        return sample
+
+    def _label_targets(self, which: str, plan: Plan | None) -> list:
+        if which == "unsure" and plan is not None:
+            done = {path_key(p) for p in self.ai_labels()}
+            return [self._records[s.path] for s in self.unsure_files(plan)
+                    if s.path in self._records and path_key(s.path) not in done]
+        return self._label_sample()
+
+    def ai_label_estimate(self, which: str = "sample", plan: Plan | None = None) -> dict:
+        """What asking the AI for labels would cost, before anything is sent: a label list (``list``), a sample
+        of files (``sample``) or the files SortZen is still unsure of (``unsure``)."""
+        from ..ai import labeler
+
+        service = SERVICES[self.ai_service()]
+        if which == "list":
+            names, folders = self._label_list_material()
+            amount, files = labeler.list_cost(service.key, names, folders, self.labels()), len(names)
+        else:
+            targets = self._label_files_info(self._label_targets(which, plan))
+            amount, files = labeler.label_cost(service.key, self.labels(), targets), len(targets)
+        return {"service": service.name, "local": service.key == "ollama", "cost": amount, "files": files,
+                "cap": self._ai_cap()}
+
+    def _label_list_material(self) -> tuple[list[str], list[str]]:
+        names = [privacy.scrub_name(r.name) for r in self._label_sample(labeler_list_names())]
+        folders = sorted({self.display(os.path.dirname(r.path)) for r in self._records.values()
+                          if r.role == "destination"}, key=str.lower)
+        return names, folders
+
+    def ai_suggest_labels(self, emit=None, token=None, provider=None) -> list[tuple[str, str]]:
+        """The AI's label list for these files (names and folders are sent, as privacy allows): (label, why)."""
+        from ..ai import labeler
+        from ..ai.costs import cost
+
+        emit = emit or (lambda event: None)
+        service = SERVICES[self.ai_service()]
+        names, folders = self._label_list_material()
+        emit(Status(f"Asking {service.name} for labels", f"{len(names):,} file names"))
+        try:
+            reply = (provider or self.provider()).generate_json(self.model(), [labeler.list_request(names, folders,
+                                                                                                   self.labels())])
+        except Exception as exc:
+            raise AIProblem(explain(exc, service.name, self.model())) from exc
+        self._add_spent(cost(service.key, reply.usage.input_tokens, reply.usage.output_tokens))
+        return labeler.parse_list(reply.text)
+
+    def ai_label_files(self, which: str = "sample", plan: Plan | None = None, emit=None, token=None,
+                       provider=None) -> int:
+        """Ask the AI to label files with users' labels, in batches, within the spending cap. Returns how
+        many files it labelled; SortZen labels the rest on the PC from them."""
+        from ..ai import labeler
+        from ..ai.costs import cost
+
+        emit = emit or (lambda event: None)
+        names = self.labels()
+        targets = self._label_files_info(self._label_targets(which, plan))
+        if not names or not targets:
+            return 0
+        service = SERVICES[self.ai_service()]
+        provider = provider or self.provider()
+        cap, spent, labelled = self._ai_cap(), 0.0, 0
+        stored = self.ai_labels()
+        for start in range(0, len(targets), labeler.BATCH):
+            if (token is not None and token.cancelled) or spent >= cap:
+                break
+            batch = targets[start:start + labeler.BATCH]
+            emit(Status(f"Asking {service.name} for labels", f"{start + len(batch):,} of {len(targets):,} files"))
+            emit(Progress(start, len(targets)))
+            try:
+                reply = provider.generate_json(self.model(), [labeler.label_request(names, batch)])
+            except Exception as exc:
+                if labelled:
+                    break
+                raise AIProblem(explain(exc, service.name, self.model())) from exc
+            amount = cost(service.key, reply.usage.input_tokens, reply.usage.output_tokens)
+            spent += amount
+            self._add_spent(amount)
+            for n, given in labeler.parse_labels(reply.text, names, len(batch)).items():
+                stored[batch[n - 1]["path"]] = [[a, b] for a, b in given]
+                labelled += 1
+            self._save_label_data(ai=stored)
+        emit(Progress(len(targets), len(targets)))
+        self.guess_labels(emit)
+        return labelled
 
     # ---------------------------------------------------------------- learning
     def _learned(self, n: int = 1) -> None:
@@ -1561,6 +1770,25 @@ def _meaning_text(record, stem_of) -> str:
     name = re.sub(r"[_\-.]+", " ", stem_of(record.name))
     title = str(record.details.get("title") or "")
     return f"{name}. {title}. {record.text[:600]}"
+
+
+@dataclass
+class LabelFolderSuggestion:
+    rule: Rule                          # "files labelled X go to this folder"
+    title: str
+    why: str
+    files: int                          # files in the plan it would place
+    new_folder: bool = False
+
+    @property
+    def key(self) -> str:
+        return self.rule.key
+
+
+def labeler_list_names() -> int:
+    from ..ai.labeler import LIST_NAMES
+
+    return LIST_NAMES
 
 
 def _rule_dict(rule: Rule) -> dict:

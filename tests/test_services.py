@@ -738,6 +738,78 @@ class LabelsTest(CatalogTest):
         with self.assertRaises(ValueError):
             self.service.keep_folder_together(str(self.sorted / "Recipes"))
 
+    def test_agreement_with_users_checks(self):
+        cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
+        self.service.add_label("Recipe")
+        self.service.add_label("Budget")
+        plan = self.service.make_plan()
+        self.service.confirm_labels([cake])                                 # agrees with the guess
+        self.assertEqual(self.service.labels_of(cake), ["Recipe"])
+        self.service.set_labels([budget], "Recipe", True)                  # SortZen hadn't guessed this
+        self.assertEqual(self.service.agreement(), (1, 2))
+        cake_plan = plan.for_path(cake)
+        self.service.correct([cake], cake_plan.destination, {cake: cake_plan.destination})
+        self.assertEqual(self.service.agreement(), (2, 3))
+        self.assertFalse(self.service.learned_enough())
+        self.service._check([True] * 40)
+        self.assertTrue(self.service.learned_enough())
+
+    def test_folders_suggested_for_labels(self):
+        self.service.add_label("Sweet")
+        self.service.add_label("Garden")
+        for name in ("Apple pie.txt", "Lemon tart.txt"):
+            self.service.set_labels([str(self.sorted / "Recipes" / name)], "Sweet", True)
+        (self.sorted / "Recipes" / "Fudge.txt").write_text("fudge sugar sweet", encoding="utf-8")
+        for n in range(5):
+            (self.downloads / f"Garden bed plan {n}.txt").write_text(f"soil seeds {n}", encoding="utf-8")
+        self.service.set_labels([str(self.downloads / "Plum cake recipe.txt")], "Sweet", True)
+        plan = self.service.make_plan()
+        self.service.set_labels([str(self.sorted / "Recipes" / "Fudge.txt")], "Sweet", True)
+        plan = self.service.make_plan()
+        found = {x.rule.label: x for x in self.service.label_folder_suggestions(plan)}
+        self.assertIn("Garden", found)
+        self.assertTrue(found["Garden"].new_folder)
+        self.assertEqual(found["Garden"].rule.destination, os.path.join(str(self.sorted), "Garden"))
+        self.service.add_rule(found["Garden"].rule)
+        plan = self.service.make_plan()
+        s = plan.for_path(str(self.downloads / "Garden bed plan 0.txt"))
+        self.assertEqual((s.destination, s.percent), (os.path.join(str(self.sorted), "Garden"), 100))
+
+    def test_ai_suggests_labels_and_labels_a_sample(self):
+        import json
+
+        from sortzen.ai.provider import AIProvider, AIResponse, TokenUsage
+
+        self.service.make_plan()
+
+        class Labeller(AIProvider):
+            sent = []
+
+            def generate_json(self, model, contents):
+                Labeller.sent.append(contents[0])
+                if "Suggest labels" in contents[0]:
+                    return AIResponse(json.dumps({"labels": [{"name": "Baking", "why": "recipes"},
+                                                             {"name": "Money"}, {"name": "baking"}]}),
+                                      TokenUsage(300, 50, 350))
+                files = [line for line in contents[0].splitlines() if line[:1].isdigit()]
+                return AIResponse(json.dumps({"files": [
+                    {"n": i, "labels": [{"label": "Baking" if "recipe" in line.lower() or "pie" in line.lower()
+                                         or "tart" in line.lower() else "Money", "sure": 90},
+                                        {"label": "Nonsense", "sure": 99}]}
+                    for i, line in enumerate(files, start=1)]}), TokenUsage(500, 100, 600))
+
+        labels = self.service.ai_suggest_labels(provider=Labeller())
+        self.assertEqual(labels, [("Baking", "recipes"), ("Money", "")])
+        for name, _ in labels:
+            self.service.add_label(name)
+        estimate = self.service.ai_label_estimate("sample")
+        self.assertGreater(estimate["files"], 0)
+        n = self.service.ai_label_files("sample", provider=Labeller())
+        self.assertEqual(n, estimate["files"])
+        cake = str(self.downloads / "Plum cake recipe.txt")
+        self.assertEqual(self.service.label_guesses(cake), [("Baking", 90, "AI")])
+        self.assertNotIn("plum cake recipe sugar", " ".join(Labeller.sent))    # names only by default
+
     def test_similar_and_different_change_percentages_only(self):
         cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
         tart = str(self.sorted / "Recipes" / "Lemon tart.txt")
