@@ -37,6 +37,7 @@ DEFAULTS = {                    # settings with on/off values, and their default
     "gentle": False,            # "Be gentle with my computer": lowest priority, short rests
     "read_google_drive": False,  # read file contents on Google Drive (may download them)
     "stop_reading_learned": True,  # Advanced: stop reading left-out folders once learned enough
+    "meaning": True,            # match files by meaning (a small model on this PC)
     "read_scans": True,         # read text in scans and pictures of documents (Windows text recognition, on this PC)
 }
 AI_DEFAULTS = {                 # what the AI step may send, and how much it may spend
@@ -107,6 +108,7 @@ class AppService:
         self.mover = Mover(self.paths.runs_dir)
         self.ai_answers = AIAnswers(self.paths.database_path)
         self._records: dict = {}            # the last plan's files, by path
+        self._embedder = None               # the meaning model (loaded when first needed)
 
     # ---------------------------------------------------------------- AI service
     def ai_service(self) -> str:
@@ -439,6 +441,36 @@ class AppService:
         return suggest_rule(examples, os.path.abspath(destination), others, self.rules(),
                             set(self.settings.get("declined_rules") or []))
 
+    def _apply_meaning(self, plan: Plan) -> None:
+        """Meaning as evidence for unsure files (skipped when the meaning model isn't installed)."""
+        from .. import meaning as meaning_model
+        from ..engine.features import stem_of
+        from ..engine.meaning import apply_meaning, profiles
+
+        model = meaning_model.load() if self._embedder is None else self._embedder
+        if model is None:
+            return
+        np = model.np
+        records = list(self._records.values())
+        valid = self._ai_valid(plan)
+        texts = [_meaning_text(r, stem_of) for r in records]
+        file_vectors = model.embed(texts)
+        member_rows: dict[str, list[int]] = {}
+        for row, r in enumerate(records):
+            folder = os.path.dirname(r.path)
+            if (r.role == "destination" or valid(folder)) and not self.is_left_out(folder):
+                member_rows.setdefault(folder, []).append(row)
+        notes = self.folder_notes()
+        folders = sorted(set(member_rows) | {f for f in notes if os.path.isdir(f) and valid(f)})
+        if not folders:
+            return
+        names = model.embed([self.display(f).replace("/", " ") for f in folders])
+        note_keys = {path_key(k): v for k, v in notes.items()}
+        note_vectors = model.embed([note_keys.get(path_key(f), "") for f in folders])
+        matrix = profiles(np, folders, member_rows, file_vectors, names, note_vectors)
+        unsure = {r.path: file_vectors[row] for row, r in enumerate(records) if r.role == "source"}
+        apply_meaning(np, plan, unsure, folders, matrix, self.display)
+
     def _apply_rules(self, plan: Plan) -> None:
         rules = self.rules()
         if rules:                   # a rule's folder is made when files first move into it
@@ -584,6 +616,9 @@ class AppService:
         if names:
             rename_planned(plan, {k: v for k, v in names.items() if not os.path.isdir(k)})
         self._apply_rules(plan)
+        if self.option("meaning"):
+            emit(Status("Matching by meaning", f"{len(records):,} files"))
+            self._apply_meaning(plan)
         self._apply_ai(plan)
         emit(Progress(grand, grand))
         self._learn_speed(read, remembered, reading_time, len(records), time.perf_counter() - started)
@@ -977,6 +1012,13 @@ class AppService:
 
 
 _PATHS = re.compile(r"([A-Za-z]:[\\/]|\\\\|/(home|Users|tmp|mnt|media|root)/)[^\"'\n]*?(?=[\"'\n,)]|$|\s{2})")
+
+
+def _meaning_text(record, stem_of) -> str:
+    """What a file is about, for matching by meaning: its name's words, title and the start of its text."""
+    name = re.sub(r"[_\-.]+", " ", stem_of(record.name))
+    title = str(record.details.get("title") or "")
+    return f"{name}. {title}. {record.text[:600]}"
 
 
 def _rule_dict(rule: Rule) -> dict:

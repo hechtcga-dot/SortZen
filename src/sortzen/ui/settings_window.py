@@ -10,6 +10,9 @@ from PySide6.QtWidgets import (
 from .ai_widgets import AIServiceBox, PrivacyListsBox, PrivacyModeBox, hint
 
 OPTION_TEXT = {
+    "meaning": ("Match files by meaning",
+                "A small model on this PC compares what files are about with what is in each folder, so "
+                "“pay stub” can find “Payroll”. Nothing is sent anywhere. Meaning alone counts for at most 65%."),
     "read_scans": ("Read text in scans and pictures of documents",
                    "Uses the text recognition built into Windows, on this PC: nothing is sent anywhere. Scanned "
                    "PDFs and pictures that aren't camera photos (screenshots, scans) are read once and remembered."),
@@ -62,7 +65,7 @@ class SettingsWindow(QDialog):
         g.addWidget(self.ask_all)
         g.addWidget(hint("Nothing goes to Ready: every file waits in Review for you."))
         self.options = {}
-        for name in ("read_scans", "gentle"):
+        for name in ("meaning", "read_scans", "gentle"):
             g.addWidget(self._option(name))
         self.tabs.addTab(_page(general), "General")
 
