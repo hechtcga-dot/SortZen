@@ -692,3 +692,51 @@ class LookalikeGroupsTest(unittest.TestCase):
         self.assertTrue(groups[0].title.startswith("3 files like “"))
         self.assertEqual(len(groups[0].paths), 3)
         self.assertIsNone(groups[0].rule("/s"))          # nothing in their names to make a rule from
+
+
+class BatchesAndKeptCopiesTest(unittest.TestCase):
+    def test_kept_copy_by_users_rule(self):
+        from sortzen.engine.duplicates import Copy, CopyGroup, choose_kept
+
+        def group():
+            return [CopyGroup("f", 10, [Copy("/d/Tax return (1).pdf", "/d", 3), Copy("/d/old/Tax return.pdf", "/d", 1),
+                                        Copy("/s/Taxes/Tax return 2023 final.pdf", "/s", 2, organised=True)])]
+        for rule, kept in (("newest", "/d/Tax return (1).pdf"), ("oldest", "/d/old/Tax return.pdf"),
+                           ("sorted", "/s/Taxes/Tax return 2023 final.pdf"), ("shortest", "/d/old/Tax return.pdf")):
+            groups = group()
+            choose_kept(groups, rule)
+            self.assertEqual(groups[0].kept.path, kept, rule)
+            self.assertEqual(sum(c.ticked for c in groups[0].copies), 2)
+
+    def test_catalog_batches_cover_every_file_surest_first(self):
+        from sortzen.engine.batches import catalog_batches
+        from sortzen.engine.plan import Suggestion
+
+        files = [Suggestion(f"/d/T4 slip {n}.pdf", "/d", "/s/Taxes", 80) for n in range(4)] + \
+                [Suggestion("/d/holiday.jpg", "/d", "/s/Pictures", 90), Suggestion("/d/beach.jpg", "/d", "/s/Pictures", 90),
+                 Suggestion("/d/48213.bin", "/d", None, 0), Suggestion("/d/77.bin", "/d", None, 0)]
+        guesses = {f"/d/T4 slip {n}.pdf": [("Taxes", 95)] for n in range(4)}
+        guesses["/d/holiday.jpg"] = guesses["/d/beach.jpg"] = [("Photo session", 60)]
+        batches = catalog_batches(files, guesses, None, max_size=3)
+        covered = [p for b in batches for p in b.paths]
+        self.assertEqual(sorted(covered), sorted(s.path for s in files))         # every file exactly once
+        self.assertEqual(batches[0].labels, [("Taxes", 95)])                     # surest first
+        self.assertIn("(part 1 of 2)", batches[0].title)                         # 4 T4 slips split at 3
+        photo = next(b for b in batches if "Photo session" in b.title)
+        self.assertEqual(photo.labels, [("Photo session", 60)])
+        self.assertEqual(batches[-1].certainty, 0)
+        self.assertTrue(batches[-1].title.endswith("with no clear label"))
+
+    def test_review_batches_by_labels_and_merge_suggestion(self):
+        from sortzen.engine.batches import label_merge_suggestion, review_batches
+        from sortzen.engine.plan import Suggestion
+
+        files = [Suggestion("/d/a.pdf", "/d", "/s/Taxes", 95), Suggestion("/d/b.pdf", "/d", "/s/Taxes", 85),
+                 Suggestion("/d/c.jpg", "/d", "/s/Pictures", 60), Suggestion("/d/stays.txt", "/d", "/d", 90)]
+        labels = {"/d/a.pdf": ["Taxes", "Jordan"], "/d/b.pdf": ["Taxes", "Jordan"]}
+        batches = review_batches(files, lambda p: labels.get(p, []))
+        self.assertEqual([b.title for b in batches], ["Taxes and Jordan · 2 files → 1 folder",
+                                                     "No labels · 1 file → 1 folder"])
+        self.assertEqual(batches[0].certainty, 90)
+        self.assertEqual(label_merge_suggestion(["Work", "Tax", "Taxes"]), ("Tax", "Taxes"))
+        self.assertIsNone(label_merge_suggestion(["Work", "School"]))

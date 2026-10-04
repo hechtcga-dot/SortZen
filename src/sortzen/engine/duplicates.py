@@ -27,6 +27,7 @@ class Copy:
     modified_ns: int
     keep: bool = False
     ticked: bool = False            # queued for deletion unless unticked
+    organised: bool = False         # in a destination folder, or a folder that stays or is kept together
     reasons: list[str] = field(default_factory=list)
     note: str = ""
 
@@ -83,7 +84,7 @@ def find_copies(records: list[FileRecord], plan: Plan, is_left_out=lambda path: 
         keeper = ranked[0]
         copies = []
         for r in ranked:
-            c = Copy(r.path, r.root, r.modified_ns, keep=r is keeper)
+            c = Copy(r.path, r.root, r.modified_ns, keep=r is keeper, organised=_order(place[r.path]) > 0)
             if place[r.path] == KEEP_TOGETHER:
                 c.note = "Inside a folder that is kept together"
             c.ticked = not c.keep and not c.note
@@ -124,3 +125,32 @@ def _why(keeper: FileRecord, others: list[FileRecord], place: dict[str, str]) ->
     if keeper.modified_ns < min(o.modified_ns for o in others):
         reasons.append("It's the oldest copy")
     return reasons or ["The copy with the shortest path"]
+
+
+KEEP_RULES = {                          # which copy to keep, as users choose it
+    "newest": "Last version saved",
+    "oldest": "First version saved",
+    "sorted": "The one already in a sorted folder",
+    "shortest": "The one with the shortest name",
+}
+
+
+def choose_kept(groups: list[CopyGroup], rule: str) -> None:
+    """Keep one copy of each group by a rule users chose; the others are ticked to go (a copy inside a folder
+    that is kept together is never ticked). Ties go to a name without a copy number, then the shorter path."""
+    def key(c: Copy):
+        tie = (has_copy_mark(c.name), len(c.path), c.path.lower())
+        if rule == "newest":
+            return (-c.modified_ns, *tie)
+        if rule == "oldest":
+            return (c.modified_ns, *tie)
+        if rule == "sorted":
+            return (not c.organised, has_copy_mark(c.name), -c.modified_ns, len(c.path), c.path.lower())
+        return (len(c.name), has_copy_mark(c.name), -c.modified_ns, c.path.lower())
+
+    for g in groups:
+        keeper = min(g.copies, key=key)
+        for c in g.copies:
+            c.keep = c is keeper
+            c.ticked = not c.keep and not c.note
+            c.reasons = [KEEP_RULES.get(rule, "Kept")] if c.keep else []

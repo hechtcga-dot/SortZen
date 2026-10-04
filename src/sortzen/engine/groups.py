@@ -47,7 +47,7 @@ def _plural(ext: str, n: int) -> str:
 LOOKALIKE = 0.3            # files at least this alike (by their clues) form a group of look-alikes
 
 
-def find_groups(unsure: list, vectors: dict | None = None) -> list[FileGroup]:
+def find_groups(unsure: list, vectors: dict | None = None, max_groups: int | None = MAX_GROUPS) -> list[FileGroup]:
     """Groups among the files SortZen couldn't place (Suggestions with a low percentage or no destination).
     ``vectors``: each file's clue vector, by path, to group the remaining files that look alike."""
     by_shape: dict[tuple[str, str], list] = defaultdict(list)
@@ -87,7 +87,7 @@ def find_groups(unsure: list, vectors: dict | None = None) -> list[FileGroup]:
             groups.append((FileGroup(f"like:{os.path.normcase(members[0].path)}",
                                      f"{len(members)} files like “{example}”", [], rule_parts={}), members))
     found = []
-    for group, members in sorted(groups, key=lambda g: -len(g[1]))[:MAX_GROUPS]:
+    for group, members in sorted(groups, key=lambda g: -len(g[1]))[:max_groups]:
         members = sorted(members, key=lambda s: s.path.lower())
         group.paths = sorted(s.path for s in members)
         leaning = Counter(s.destination for s in members if s.destination and s.destination != s.current_folder)
