@@ -740,3 +740,45 @@ class BatchesAndKeptCopiesTest(unittest.TestCase):
         self.assertEqual(batches[0].certainty, 90)
         self.assertEqual(label_merge_suggestion(["Work", "Tax", "Taxes"]), ("Tax", "Taxes"))
         self.assertIsNone(label_merge_suggestion(["Work", "School"]))
+
+
+class RuleConditionsTest(unittest.TestCase):
+    def test_every_condition_set_must_hold_and_a_rule_without_one_places_nothing(self):
+        from sortzen.engine.rules import Rule
+
+        rule = Rule("", "/s/Taxes", label="Taxes", contains="T4", kind="pdf", inside="/d/Downloads")
+        self.assertTrue(rule.matches("T4 slip 2024.pdf", ["Taxes"], "/d/Downloads/older/T4 slip 2024.pdf"))
+        self.assertFalse(rule.matches("T4 slip 2024.pdf", [], "/d/Downloads/T4 slip 2024.pdf"))        # no label
+        self.assertFalse(rule.matches("T4 slip 2024.jpg", ["Taxes"], "/d/Downloads/T4 slip 2024.jpg"))  # kind
+        self.assertFalse(rule.matches("Slip 2024.pdf", ["Taxes"], "/d/Downloads/Slip 2024.pdf"))        # text
+        self.assertFalse(rule.matches("T4 slip 2024.pdf", ["Taxes"], "/d/Desktop/T4 slip 2024.pdf"))    # folder
+        self.assertFalse(Rule("", "/s/Anything").matches("anything.pdf", ["Taxes"], "/d/anything.pdf"))
+        self.assertIn("Needs a condition", Rule("", "/s/Anything").describe())
+        self.assertFalse(Rule("", "/s/Taxes", label="Taxes", on=False).matches("a.pdf", ["Taxes"]))
+        self.assertEqual(Rule("", "/s/Installers", ".msi").describe(), "Files (MSI files) go to /s/Installers")
+
+    def test_a_folder_for_each_year_or_month(self):
+        import time
+
+        from sortzen.engine.rules import Rule
+
+        yearly = Rule("", os.path.join("s", "Taxes"), label="Taxes", by="year")
+        self.assertEqual(yearly.destination_for("Return 2023.pdf"), os.path.join("s", "Taxes", "2023"))
+        saved = time.mktime((2021, 6, 15, 12, 0, 0, 0, 0, -1))
+        self.assertEqual(yearly.destination_for("Return.pdf", saved), os.path.join("s", "Taxes", "2021"))
+        monthly = Rule("", os.path.join("s", "Bills"), contains="bill", by="month")
+        self.assertEqual(monthly.destination_for("Power bill.pdf", saved), os.path.join("s", "Bills", "2021-06"))
+        self.assertIn("in a folder for each year", yearly.describe())
+
+    def test_rules_with_more_conditions_come_first_and_place_files_in_their_year(self):
+        from sortzen.engine.plan import Plan, Suggestion
+        from sortzen.engine.rules import Rule, apply_rules
+
+        plan = Plan(files=[Suggestion("/d/T4 slip 2024.pdf", "/d", None, 0),
+                           Suggestion("/d/Notes 2024.pdf", "/d", None, 0)])
+        rules = [Rule("", "/s/Taxes", label="Taxes", by="year"),
+                 Rule("", "/s/Slips", label="Taxes", contains="slip")]
+        placed = apply_rules(plan, rules, lambda f: True, lambda p: True, labels_of=lambda p: ["Taxes"])
+        self.assertEqual(placed, 2)
+        self.assertEqual(plan.files[0].destination, "/s/Slips")             # label and text: more specific
+        self.assertEqual(plan.files[1].destination, os.path.join("/s/Taxes", "2024"))
