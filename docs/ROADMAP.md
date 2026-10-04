@@ -62,6 +62,14 @@ moves files after the plan is confirmed.
 | 31 | Cataloguing tab: planned files by folder, drag to change the plan and teach, notes, folders for labels | **Done** |
 | 32 | **Alpha 0.5 build** | **Done** |
 
+### Alpha 0.6
+| # | Phase | Status |
+|---|-------|--------|
+| 33 | Engine: catalog batches and review batches, surest first; the copy kept by a rule; labels that are surely the same | **Done** |
+| 34 | Services: named sessions saved as they go; the wizard's steps with live learning and settling; Review batches, new and deleted planned folders | **Done** |
+| 35 | Start screen, the wizard window (Choose, Duplicates, Catalog), the Review tab and the Move window; tabs from View | **Done** |
+| 36 | **Alpha 0.6 build** | **Done** |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is

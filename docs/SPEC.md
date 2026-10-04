@@ -37,8 +37,11 @@ decision; when the code and this file disagree, this file wins until it is chang
   says so in the status bar.
 - Every change can be undone (Ctrl+Z and Undo buttons). Optional panels can be shown or
   hidden.
-- Features are reachable from the toolbar, the menus, the folder tree and the welcome
-  window.
+- Features are reachable from the toolbar, the menus, the folder tree and the start
+  screen. The start screen leads with the organizing-session wizard (§7.1a) and lists recent
+  sessions; "Show this screen when SortZen opens" turns it off.
+- Every tab can be closed, and opened again from View › Tabs or "+ Open a tab" beside the
+  tabs.
 - Text is selectable; no wasted space; nothing is cut off or overlapping.
 - Wording is plain and says what will happen; new features carry a short hint underneath.
 - Tick boxes and toggles respond instantly and save in the background.
@@ -178,9 +181,87 @@ overview of what is there:
     suggested at 65% at most, so the file waits in Review with the reason shown.
   Files users placed, files placed by rules and topic members keep what they have.
 
-### 2. The cataloguing wizard: labels, then only what SortZen isn't sure about
-"Start cataloguing" (start screen, toolbar, Plan menu, Ctrl+L) opens the **Cataloguing wizard**
-tab (between Folders and Cataloguing).
+### 1a. Organizing sessions: the wizard, then Review
+An **organizing session** is one clean-up from start to end, named by users ("Downloads
+clean-up, Oct 2026") and saved as it goes, so it can be stopped and carried on. "Start the
+wizard" (the start screen), File › New organizing session… (Ctrl+N) and the toolbar open the
+**wizard**, a window with three steps; the start screen also lists recent sessions, the
+latest used first, with where each one is ("Step 3 Catalog · 85 files done", "Review · batch 4
+of 9", "Moved · 273 files") and Open (right-click › Forget this session).
+
+**Step 1 Choose**: the session's name; **Input**, the folders to sort, each sorted into other
+folders or tidied in place (added with "Add a folder…" or dropped from Explorer); **Output**,
+where files go ("Use my Windows folders", "Add a folder…"); **Options**: SortZen only (free, on
+this PC) or an AI service with its spending cap per 1,000 files, match by meaning, read scans,
+be gentle, "Move without asking when at least __% sure" (in Review, batches this sure need no
+check), the labels to start with (ideas from the names of the destination folders, two levels
+down, leaving out general names like Documents or a year; "+ New label"), and "Ask the AI to
+suggest starting labels from the file names"; **Advanced**: load or save a profile, and what
+the AI may see (privacy). Next reads the folders and makes the plan; with AI chosen, the AI
+suggests labels (if asked) and labels a sample of the files, each after showing the cost.
+
+**Step 2 Duplicates** (skipped when there are no exact copies): every set of copies (§11),
+the kept one highlighted and marked KEEP, the extras ticked; Select all / Select none; double-
+click opens; right-click › "Keep this copy instead". Which copy to keep: the last version saved
+(the default), the first version saved, the one already in a sorted folder, or the one with the
+shortest name; ties go to a name without a copy number, then the shorter path, and a copy inside
+a folder kept together is never ticked. Next moves the ticked extras into "To delete" at once
+(each checked byte for byte first), so the next step isn't cluttered; Undo puts them back.
+"Skip: keep every copy" moves nothing.
+
+**Step 3 Catalog**: the files being sorted, one **batch** of related files per screen, surest
+first, so the easy ones are cleared first and SortZen has learned the most by the time it
+reaches the files it knows least about. A batch is files with the same kind of name, a shared
+word or files that look alike, then files SortZen would give the same labels and send to the
+same folder, then files with no clear label by kind; at most 40 files (bigger ones come in
+parts). Its certainty is how sure SortZen is of its labels (70%) and its folder (30%). Files
+users labelled before, files that go with another file and topic members are not shown.
+- The files have tick boxes (Select all / Select none; double-click opens). "Confirm labels for
+  the N ticked files": the suggested labels as buttons with their percent, on unless clicked
+  off; any other label, or "+ New label". Confirm gives the ticked files exactly those labels,
+  as users' own, and each file checks SortZen's guess; unticked files come back later.
+- A batch with no guess shows "SortZen has no guess for these": type a label or pick one, or
+  "Send to Review without labels".
+- Small links: "Keep their folder together", "Write a note" (for the ticked files), "These
+  don't belong together" (they come back later, one by one) and "Delete" (into "To delete").
+- "Skip for now": the batch comes back at the end; skipped again, its files go to Review as
+  they are. Back undoes the last answer and shows that batch again (on the first batch, it goes
+  back to Step 1).
+- **Learning as it goes**: after each confirmed batch the labels are guessed again and the
+  remaining batches formed again. Once SortZen's guesses matched users' choices in at least 90%
+  of at least 20 checks, batches it is at least 85% sure of are settled by themselves ("3 more
+  batches (27 files) are now settled and skipped"). It also suggests merging two labels that
+  are surely the same ("Tax" into "Taxes": every file and rule follows) and folders for labels
+  (§7.2b); each with a button and "Not now".
+- The footer shows the files left, the agreement meter ("SortZen matched your choice in 46 of
+  your last 50") and how many batches SortZen settled by itself.
+
+After the last batch the wizard closes, the plan is made again with everything learned, and
+the **Review** tab opens with the other tabs closed (they open again from View › Tabs or
+"+ Open a tab"). Nothing has moved yet, except the copies in Step 2.
+
+**Review**: the files the plan moves, in batches of files with the same labels (split by folder
+when there are more than 60), surest first; folders that move as they are form their own
+batch. Batches at or above the "Move without asking" level are confirmed by SortZen and can
+still be changed.
+- Left: a clean folder tree of the folders files can go to, the batch's files under the folder
+  they go to, and folders still to be made marked NEW. Dragging files onto another folder
+  changes the plan and SortZen remembers it as users' choice; dragging a NEW folder moves it.
+  "New folder" makes a folder in the plan inside the selected one (made on disk when files
+  move into it); "Delete folder" deletes a folder still to be made, and its files go to the
+  folder it was in (folders that exist are deleted in Explorer).
+- Right: the selected file's labels, why it goes there and a note box; for a folder, its
+  rules ("Files labelled Taxes go to Documents/Taxes") with Remove and "Add a rule…". Rules
+  are not shown in the tree.
+- "Confirm and next batch" keeps the batch's plan (SortZen remembers each file's folder) and
+  shows the next; "Previous batch"; "Skip for now". After the last batch the **Move window**
+  shows everything that will move ("All 9 batches reviewed. Move 412 files into 23
+  folders?"), new folders, names already taken, and the copies already in "To delete";
+  nothing moves before it. Files in skipped batches stay where they are. Every move is
+  logged and Undo puts it back. The session is then "Moved" on the start screen.
+
+### 2. Labels: the label list, then only what SortZen isn't sure about
+The **Labels** tab (View › Tabs, Ctrl+L) works without a session.
 
 **Step 1: labels.** Users make their label list: words for what files are about ("Work",
 "Taxes", "School", "Photo session"). A file can have several labels. The list is ordered by
@@ -430,8 +511,9 @@ and when):
   the oldest, then the one with the shortest path. Right-click › "Keep this copy instead"
   chooses another. One copy of every set is always kept.
 - Extras are ticked, except copies inside a folder that is kept together. "Queue ticked for
-  deletion…" confirms first, then moves the ticked extras into a folder named "Queued for
-  deletion YYYY-MM-DD" inside the added folder they are in, keeping their subfolders.
+  deletion…" confirms first, then moves the ticked extras into a folder named "To delete"
+  inside the added folder they are in, keeping their subfolders. In an organizing session,
+  Step 2 does the same with the copy kept chosen by a rule (§7.1a).
 - Right before each extra moves, it is checked byte for byte against the copy kept;
   anything that is no longer an exact copy stays where it is and is listed.
 - Nothing is deleted: users delete the "To delete" folders themselves when they
@@ -590,6 +672,12 @@ and when):
     folders), or a folder dropped there from Explorer, adds it to the catalog as a
     destination folder.
   - **Files that go with another file** (§7.4) and **folders that hold one movie** stay whole.
+- **0.6**: everything in 0.5, plus:
+  - **Organizing sessions** (§7.1a): named and saved as they go, reopened from the start
+    screen; the wizard (Choose, Duplicates, Catalog) and the Review tab, then the Move window.
+  - The start screen leads with the wizard and lists recent sessions; tabs close and open
+    again from View › Tabs and "+ Open a tab".
+  - Double-clicking a file or folder in any list opens it.
 - Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned

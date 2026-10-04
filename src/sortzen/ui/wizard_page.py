@@ -1,4 +1,4 @@
-"""The cataloguing wizard: labels first, then only what SortZen isn't sure about, round after round.
+"""The Labels tab: labels first, then only what SortZen isn't sure about, round after round.
 
 Step 1: users make their label list (the top label counts most), optionally with the AI's suggestions,
 and choose how files get their first labels: SortZen on the PC, or the AI for a sample of files with
@@ -51,7 +51,7 @@ class WizardPage(QWidget):
         col = QVBoxLayout(page)
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(8)
-        col.addWidget(_label("Cataloguing wizard · Step 1 of 2: your labels", "pageTitle", wrap=False))
+        col.addWidget(_label("Labels · Step 1 of 2: your labels", "pageTitle", wrap=False))
         col.addWidget(_label("Labels describe what files are about, such as Work, Taxes, School or Photo session. "
                              "A file can have several. Drag labels up or down: the top label counts most when "
                              "SortZen decides where files go. Folders come later: SortZen learns which folders "
@@ -111,7 +111,7 @@ class WizardPage(QWidget):
         col.setContentsMargins(16, 12, 16, 0)
         col.setSpacing(6)
         top = QHBoxLayout()
-        top.addWidget(_label("Cataloguing wizard · Step 2 of 2: check what SortZen isn't sure about", "pageTitle",
+        top.addWidget(_label("Labels · Step 2 of 2: check what SortZen isn't sure about", "pageTitle",
                              wrap=False), 1)
         back = QPushButton("Back to labels")
         back.clicked.connect(lambda: self.show_step(0))

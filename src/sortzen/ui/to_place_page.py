@@ -1,4 +1,4 @@
-"""The file list of the cataloguing wizard: the files SortZen isn't sure about, labelled by users, and its questions.
+"""The file list of the Labels tab: the files SortZen isn't sure about, labelled by users, and its questions.
 
 Users make labels ("Work", "Taxes", "Photo session"), select files (several at once, or a whole group
 such as "39 PDFs whose names are only numbers") and click a label. A file's labels together choose its

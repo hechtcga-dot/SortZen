@@ -1152,9 +1152,9 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.run_job("session-move", lambda emit, token: self.service.move(plan, rows, emit, token))
 
-    # ---------------------------------------------------------------- the cataloguing wizard
+    # ---------------------------------------------------------------- the Labels tab
     def open_wizard(self) -> None:
-        """Start cataloguing: the wizard opens on the labels step."""
+        """The Labels tab, on the labels step."""
         if not self.service.source_folders():
             QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
             return

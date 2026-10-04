@@ -32,7 +32,8 @@ src/sortzen/
                        topics, questions, answers, programs, versions and copies),
                        duplicates.py (exact copies, the copy
                        kept and why), labeling.py (labels guessed, labels as evidence, label
-                       rules), companions.py (subtitles and sidecars follow their file),
+                       rules), batches.py (batches of related files for the wizard and for
+                       Review, surest first), companions.py (subtitles and sidecars follow their file),
                        pairs.py (similar / different files), ai_evidence.py (AI answers as evidence), meaning.py (meaning
                        as evidence), rules.py (rules
                        users make, rule suggestions, renamed planned folders), groups.py
@@ -42,15 +43,19 @@ src/sortzen/
                        copy and check across drives, step-by-step run log, Undo
   repositories/        settings.json, API keys (Windows Credential Manager via keyring),
                        file_index.py (SQLite: remembered scan results), ai_answers.py
-                       (SQLite: remembered AI answers)
+                       (SQLite: remembered AI answers), sessions.py (organizing sessions, one
+                       JSON file each)
   services/            AppService: the only API the window uses (folders, autonomy, answers,
                        corrections, make_plan, move, undo, AI step, profiles,
                        diagnostics, catalog); catalog.py (categories from folders and users' edits);
                        profile.py (.szprofile files); plan_view.py (Ready/Review/
                        Staying rows, problems, display paths, Excel export); moving.py
-                       (ticked rows to move requests, the confirmation preview)
-  ui/                  PySide6 window (main_window.py), folders_page.py, plan_page.py,
-                       wizard_page.py (cataloguing wizard), to_place_page.py (its
+                       (ticked rows to move requests, the confirmation preview); flow.py (an
+                       organizing session: the wizard's steps, live learning, Review batches)
+  ui/                  PySide6 window (main_window.py: start screen, tabs), session_wizard.py
+                       (the organizing-session wizard: Choose, Duplicates, Catalog),
+                       review_page.py (Review tab), folders_page.py, plan_page.py,
+                       wizard_page.py (Labels tab), to_place_page.py (its
                        file list: labels, groups and questions), catalog_page.py (Cataloguing tab), progress_window.py (+ tips.py), dialogs.py,
                        move_dialogs.py (confirm, result, undo a move), copies_page.py,
                        ai_widgets.py (AI service and privacy panels), ai_dialog.py,
