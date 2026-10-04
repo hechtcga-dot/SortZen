@@ -38,7 +38,7 @@ def _list(lines: list[str], height: int = 90) -> QPlainTextEdit:
 class ConfirmMoveDialog(QDialog):
     """Everything a move will do, before it happens."""
 
-    def __init__(self, parent, preview, display):
+    def __init__(self, parent, preview, display, heading: str = "", extra: list[str] = (), back: str = ""):
         super().__init__(parent)
         self.setWindowTitle("Move these files?")
         self.resize(640, 560)
@@ -47,10 +47,10 @@ class ConfirmMoveDialog(QDialog):
         if preview.folders:
             what.append(f"{_plural(preview.folders, 'folder')} kept together "
                         f"({_plural(preview.files_in_folders, 'file')} inside)")
-        col.addWidget(_label(f"Move {' and '.join(what)} into {_plural(len(preview.destinations), 'folder')}?",
-                             "cardTitle"))
+        col.addWidget(_label(f"{heading}Move {' and '.join(what)} into {_plural(len(preview.destinations), 'folder')}?",
+                             "bigTitle" if heading else "cardTitle"))
         new = sum(1 for _, _, is_new in preview.destinations if is_new)
-        notes = []
+        notes = list(extra)
         if new:
             notes.append(f"{_plural(new, 'new folder')} will be made (marked “new” below).")
         if preview.renamed:
@@ -88,7 +88,10 @@ class ConfirmMoveDialog(QDialog):
         box = QDialogButtonBox()
         self.move_button = box.addButton(f"Move {preview.items:,}", QDialogButtonBox.ButtonRole.AcceptRole)
         self.move_button.setObjectName("primary")
-        box.addButton(QDialogButtonBox.StandardButton.Cancel)
+        if back:
+            box.addButton(back, QDialogButtonBox.ButtonRole.RejectRole)
+        else:
+            box.addButton(QDialogButtonBox.StandardButton.Cancel)
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
         col.addWidget(box)

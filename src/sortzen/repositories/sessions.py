@@ -32,6 +32,8 @@ class Session:
     to_review: list = field(default_factory=list)       # files sent to Review without labels
     later: list = field(default_factory=list)           # skipped or unticked: they come back at the end
     passed: list = field(default_factory=list)          # skipped again: they go to Review as they are
+    apart: list = field(default_factory=list)           # files that don't belong with the others: one by one
+    answered: int = 0               # batches answered in Step 3
     batches_at_start: int = 0
     settled_batches: int = 0
     review_batch: int = 0           # the Review batch shown last

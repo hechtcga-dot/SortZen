@@ -168,6 +168,29 @@ QMenu::item {{ padding: 6px 22px 6px 12px; border-radius: 4px; }}
 QMenu::item:selected {{ background: {ACCENT_TINT}; color: {INK}; }}
 QMenu::separator {{ height: 1px; background: {LINE_SOFT}; margin: 4px 6px; }}
 QLabel#fieldLabel {{ font-size: 9pt; font-weight: 600; color: {INK_2}; }}QLabel#appName {{ font-family: "{SERIF}"; font-size: 14pt; font-weight: 600; color: {ACCENT_DARK}; }}
+QLabel#bigTitle {{ font-family: "{SERIF}"; font-size: 15pt; font-weight: 600; }}
+QLabel#stepOn {{ background: {ACCENT}; color: {WHITE}; border-radius: 10px; padding: 3px 10px; font-weight: 600; }}
+QLabel#stepOff {{ color: {MUTED}; }}
+QLabel#batchCount {{ font-family: "{MONO}"; }}
+QFrame#section {{ background: {WHITE}; border: 1px solid {LINE}; border-radius: 10px; }}
+QLabel#sectionHead {{ background: {PANEL}; color: {INK_2}; border-bottom: 1px solid {LINE_SOFT};
+    border-top-left-radius: 10px; border-top-right-radius: 10px; padding: 7px 12px; font-size: 8.5pt;
+    font-weight: 600; letter-spacing: 1px; }}
+QFrame#footer {{ background: {PANEL}; border-top: 1px solid {LINE}; }}
+QFrame#rule {{ background: {LINE_SOFT}; border: none; min-height: 1px; max-height: 1px; }}
+QFrame#banner {{ background: {ACCENT_TINT}; border-radius: 8px; }}
+QFrame#recommended {{ background: {WHITE}; border: 2px solid {ACCENT}; border-radius: 12px; }}
+QLabel#recommendedTag {{ color: {ACCENT}; font-size: 8pt; font-weight: 600; letter-spacing: 1px; }}
+QPushButton#chip {{ border-radius: 8px; padding: 7px 14px; }}
+QPushButton#chip:checked {{ background: {ACCENT}; color: {WHITE}; border-color: {ACCENT_DARK}; }}
+QPushButton#smallChip {{ border-radius: 8px; padding: 4px 10px; }}
+QPushButton#newChip {{ border-radius: 8px; padding: 4px 10px; border-style: dashed; }}
+QLabel#labelChip {{ background: {ACCENT}; color: {WHITE}; border-radius: 6px; padding: 3px 9px; }}
+QLabel#newBadge {{ background: {WARN_BG}; color: {WARN_TEXT}; border-radius: 4px; padding: 1px 6px;
+    font-family: "{MONO}"; font-size: 7.5pt; font-weight: 600; }}
+QToolButton#openTab {{ border: none; background: transparent; color: {MUTED}; padding: 4px 10px; }}
+QToolButton#openTab:hover {{ color: {INK}; }}
+QToolButton#openTab::menu-indicator {{ image: none; width: 0; }}
 QLabel#stepNumber {{ background: {ACCENT_TINT}; color: {ACCENT_DARK}; border-radius: 12px; font-weight: 600;
     min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; qproperty-alignment: AlignCenter; }}
 """

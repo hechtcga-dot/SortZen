@@ -143,9 +143,17 @@ class Flow:
         guesses = {s.path: [(label, percent) for label, percent, _ in self.service.label_guesses(s.path)]
                    for s in candidates}
         display = self.service.display
-        self.batches = catalog_batches(fresh, guesses, vectors, display) + \
-            [b for b in catalog_batches(again, guesses, vectors, display) if b.paths]
-        self.batches = [b for b in self.batches if b.paths]
+        apart = {_key(p) for p in self.session.apart}
+
+        def batches(files):
+            together = [s for s in files if _key(s.path) not in apart]
+            alone = [catalog_batches([s], guesses, None, display)[0] for s in files if _key(s.path) in apart]
+            for b in alone:
+                b.title, b.why = os.path.basename(b.paths[0]), "Kept apart from the files it was shown with"
+            found = catalog_batches(together, guesses, vectors, display) + alone
+            return sorted([b for b in found if b.paths], key=lambda b: (-b.certainty, -len(b.paths), b.title.lower()))
+
+        self.batches = batches(fresh) + batches(again)
         if not self.session.batches_at_start:
             self.session.batches_at_start = len(self.batches)
             self.save()
@@ -164,8 +172,10 @@ class Flow:
         return bool(batch.paths) and all(_key(p) in later for p in batch.paths)
 
     def _remember(self) -> None:
-        lists = {k: list(getattr(self.session, k)) for k in ("done", "settled", "to_review", "later", "passed")}
+        lists = {k: list(getattr(self.session, k)) for k in ("done", "settled", "to_review", "later", "passed", "apart")}
         lists["settled_batches"] = self.session.settled_batches
+        lists["answered"] = self.session.answered
+        self.session.answered += 1
         self._history.append((lists, self.service.settings_snapshot()))
 
     def can_go_back(self) -> bool:
@@ -222,6 +232,27 @@ class Flow:
         self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys])
         self.make_batches()
         self.save()
+
+    def keep_apart(self, batch: Batch, ticked: list[str]) -> None:
+        """The ticked files don't belong with the others: they come back later, one by one."""
+        self._remember()
+        keys = {_key(p) for p in self.session.apart}
+        self.session.apart += [p for p in ticked if _key(p) not in keys]
+        self._come_back_later(ticked)
+        self.make_batches()
+        self.save()
+
+    def drop(self, paths: list[str]) -> None:
+        """Files moved into "To delete" from Step 3 leave the session."""
+        if self.plan is not None:
+            gone = {_key(p) for p in paths}
+            self.plan.files = [s for s in self.plan.files if _key(s.path) not in gone]
+            self.service.forget_files(paths)
+        self.make_batches()
+
+    def batch_number(self) -> tuple[int, int]:
+        """(this batch's number, how many batches there are now)."""
+        return self.session.answered + 1, self.session.answered + len(self.batches)
 
     def skip(self, batch: Batch) -> None:
         self._remember()

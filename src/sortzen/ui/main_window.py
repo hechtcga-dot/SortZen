@@ -1,4 +1,6 @@
-"""The workspace window: folder tree on the left; Start, Folders, Cataloguing wizard, Cataloguing, Plan and Copies tabs on the right."""
+"""The workspace window: folder tree on the left; tabs on the right (Start, Review, Folders, Labels, Cataloguing,
+Plan, Copies), each closed and opened again from the View menu. Organizing sessions run in the wizard window
+and end in the Review tab."""
 from __future__ import annotations
 
 import logging
@@ -7,8 +9,8 @@ import os
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QInputDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QSplitter, QTabWidget, QToolBar, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QFileDialog, QFrame, QInputDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
+    QPushButton, QSplitter, QTabWidget, QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..config import APP_NAME, APP_TAGLINE, APP_VERSION
@@ -28,22 +30,26 @@ from .move_dialogs import ConfirmMoveDialog, MoveResultDialog, RunsDialog
 from .opening import open_on_double_click
 from .plan_page import PlanPage
 from .progress_window import ProgressWindow
+from .review_page import ReviewPage
+from .session_wizard import SessionWizard
 from .settings_window import SettingsWindow
 from .sortable import human_size
 from .wizard_page import WizardPage
 
-STEPS = (
-    ("Add folders", "Choose the messy folders to sort and the folders files may go to. "
-                    "SortZen reads nothing outside them."),
-    ("Catalog", "The cataloguing wizard: make your labels (Work, Taxes, Photo session…), let SortZen or the AI "
-                "label the files, then check only what SortZen isn't sure about. Each round it learns and asks less."),
-    ("Check the catalog", "The Cataloguing tab shows where every file will go. Drag files to the right folder and "
-                          "SortZen learns again; anything below your chosen level waits in Review."),
-    ("Move", "Tick what should move and confirm. Every move is written down, so Edit › Undo puts everything "
-             "back."),
-)
 FOLDER = Qt.ItemDataRole.UserRole
 log = logging.getLogger("sortzen")
+
+
+def _when(stamp: float) -> str:
+    """When a session was last used: "today", "yesterday", "3 days ago" or "Sep 22"."""
+    import time
+
+    days = int((time.time() - stamp) // 86400)
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "yesterday"
+    return f"{days} days ago" if days < 7 else time.strftime("%b %d", time.localtime(stamp))
 
 
 class MainWindow(QMainWindow):
@@ -58,6 +64,10 @@ class MainWindow(QMainWindow):
         self._plan_waiting = False
         self._after_plan: str | None = None         # what the wizard does once the plan is made
         self._wizard_open = False
+        self.wizard: SessionWizard | None = None      # the organizing-session wizard, while it is open
+        self.flow = None                            # the organizing session in the Review tab
+        self._session_ai: list[str] = []            # AI steps still to run before Step 2
+        self._session_reading = False               # the wizard waits for the plan (and the AI steps)
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self.resize(1200, 760)
@@ -73,8 +83,11 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self._tree_panel())
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(lambda i: self.tabs.removeTab(i))
         self.start_page = self._start_page()
         self.tabs.addTab(self.start_page, "Start")
+        self.review_page = ReviewPage(self)
         self.folders_page = FoldersPage(self.service)
         self.folders_page.add_source.connect(self.add_source)
         self.folders_page.add_destination.connect(self.add_destination)
@@ -119,7 +132,7 @@ class MainWindow(QMainWindow):
                              (self.wizard_page.ask_ai_rest, lambda: self.ai_label_files("unsure")),
                              (self.wizard_page.finish, self.finish_wizard)):
             signal.connect(slot)
-        self.tabs.insertTab(self.tabs.indexOf(self.catalog_page), self.wizard_page, "Cataloguing wizard")
+        self.tabs.insertTab(self.tabs.indexOf(self.catalog_page), self.wizard_page, "Labels")
         self.to_place_page = self.wizard_page.check
         self.to_place_page.refresh_button.hide()
         self.to_place_page.confirm.connect(self.confirm_labels)
@@ -157,8 +170,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.splitter, 1)
         self.setCentralWidget(body)
 
+        self.pages = [(self.start_page, "Start"), (self.review_page, "Review"), (self.folders_page, "Folders"),
+                      (self.wizard_page, "Labels"), (self.catalog_page, "Cataloguing"), (self.plan_page, "Plan"),
+                      (self.copies_page, "Copies")]
         self._actions()
+        self._tab_corner()
+        if not self.service.settings.get("show_start", True):
+            self.tabs.removeTab(self.tabs.indexOf(self.start_page))
+            self.tabs.setCurrentWidget(self.folders_page)
         self.refresh_folders()
+        self.refresh_sessions()
         self.statusBar().showMessage("Ready")
 
     # ---------------------------------------------------------------- layout
@@ -207,53 +228,136 @@ class MainWindow(QMainWindow):
         page = QWidget()
         col = QVBoxLayout(page)
         col.setContentsMargins(28, 24, 28, 24)
-        col.setSpacing(14)
-        title = QLabel("Sort a messy folder", objectName="pageTitle")
+        col.setSpacing(16)
+        title = QLabel("Sort a messy folder", objectName="bigTitle")
         title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         col.addWidget(title)
-        intro = QLabel("SortZen moves files from folders like Downloads into the right place, learns how you sort, "
-                       "and only asks an AI service about files it can't place by itself.", objectName="muted")
-        intro.setWordWrap(True)
-        intro.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        col.addWidget(intro)
-        card = QFrame(objectName="card")
-        steps = QVBoxLayout(card)
-        steps.setContentsMargins(18, 16, 18, 16)
-        steps.setSpacing(12)
-        for number, (name, text) in enumerate(STEPS, start=1):
-            row = QHBoxLayout()
-            row.setSpacing(12)
-            row.addWidget(QLabel(str(number), objectName="stepNumber"), 0, Qt.AlignmentFlag.AlignTop)
-            words = QVBoxLayout()
-            words.setSpacing(2)
-            words.addWidget(QLabel(name, objectName="cardTitle"))
-            detail = QLabel(text, objectName="hint")
-            detail.setWordWrap(True)
-            detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            words.addWidget(detail)
-            row.addLayout(words, 1)
-            steps.addLayout(row)
-        col.addWidget(card)
-        buttons = QHBoxLayout()
-        add_source = QPushButton("Add a folder to sort…")
-        add_source.clicked.connect(self.add_source)
-        add_destination = QPushButton("Add a destination folder…")
-        add_destination.clicked.connect(self.add_destination)
-        self.windows_button = QPushButton("Use my Windows folders")
-        self.windows_button.setToolTip("Adds Documents, Pictures, Music and Videos as destination folders")
-        self.windows_button.clicked.connect(self.add_windows_folders)
-        self.plan_button = QPushButton("Start cataloguing", objectName="primary")
-        self.plan_button.clicked.connect(self.open_wizard)
-        for b in (add_source, add_destination, self.windows_button):
-            buttons.addWidget(b)
-        buttons.addStretch(1)
-        buttons.addWidget(self.plan_button)
-        col.addLayout(buttons)
-        self.start_hint = QLabel(objectName="hint")
+        row = QHBoxLayout()
+        row.setSpacing(16)
+        card = QFrame(objectName="recommended")
+        wizard = QVBoxLayout(card)
+        wizard.setContentsMargins(22, 18, 22, 18)
+        wizard.setSpacing(10)
+        wizard.addWidget(QLabel("RECOMMENDED", objectName="recommendedTag"))
+        wizard.addWidget(QLabel("Start a new organizing session", objectName="cardTitle"))
+        text = QLabel("A short wizard: choose your folders, clear out duplicates, then label your files batch by "
+                      "batch. SortZen learns as you go, so each batch asks less. You check everything in Review "
+                      "before anything moves.")
+        text.setWordWrap(True)
+        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        wizard.addWidget(text)
+        wizard.addWidget(QLabel("1 Choose  ›  2 Duplicates  ›  3 Catalog  ›  Review", objectName="hint"))
+        self.plan_button = QPushButton("Start the wizard", objectName="primary")
+        self.plan_button.clicked.connect(self.new_session)
+        wizard.addWidget(self.plan_button, 0, Qt.AlignmentFlag.AlignLeft)
+        wizard.addStretch(1)
+        row.addWidget(card, 3)
+        sessions = QFrame(objectName="card")
+        scol = QVBoxLayout(sessions)
+        scol.setContentsMargins(20, 16, 20, 16)
+        scol.setSpacing(8)
+        scol.addWidget(QLabel("Carry on a session", objectName="cardTitle"))
+        self.sessions_list = QVBoxLayout()
+        self.sessions_list.setSpacing(6)
+        scol.addLayout(self.sessions_list)
+        scol.addStretch(1)
+        row.addWidget(sessions, 2)
+        col.addLayout(row)
+        links = QHBoxLayout()
+        links.addWidget(QLabel("Prefer the tabs?", objectName="muted"))
+        for text, slot in (("Open the Folders tab", lambda: self.show_tab(self.folders_page)),
+                           ("Open a saved profile…", self.load_profile)):
+            link = QPushButton(text, objectName="link")
+            link.clicked.connect(slot)
+            links.addWidget(link)
+        links.addStretch(1)
+        col.addLayout(links)
+        self.start_hint = QLabel("Every tab stays in the View menu and under “+ Open a tab”, for anyone who prefers "
+                                 "working without the wizard.", objectName="hint")
         self.start_hint.setWordWrap(True)
         col.addWidget(self.start_hint)
+        self.show_start = QCheckBox("Show this screen when SortZen opens",
+                                    checked=bool(self.service.settings.get("show_start", True)))
+        self.show_start.toggled.connect(lambda on: self.service.settings.set("show_start", on))
+        col.addWidget(self.show_start)
         col.addStretch(1)
         return page
+
+    def refresh_sessions(self) -> None:
+        """The start screen's list of saved sessions, the latest used first."""
+        from .session_wizard import _clear
+
+        _clear(self.sessions_list)
+        found = self.service.recent_sessions()
+        if not found:
+            empty = QLabel("No sessions yet. A session is saved as you go, so you can stop and carry on later.",
+                           objectName="hint")
+            empty.setWordWrap(True)
+            self.sessions_list.addWidget(empty)
+        for session, where in found:
+            line = QHBoxLayout()
+            words = QVBoxLayout()
+            words.setSpacing(0)
+            name = QLabel(session.name)
+            name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            words.addWidget(name)
+            words.addWidget(QLabel(f"{where} · {_when(session.updated)}", objectName="hint"))
+            line.addLayout(words, 1)
+            open_button = QPushButton("Open")
+            open_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            open_button.customContextMenuRequested.connect(
+                lambda _, f=session.file, b=open_button: self._session_menu(f, b))
+            open_button.clicked.connect(lambda _=False, f=session.file: self.open_session(f))
+            line.addWidget(open_button)
+            self.sessions_list.addLayout(line)
+
+    def _session_menu(self, file: str, button) -> None:
+        menu = QMenu(self)
+        menu.addAction("Open", lambda: self.open_session(file))
+        menu.addAction("Forget this session", lambda: self.forget_session(file))
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+
+    def forget_session(self, file: str) -> None:
+        """Forget a saved session (its files stay as they are; moves can still be undone)."""
+        self.service.sessions.delete(file)
+        self.refresh_sessions()
+
+    def _tab_corner(self) -> None:
+        self.open_tab_button = QToolButton(objectName="openTab")
+        self.open_tab_button.setText("+ Open a tab ▾")
+        self.open_tab_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.open_tab_button.setMenu(self.tabs_menu)
+        self.tabs.setCornerWidget(self.open_tab_button, Qt.Corner.TopRightCorner)
+
+    def _fill_tabs_menu(self) -> None:
+        self.tabs_menu.clear()
+        for page, title in self.pages:
+            needs_plan = page in (self.plan_page, self.copies_page)
+            needs_session = page is self.review_page
+            a = self.tabs_menu.addAction(title, lambda p=page: self.show_tab(p))
+            a.setCheckable(True)
+            a.setChecked(self.tabs.indexOf(page) >= 0)
+            a.setEnabled(not (needs_plan and self.plan is None) and not (needs_session and self.flow is None))
+
+    def show_tab(self, page) -> None:
+        """Open a tab (in its usual place) and show it."""
+        if self.tabs.indexOf(page) < 0:
+            order = [p for p, _ in self.pages]
+            title = dict((p, t) for p, t in self.pages)[page]
+            at = sum(1 for p in order[:order.index(page)] if self.tabs.indexOf(p) >= 0)
+            self.tabs.insertTab(at, page, title)
+            if page is self.wizard_page:
+                self._count_to_place()
+            if page is self.copies_page and self.plan is not None:
+                self.tabs.setTabText(self.tabs.indexOf(page), f"Copies ({len(self.plan.copies):,})")
+        self.tabs.setCurrentWidget(page)
+
+    def only_tab(self, page) -> None:
+        """Show one tab and close the others (they open again from View or “+ Open a tab”)."""
+        self.show_tab(page)
+        for i in reversed(range(self.tabs.count())):
+            if self.tabs.widget(i) is not page:
+                self.tabs.removeTab(i)
 
     def _actions(self) -> None:
         def action(text, slot, shortcut=None, tip=""):
@@ -270,8 +374,10 @@ class MainWindow(QMainWindow):
         self.add_destination_action = action("Add destination folder…", self.add_destination, "Ctrl+D",
                                              "Add a folder files may go to, like Documents")
         self.plan_action = action("Make a plan", self.make_plan, "F5", "Read the folders and plan where everything goes")
-        self.wizard_action = action("Start cataloguing", self.open_wizard, "Ctrl+L",
-                                    "The cataloguing wizard: labels, then only what SortZen isn't sure about")
+        self.session_action = action("New organizing session…", self.new_session, "Ctrl+N",
+                                     "The wizard: choose folders, clear duplicates, label files batch by batch")
+        self.wizard_action = action("Labels", self.open_wizard, "Ctrl+L",
+                                    "Your labels, and the files SortZen isn't sure about")
         self.export_action = action("Export plan to Excel…", self.export_plan, "Ctrl+E",
                                     "Save the plan as an Excel workbook")
         self.undo_action = action("Undo", self.undo, QKeySequence.StandardKey.Undo, "Undo the last change")
@@ -283,12 +389,14 @@ class MainWindow(QMainWindow):
 
         toolbar = QToolBar("Main")
         toolbar.setMovable(False)
-        for a in (self.add_source_action, self.add_destination_action, self.wizard_action, self.plan_action,
+        for a in (self.session_action, self.add_source_action, self.add_destination_action, self.plan_action,
                   self.export_action, self.undo_action):
             toolbar.addAction(a)
         self.addToolBar(toolbar)
 
         file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(self.session_action)
+        file_menu.addSeparator()
         for a in (self.add_source_action, self.add_destination_action):
             file_menu.addAction(a)
         file_menu.addSeparator()
@@ -312,13 +420,17 @@ class MainWindow(QMainWindow):
                                 tip="Ask an AI service about the files SortZen couldn't place by itself")
         self.ai_action.setEnabled(False)
         plan_menu.addAction(self.ai_action)
-        self.copies_action = action("Copies…", lambda: self.tabs.setCurrentWidget(self.copies_page),
+        self.copies_action = action("Copies…", lambda: self.show_tab(self.copies_page),
                                     tip="Exact copies found while making the plan")
         self.copies_action.setEnabled(False)
         plan_menu.addAction(self.copies_action)
-        plan_menu.addAction(action("Catalog", lambda: self.tabs.setCurrentWidget(self.catalog_page),
+        plan_menu.addAction(action("Catalog", lambda: self.show_tab(self.catalog_page),
                                    tip="Your categories: see, edit and comment on them"))
         view_menu = self.menuBar().addMenu("&View")
+        self.tabs_menu = QMenu("Tabs", self)
+        self.tabs_menu.aboutToShow.connect(self._fill_tabs_menu)
+        self._fill_tabs_menu()
+        view_menu.addMenu(self.tabs_menu)
         self.tree_action = QAction("Show folder tree", self, checkable=True, checked=True)
         self.tree_action.toggled.connect(lambda on: self.splitter.widget(0).setVisible(on))
         view_menu.addAction(self.tree_action)
@@ -527,6 +639,9 @@ class MainWindow(QMainWindow):
                 f"{os.path.basename(p)}: {why}" for p, why in result.failed[:8]))
         if name == "delete":
             self._drop_from_plan([old for old, _ in result.moves])
+            if self.wizard is not None and self.wizard.flow is not None:
+                self.wizard.flow.drop([old for old, _ in result.moves])
+                self.wizard.catalog.show_batch()
             self.statusBar().showMessage(f"{result.moved:,} moved to “To delete”. Edit › Undo puts them back.", 8000)
             return
         self.catalog_page.refresh()
@@ -732,19 +847,7 @@ class MainWindow(QMainWindow):
                 hint.setFlags(Qt.ItemFlag.NoItemFlags)
                 hint.setForeground(0, muted)
         self.count_folders()
-        has_sources = bool(self.service.source_folders())
-        suggested = self.service.suggested_destinations()
-        self.windows_button.setVisible(bool(suggested))
-        self.plan_button.setEnabled(has_sources)
-        self.plan_action.setEnabled(has_sources)
-        if not has_sources:
-            self.start_hint.setText("Start by adding a folder to sort, such as Downloads.")
-        elif not self.service.destination_folders():
-            self.start_hint.setText("Add destination folders too, or tidy a folder in place. "
-                                    "“Use my Windows folders” adds Documents, Pictures, Music and Videos.")
-        else:
-            self.start_hint.setText("Ready to catalog. Cataloguing moves nothing: you see where everything goes "
-                                    "first.")
+        self.plan_action.setEnabled(bool(self.service.source_folders()))
 
     def _tree_path(self, item):
         data = item.data(0, FOLDER) if item else None
@@ -798,6 +901,7 @@ class MainWindow(QMainWindow):
         self.refresh_folders()
 
     def _try(self, work, undo_text, undo, show_folders: bool = True) -> None:
+        show_folders = show_folders and self.wizard is None
         try:
             path = work()
         except FolderError as exc:
@@ -806,7 +910,7 @@ class MainWindow(QMainWindow):
         self._push_undo(undo_text, lambda: undo(path))
         self.refresh_folders()
         if show_folders:
-            self.tabs.setCurrentWidget(self.folders_page)
+            self.show_tab(self.folders_page)
 
     def set_mode(self, path: str, mode: str) -> None:
         before = next((f["mode"] for f in self.service.source_folders() if f["path"] == path), mode)
@@ -868,27 +972,185 @@ class MainWindow(QMainWindow):
         self.copies_action.setEnabled(bool(plan.copies))
         self.ai_action.setEnabled(True)
         after, self._after_plan = self._after_plan, None
+        if after == "session" and self.wizard is not None:
+            self.wizard.flow.set_plan(plan)
+            self._session_continue()
+            return
+        if after == "review" and self.flow is not None:
+            self.flow.set_plan(plan)
+            self.review_page.set_flow(self.flow)
+            self.only_tab(self.review_page)
+            self.refresh_sessions()
+            return
         if after == "ai-sample":
             self.ai_label_files("sample", then_plan=True)
         elif after == "suggest":
             self.ai_suggest_labels()
         keep, self._keep_tab = getattr(self, "_keep_tab", None), None
         if keep is not None:
-            self.tabs.setCurrentWidget(keep)
+            self.show_tab(keep)
         elif self._wizard_open:
             self.wizard_page.show_step(1)
-            self.tabs.setCurrentWidget(self.wizard_page)
+            self.show_tab(self.wizard_page)
         else:
-            self.tabs.setCurrentWidget(self.wizard_page if open_questions else self.plan_page)
+            self.show_tab(self.wizard_page if open_questions else self.plan_page)
             if open_questions:
                 self.wizard_page.show_step(1)
 
     def _count_to_place(self) -> int:
         waiting = self.to_place_page.count()
         self.tabs.setTabText(self.tabs.indexOf(self.wizard_page),
-                             f"Cataloguing wizard ({waiting:,})" if waiting else "Cataloguing wizard")
+                             f"Labels ({waiting:,})" if waiting else "Labels")
         self.wizard_page.refresh()
         return waiting
+
+    # ---------------------------------------------------------------- organizing sessions
+    def new_session(self) -> None:
+        """Open the wizard on Step 1 for a new organizing session."""
+        if self.wizard is not None:
+            self.wizard.raise_()
+            self.wizard.activateWindow()
+            return
+        if not self._free_for_job():
+            return
+        self._open_wizard(None)
+
+    def _open_wizard(self, flow) -> SessionWizard:
+        self.wizard = SessionWizard(self, flow)
+        self.wizard.step_done.connect(self._session_step)
+        self.wizard.finished.connect(self._wizard_closed)
+        self.wizard.show()
+        return self.wizard
+
+    def _wizard_closed(self, *_) -> None:
+        wizard, self.wizard = self.wizard, None
+        self._session_ai = []
+        self._session_reading = False
+        if wizard is not None:
+            wizard.deleteLater()
+        self.refresh_sessions()
+
+    def open_session(self, file: str) -> None:
+        """Carry on a saved session where it was left."""
+        from ..repositories.sessions import CATALOG, CHOOSE, DUPLICATES, MOVED
+
+        if not self._free_for_job():
+            return
+        flow = self.service.open_session(file)
+        if flow is None:
+            QMessageBox.information(self, APP_NAME, "That session can't be read any more.")
+            self.refresh_sessions()
+            return
+        if flow.session.stage == MOVED:
+            QMessageBox.information(self, APP_NAME, f"“{flow.session.name}” is finished: {flow.session.moved:,} files "
+                                    "were moved. Edit › Undo a move puts them back.")
+            return
+        if self.wizard is not None:
+            self.wizard.close()
+        missing = flow.restore_folders()
+        self.refresh_folders()
+        if missing:
+            QMessageBox.information(self, APP_NAME, "These folders of the session can't be found, so they are left "
+                                    "out:\n\n" + "\n".join(missing))
+        if flow.session.stage == CHOOSE:
+            self._open_wizard(flow)
+        elif flow.session.stage in (DUPLICATES, CATALOG):
+            self._open_wizard(flow)
+            self._session_read()
+        else:
+            self.flow = flow
+            self._after_plan = "review"
+            self.make_plan()
+
+    def _session_step(self, step: str) -> None:
+        if step == "choose":
+            self._session_ai = []
+            if self.wizard.choose.wants_ai():
+                self._session_ai = (["suggest"] if self.wizard.choose.ai_labels.isChecked() else []) + ["sample"]
+            self._session_read()
+        elif step == "duplicates":
+            self._session_queue()
+        elif step == "catalog":
+            self.flow = self.wizard.flow
+            self.wizard.close()
+            self._after_plan = "review"
+            self.make_plan()
+
+    def _session_read(self) -> None:
+        """Read the session's folders and make the plan; the wizard carries on when it is made."""
+        self._session_reading = True
+        self._after_plan = "session"
+        self.make_plan()
+
+    def _session_continue(self) -> None:
+        """After reading: the AI steps chosen in Step 1, then Step 2 (or 3)."""
+        from ..repositories.sessions import CATALOG, DUPLICATES
+
+        if self.wizard is None:
+            return
+        while self._session_ai:
+            step = self._session_ai.pop(0)
+            if step == "suggest" and self.ai_suggest_labels():
+                return
+            if step == "sample" and self.ai_label_files("sample"):
+                return
+        self._session_reading = False
+        flow = self.wizard.flow
+        if flow.session.stage == CATALOG:
+            self.service.guess_labels()
+            self.wizard.show_catalog()
+        else:
+            flow.session.stage = DUPLICATES
+            flow.save()
+            self.wizard.show_duplicates()
+        self.refresh_sessions()
+
+    def _session_queue(self) -> None:
+        """Step 2: the ticked extra copies move into "To delete" at once (checked byte for byte first)."""
+        groups = self.wizard.flow.copies()
+        ticked = self.wizard.flow.ticked_copies()
+        if not ticked or not self._free_for_job():
+            return
+        self.progress = ProgressWindow(self, "Moving copies to “To delete”", estimate=max(2.0, ticked / 30))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("session-queue", lambda emit, token: self.service.queue_copies(groups, emit, token))
+
+    def _session_queued(self, result) -> None:
+        if result.moved:
+            self._push_undo("Queue copies", lambda: self.undo_run(result.log))
+        if result.failed:
+            QMessageBox.information(self, APP_NAME, f"{len(result.failed):,} copies stayed where they were:\n\n"
+                                    + "\n".join(f"{os.path.basename(p)}: {why}" for p, why in result.failed[:8]))
+        if self.wizard is not None:
+            self.wizard.flow.copies_queued(result)
+            self.service.guess_labels()
+            self.wizard.show_catalog()
+        self.statusBar().showMessage(f"{result.moved:,} copies moved to “To delete”. Edit › Undo puts them back.", 8000)
+
+    def session_move(self, flow) -> None:
+        """After the last Review batch: what will move, then the move itself."""
+        rows = flow.move_rows()
+        if not rows:
+            QMessageBox.information(self, APP_NAME, "Nothing to move: confirm a batch first, or the plan leaves "
+                                    "every file where it is.")
+            return
+        if not self._free_for_job():
+            return
+        preview = self.service.move_preview(flow.plan, rows)
+        reviewed = sum(1 for r in flow.review if flow.is_reviewed(r))
+        heading = (f"All {len(flow.review)} batches reviewed. " if reviewed == len(flow.review) else
+                   f"{reviewed} of {len(flow.review)} batches confirmed; the rest stay where they are. ")
+        notes = [f"The {flow.session.copies_queued:,} copies from Step 2 are already in “To delete”."] \
+            if flow.session.copies_queued else []
+        dialog = ConfirmMoveDialog(self, preview, self.service.display, heading, notes, "Back to Review")
+        if not dialog.exec():
+            return
+        plan = flow.plan
+        self.progress = ProgressWindow(self, "Moving files", estimate=max(2.0, preview.items / 50))
+        self.progress.stop.connect(self.service.stop_job)
+        self.progress.show()
+        self.run_job("session-move", lambda emit, token: self.service.move(plan, rows, emit, token))
 
     # ---------------------------------------------------------------- the cataloguing wizard
     def open_wizard(self) -> None:
@@ -897,7 +1159,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, APP_NAME, "Add a folder to sort first.")
             return
         self.wizard_page.show_step(0)
-        self.tabs.setCurrentWidget(self.wizard_page)
+        self.show_tab(self.wizard_page)
 
     def start_cataloguing(self, mode: str) -> None:
         """Label the files (on the PC, or the AI for a sample first) and catalog them."""
@@ -915,7 +1177,7 @@ class MainWindow(QMainWindow):
 
     def finish_wizard(self) -> None:
         self._wizard_open = False
-        self.tabs.setCurrentWidget(self.catalog_page)
+        self.show_tab(self.catalog_page)
         self.catalog_page.refresh()
 
     def reorder_labels(self, names: list) -> None:
@@ -953,22 +1215,23 @@ class MainWindow(QMainWindow):
             "settings allow (Edit › Settings › Privacy). Spending stops at your cap."
         ) == QMessageBox.StandardButton.Yes
 
-    def ai_suggest_labels(self, confirm: bool = True) -> None:
+    def ai_suggest_labels(self, confirm: bool = True) -> bool:
         if not self.service.ai_ready():
             QMessageBox.information(self, APP_NAME, "Choose an AI service and its key first (Edit › Settings › AI).")
-            return
+            return False
         if self.plan is None:                       # the files are read first
             self._after_plan = "suggest"
             self.make_plan()
-            return
+            return False
         if not self._free_for_job():
-            return
+            return False
         estimate = self.service.ai_label_estimate("list")
         if confirm and not self._ai_ok(f"to suggest labels from {estimate['files']:,} file names", estimate):
-            return
+            return False
         self.progress = ProgressWindow(self, "Asking the AI for labels")
         self.progress.show()
         self.run_job("ai-list", lambda emit, token: self.service.ai_suggest_labels(emit, token))
+        return True
 
     def _pick_labels(self, found: list, chosen: list | None = None) -> None:
         if chosen is None:
@@ -984,24 +1247,25 @@ class MainWindow(QMainWindow):
             self.to_place_page._fill_labels()
         self.wizard_page.refresh()
 
-    def ai_label_files(self, which: str, then_plan: bool = False, confirm: bool = True) -> None:
+    def ai_label_files(self, which: str, then_plan: bool = False, confirm: bool = True) -> bool:
         """The AI labels a sample of files (or the files SortZen is still unsure of); SortZen learns the rest."""
         if not self.service.ai_ready() or not self._free_for_job():
-            return
+            return False
         estimate = self.service.ai_label_estimate(which, self.plan)
         if not estimate["files"]:
             self.statusBar().showMessage("Nothing to ask the AI about.", 5000)
-            return
+            return False
         what = (f"to label a sample of {estimate['files']:,} files (SortZen labels the rest from them)"
                 if which == "sample" else f"to label the {estimate['files']:,} files SortZen is still unsure of")
         if confirm and not self._ai_ok(what, estimate):
-            return
+            return False
         plan = self.plan
-        self._wizard_open = True
+        self._wizard_open = self.wizard is None
         self.progress = ProgressWindow(self, "Asking the AI for labels", estimate=max(4.0, estimate["files"] / 20))
         self.progress.stop.connect(self.service.stop_job)
         self.progress.show()
         self.run_job("ai-labels", lambda emit, token: self.service.ai_label_files(which, plan, emit, token))
+        return True
 
     # ---------------------------------------------------------------- labels and similar files
     def _label_change(self, text: str, change) -> bool:
@@ -1341,6 +1605,12 @@ class MainWindow(QMainWindow):
             self.undo_run(result.log, confirm=False)
             return
         self.refresh_folders()
+        if self.flow is not None and self.flow.session.stage == "moved":
+            self.flow = None                    # the session is done: back to the start screen
+            self.review_page.flow = None
+            self.tabs.removeTab(self.tabs.indexOf(self.review_page))
+            self.show_tab(self.start_page)
+            return
         if self.service.source_folders():
             self.make_plan()            # the plan is made again from where everything is now
 
@@ -1366,8 +1636,8 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Undone: {text}. Update the plan to see the effect.", 6000)
 
     def _moving(self) -> bool:
-        return self.service.jobs.busy and self.service.jobs.current.name in ("move", "undo-move", "queue",
-                                                                              "catalog-move", "place", "delete")
+        return self.service.jobs.busy and self.service.jobs.current.name in (
+            "move", "undo-move", "queue", "catalog-move", "place", "delete", "session-queue", "session-move")
 
     def _sync_undo_action(self) -> None:
         self.undo_action.setEnabled(bool(self.undo_stack))
@@ -1425,12 +1695,22 @@ class MainWindow(QMainWindow):
                 self._asked(event.result)
             if event.name == "ai-list":
                 self._pick_labels(event.result or [])
+                if self._session_reading:
+                    self._session_continue()
             if event.name == "ai-labels":
                 self.statusBar().showMessage(f"The AI labelled {event.result or 0:,} files. Cataloguing them…", 6000)
+                if self._session_reading:
+                    self._after_plan = "session"
                 self.make_plan()
+            if event.name == "session-queue":
+                self._session_queued(event.result)
+            if event.name == "session-move":
+                self.flow.moved(event.result)
+                self.refresh_sessions()
+                self._moved(event.result, False)
             if event.name == "catalog-ai":
                 self.statusBar().showMessage(f"{len(event.result):,} suggestions from the AI service.", 6000)
-                self.tabs.setCurrentWidget(self.catalog_page)
+                self.show_tab(self.catalog_page)
                 self.catalog_page.refresh()
             if event.name == "catalog-move":
                 self._moved(event.result, False)
@@ -1455,7 +1735,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
             if event.name in ("ai", "catalog-ai", "ai-list", "ai-labels"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
-            if event.name in ("move", "undo-move", "queue", "catalog-move", "place", "delete"):
+                if event.name in ("ai-list", "ai-labels") and self._session_reading:
+                    self._session_continue()
+            if event.name in ("move", "undo-move", "queue", "catalog-move", "place", "delete", "session-queue",
+                              "session-move"):
                 QMessageBox.warning(self, APP_NAME, f"Moving stopped: {event.message}\n\nEverything moved so far "
                                     "is written down; Edit › Undo a move puts it back.")
 

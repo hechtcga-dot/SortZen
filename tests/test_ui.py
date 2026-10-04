@@ -13,6 +13,10 @@ except ImportError:  # PySide6 not installed
     create_app = None
 
 from sortzen.config import AppPaths
+try:
+    from PySide6.QtWidgets import QPushButton
+except ImportError:
+    QPushButton = None
 from sortzen.engine.planner import TIDY
 from sortzen.repositories.api_keys import ApiKeyStore
 from sortzen.services import AppService
@@ -91,7 +95,7 @@ class MainWindowTest(unittest.TestCase):
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None))
         tabs = [self.window.tabs.tabText(i) for i in range(self.window.tabs.count())]
         self.assertIn("Plan", tabs)
-        self.assertTrue(any(t.startswith("Cataloguing wizard (") for t in tabs))
+        self.assertTrue(any(t.startswith("Labels (") for t in tabs))
         page = self.window.plan_page
         self.assertIn("ready", page.summary.text())
         ready = page.tree.topLevelItem(0)
@@ -826,6 +830,109 @@ class MainWindowTest(unittest.TestCase):
         page.level.setValue(50)
         self.assertGreater(ready_count(), ready_before)
         self.assertEqual(self.service.autonomy(), 50)
+
+
+    def test_organizing_session_wizard_review_and_move(self):
+        import shutil
+        from unittest import mock
+
+        from sortzen.ui.review_page import KIND
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.assertIn("No sessions yet", self.window.sessions_list.itemAt(0).widget().text())
+        self.window.plan_button.click()                                     # Start the wizard
+        wizard = self.window.wizard
+        self.assertIs(wizard.stack.currentWidget(), wizard.choose)
+        self.assertFalse(wizard.next_button.isEnabled())                    # a folder to sort first
+        self.window.add_source(str(root / "Downloads"), mode="sort into other folders")
+        self.window.add_destination(str(root / "Sorted"))
+        wizard.choose.refresh()
+        ideas = [b.text() for b in wizard.choose.findChildren(QPushButton, "smallChip")]
+        self.assertIn("+ Work", ideas)
+        next(b for b in wizard.choose.findChildren(QPushButton, "smallChip") if b.text() == "+ Screenshots").click()
+        self.assertEqual(self.service.labels(), ["Screenshots"])
+        wizard.choose.name.setText("Downloads clean-up")
+        wizard.choose.level.setValue(95)
+        wizard.next_button.click()
+        self.assertTrue(wait_until(self.app, lambda: wizard.stack.currentWidget() is wizard.duplicates
+                                   and not self.service.jobs.busy))
+        self.assertEqual(self.service.autonomy(), 95)
+        self.assertIn("Downloads clean-up", [s.name for s, _ in self.service.recent_sessions()])
+        extras = wizard.flow.ticked_copies()
+        self.assertTrue(wizard.next_button.text().startswith(f"Next: {extras} cop"))
+        wizard.next_button.click()                                          # the extras go at once
+        self.assertTrue(wait_until(self.app, lambda: wizard.stack.currentWidget() is wizard.catalog
+                                   and not self.service.jobs.busy))
+        self.assertEqual(wizard.flow.session.copies_queued, extras)
+        page = wizard.catalog
+        first = page.batch
+        self.assertEqual(first.labels[0][0], "Screenshots")
+        self.assertIn("Batch 1 of", wizard.steps.count.text())
+        page._tick_all(False)
+        self.assertFalse(wizard.next_button.isEnabled())                    # nothing ticked
+        page._tick_all(True)
+        wizard.next_button.click()                                          # Confirm and next batch
+        self.assertEqual(self.service.labels_of(first.paths[0]), ["Screenshots"])
+        self.assertIn("Batch 2 of", wizard.steps.count.text())
+        wizard.back_button.click()                                          # Back shows it again
+        self.assertEqual(page.batch.paths, first.paths)
+        wizard.next_button.click()
+        while page.batch is not None and page.batch.labels:
+            wizard.next_button.click()
+        if page.batch is not None:                                          # no guess: type a label
+            self.assertFalse(wizard.next_button.isEnabled())
+            page.typed.setText("Phone pictures")
+            self.assertTrue(wizard.next_button.isEnabled())
+            done = page.batch
+            wizard.next_button.click()
+            self.assertIn("Phone pictures", self.service.labels())
+            self.assertEqual(self.service.labels_of(done.paths[0]), ["Phone pictures"])
+        file = wizard.flow.session.file
+        wizard.close()                                                      # stop, then carry on later
+        self.assertTrue(wait_until(self.app, lambda: self.window.wizard is None))
+        self.window.open_session(file)
+        self.assertTrue(wait_until(self.app, lambda: self.window.wizard is not None and not self.service.jobs.busy
+                                   and self.window.wizard.stack.currentWidget() is self.window.wizard.catalog))
+        wizard = self.window.wizard
+        while wizard.isVisible() and wizard.catalog.batch is not None:
+            wizard.skip_button.click()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and not self.service.jobs.busy))
+        self.assertEqual([self.window.tabs.tabText(i) for i in range(self.window.tabs.count())], ["Review"])
+        self.window.show_tab(self.window.folders_page)                      # tabs open again from View
+        self.assertEqual(self.window.tabs.count(), 2)
+        self.window.show_tab(self.window.review_page)
+
+        review = self.window.review_page
+        flow = self.window.flow
+        i = next(i for i, r in enumerate(flow.review) if not flow.is_reviewed(r) and r.batch.paths)
+        review.show_batch(i)
+        path = flow.review[i].batch.paths[0]
+        self.assertIn("SELECTED FILE", review.details_caption.text())
+        review.tree.clearSelection()
+        review.items[os.path.normcase(os.path.abspath(str(root / "Sorted")))].setSelected(True)
+        new = review.new_folder("Jordan")
+        self.assertIn(os.path.normcase(new), review.items)
+        self.assertEqual(review.items[os.path.normcase(new)].data(0, KIND), "folder")
+        review.dropped([path], new)                                         # dragged in the tree
+        self.assertEqual(flow.plan.for_path(path).destination, new)
+        self.assertEqual(self.service.corrections()[path], new)
+        self.window.undo()
+        self.assertNotEqual(flow.plan.for_path(path).destination, new)
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))      # the folder count after Undo
+        with mock.patch("sortzen.ui.move_dialogs.ConfirmMoveDialog.exec", return_value=1):
+            while not self.service.jobs.busy and getattr(self.window, "result_dialog", None) is None:
+                review.confirm_button.click()
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy
+                                   and getattr(self.window, "result_dialog", None) is not None))
+        moved = flow.session.moved
+        self.assertGreater(moved, 0)
+        self.assertFalse(os.path.exists(path))                              # a confirmed file has moved
+        self.window.result_dialog.close()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.start_page))
+        self.assertEqual(self.service.recent_sessions()[0][1], f"Moved · {moved:,} files")
 
 
 @unittest.skipIf(create_app is None, "PySide6 is not installed")
