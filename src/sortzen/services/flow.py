@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from ..engine.batches import Batch, catalog_batches, label_merge_suggestion, review_batches
 from ..engine.duplicates import KEEP_RULES, choose_kept
-from ..engine.plan import KEEP_TOGETHER, Plan, Reason
+from ..engine.plan import KEEP_TOGETHER, STAYS, FolderSuggestion, Plan, Reason
 from ..engine.rules import rename_planned
 from ..repositories.file_index import path_key
 from ..repositories.sessions import CATALOG, DUPLICATES, MOVED, REVIEW, Session
@@ -426,6 +426,11 @@ class Flow:
     def start_review(self, plan: Plan) -> list[ReviewBatch]:
         """The plan's moves from the folders being sorted, in batches by labels, surest first."""
         self.plan = plan
+        for folder, target in list(self.session.folder_moves.items()):
+            if os.path.isdir(folder):
+                self._plan_folder_move(folder, target)
+            else:
+                self.session.folder_moves.pop(folder)
         records = self.service._records
         level = 101 if self.service.ask_everything() else self.service.autonomy()
         files = [s for s in plan.files if (records.get(s.path) is None or records[s.path].role == "source")
@@ -537,6 +542,11 @@ class Flow:
                 while parent and not os.path.isdir(parent) and os.path.dirname(parent) != parent:
                     found.setdefault(_key(parent), parent)
                     parent = os.path.dirname(parent)
+        for f in self.moving_folders().values() if self.plan else []:
+            target = f.destination
+            while target and not os.path.isdir(target) and os.path.dirname(target) != target:
+                found.setdefault(_key(target), target)
+                target = os.path.dirname(target)
         return sorted(found.values(), key=str.lower)
 
     def delete_folder(self, folder: str) -> dict:
@@ -549,6 +559,9 @@ class Flow:
         inside = [s.path for s in self.plan.files if s.destination and
                   (_key(s.destination) == _key(folder) or _key(s.destination).startswith(_key(folder) + os.sep))]
         undo = self.move_file(inside, parent) if inside else {"corrections": {}, "plan": {}}
+        moving = [f.path for f in self.moving_folders().values()
+                  if _key(f.destination) == _key(folder) or _key(f.destination).startswith(_key(folder) + os.sep)]
+        undo["folders"] = self.move_folders(moving, parent) if moving else None
         undo["new_folders"] = list(self.session.new_folders)
         self.session.new_folders = [f for f in self.session.new_folders
                                     if _key(f) != _key(folder) and not _key(f).startswith(_key(folder) + os.sep)]
@@ -557,6 +570,8 @@ class Flow:
 
     def undo_delete_folder(self, undo: dict) -> None:
         self.undo_move_file(undo)
+        if undo.get("folders"):
+            self.undo_move_folders(undo["folders"])
         self.session.new_folders = undo["new_folders"]
         self.save()
 
@@ -575,6 +590,106 @@ class Flow:
                                     for f in self.session.new_folders]
         self.save()
         return target
+
+    # ---------------------------------------------------------------- folders moved in Review
+    def _plan_folder_move(self, folder: str, target: str | None):
+        """The plan moves a folder as it is into ``target`` (None: it stays where it is)."""
+        f = next((x for x in self.plan.folders if _key(x.path) == _key(folder)), None)
+        if f is None:
+            f = FolderSuggestion(folder, KEEP_TOGETHER, 100, files=sum(
+                1 for s in self.plan.files if _key(s.path).startswith(_key(folder) + os.sep)))
+            self.plan.folders.append(f)
+        before = (f.outcome, f.destination, f.percent, list(f.reasons))
+        if target is None or _key(target) == _key(os.path.dirname(folder)):
+            f.outcome, f.destination = STAYS, None
+        else:
+            f.outcome, f.destination = KEEP_TOGETHER, target
+        f.percent, f.reasons = 100, [Reason(True, "You chose this folder")]
+        return f, before
+
+    def moving_folders(self) -> dict[str, object]:
+        """Folders the plan moves as they are, by key: the FolderSuggestion."""
+        return {_key(f.path): f for f in (self.plan.folders if self.plan else [])
+                if f.outcome == KEEP_TOGETHER and f.destination and _key(f.destination) != _key(os.path.dirname(f.path))}
+
+    def can_move_folder(self, folder: str, target: str) -> str:
+        """Why a folder can't go into ``target`` ("" when it can)."""
+        roots = {_key(r) for r in self.service.all_roots()}
+        if _key(folder) in roots:
+            return "The folders you added stay where they are."
+        if _key(target) == _key(folder) or _key(target).startswith(_key(folder) + os.sep):
+            return "A folder can't go inside itself."
+        if not any(_key(target) == r or _key(target).startswith(r + os.sep) for r in roots):
+            return "Folders can only go into the folders you added."
+        if os.path.exists(os.path.join(target, os.path.basename(folder))) and \
+                _key(os.path.dirname(folder)) != _key(target):
+            return f"There is already something called “{os.path.basename(folder)}” there."
+        return ""
+
+    def move_folders(self, folders: list[str], target: str) -> dict:
+        """Folders go, as they are, into another folder when users confirm the move. SortZen remembers the choice
+        (for folders being sorted, as their answer). Returns what Undo needs. Raises ValueError when one can't."""
+        from ..engine.overview import folder_key
+
+        for folder in folders:
+            why = self.can_move_folder(folder, target)
+            if why:
+                raise ValueError(why)
+        undo = {"plan": [], "moves": dict(self.session.folder_moves), "answers": {},
+                "reviewed": list(self.session.reviewed)}
+        sources = [f["path"] for f in self.service.source_folders()]
+        for folder in folders:
+            f, before = self._plan_folder_move(folder, target)
+            undo["plan"].append((f, before))
+            self.session.folder_moves[folder] = target
+            if any(_key(folder).startswith(_key(s) + os.sep) for s in sources):
+                key = folder_key(os.path.abspath(folder))
+                undo["answers"][key] = self.service.answers().get(key)
+                self.service.save_answers({key: target})
+            if _key(folder) not in {_key(p) for p in self.session.reviewed}:
+                self.session.reviewed.append(folder)      # users chose it: it moves with the rest
+        self.save()
+        return undo
+
+    def undo_move_folders(self, undo: dict) -> None:
+        for f, (outcome, destination, percent, reasons) in undo["plan"]:
+            f.outcome, f.destination, f.percent, f.reasons = outcome, destination, percent, reasons
+        self.session.folder_moves = undo["moves"]
+        self.session.reviewed = undo["reviewed"]
+        if undo["answers"]:
+            self.service.save_answers(undo["answers"])
+        self.save()
+
+    def group_folders(self, folders: list[str], parent: str, name: str) -> tuple[str, dict]:
+        """Too many folders: these go together into one new folder ``name`` in ``parent``. Returns the new
+        folder and what Undo needs."""
+        new = self.new_folder(parent, name)
+        try:
+            undo = self.move_folders(folders, new)
+        except ValueError:
+            self.session.new_folders.remove(new)
+            self.save()
+            raise
+        undo["new_folder"] = new
+        return new, undo
+
+    def undo_group_folders(self, undo: dict) -> None:
+        self.undo_move_folders(undo)
+        if undo.get("new_folder") in self.session.new_folders:
+            self.session.new_folders.remove(undo["new_folder"])
+        self.save()
+
+    def look_alike(self, folders: list[str]) -> list[list[str]]:
+        """Folders among these that look like versions or copies of one thing ("Report", "Report (2)",
+        "Report-1.2"), biggest group first."""
+        from ..engine.overview import _family_key
+
+        groups: dict[str, list[str]] = {}
+        for f in folders:
+            key = _family_key(os.path.basename(f))
+            if len(key) >= 3:
+                groups.setdefault(key, []).append(f)
+        return sorted([g for g in groups.values() if len(g) >= 2], key=lambda g: -len(g))
 
     def rules_for(self, folder: str) -> list:
         return [r for r in self.service.rules() if _key(r.destination) == _key(folder)]

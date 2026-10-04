@@ -40,9 +40,8 @@ class ReviewTree(CategoryTree):
         self.setHeaderHidden(True)
         self.setColumnCount(2)
 
-    def mimeData(self, items):
-        return paths_mime([i.data(0, PATH) for i in items if i.data(0, KIND) in ("file", "kept")
-                           or (i.data(0, KIND) == "folder" and not os.path.isdir(i.data(0, PATH)))])
+    def mimeData(self, items):                  # files and folders (the folders added themselves stay put)
+        return paths_mime([i.data(0, PATH) for i in items if i.parent() is not None])
 
     def dropEvent(self, event):
         item = self.itemAt(event.position().toPoint())
@@ -80,6 +79,11 @@ class ReviewPage(QWidget):
                                    "files move into it")
         self.new_button.clicked.connect(self.new_folder)
         head.addWidget(self.new_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.group_button = QPushButton("Too many folders?")
+        self.group_button.setToolTip("Put the selected folders (or the look-alike folders in the selected folder) "
+                                     "together into one new folder, such as “Old versions”")
+        self.group_button.clicked.connect(lambda: self.too_many_folders())
+        head.addWidget(self.group_button, 0, Qt.AlignmentFlag.AlignTop)
         self.delete_files_button = QPushButton("Delete…")
         self.delete_files_button.setToolTip("Move the selected files into the “To delete” folder (Undo puts them back)")
         self.delete_files_button.clicked.connect(lambda: self.selected_files() and
@@ -105,8 +109,9 @@ class ReviewPage(QWidget):
         self.tree.customContextMenuRequested.connect(self._menu)
         open_on_double_click(self.tree, lambda item: item.data(0, PATH), window.open_folder)
         lcol.addWidget(self.tree, 1)
-        lcol.addWidget(_label("Drag files or new folders onto a folder to change the plan; SortZen learns from "
-                              "it. Double-click to open.", "hint"))
+        lcol.addWidget(_label("Drag files or folders onto another folder to change the plan; SortZen learns from "
+                              "it. Shift- or Ctrl-click to choose several. Double-click to open; right-click for more.",
+                              "hint"))
         body.addWidget(left, 125)
 
         right = QVBoxLayout()
@@ -226,6 +231,8 @@ class ReviewPage(QWidget):
         planned = {_key(f) for f in self.flow.planned_folders()}
         files = self.flow.files_in(r)
         kept = [f for f in plan.folders if f.path in set(r.folders)]
+        moving = self.flow.moving_folders()             # shown where they go, not where they are
+        in_batch = {_key(f.path) for f in kept}
         wanted = {_key(s.destination): 0 for s in files if s.destination}
         for s in files:
             if s.destination:
@@ -234,8 +241,12 @@ class ReviewPage(QWidget):
             wanted.setdefault(_key(f.destination), 0)
         roots = [*self.service.destination_folders(),
                  *[f["path"] for f in self.service.source_folders() if f["mode"] == TIDY]]
+        def moves(key: str) -> bool:
+            return any(key == m or key.startswith(m + os.sep) for m in moving)
+
         folders = {_key(f): f for f in [*self._choices, *self.flow.planned_folders(), *[d for d in
-                   [s.destination for s in files] + [f.destination for f in kept] if d]]}
+                   [s.destination for s in files] + [f.destination for f in moving.values()] if d]]
+                   if not moves(_key(f))}
         for key in sorted(folders, key=lambda k: (k.count(os.sep), k)):
             self._folder_item(folders[key], planned, roots)
         for key, count in wanted.items():
@@ -260,15 +271,22 @@ class ReviewPage(QWidget):
             added = day(facts[s.path].added)
             item.setText(1, f"from {self.service.display(s.current_folder)}" + (f" · {added}" if added else ""))
             item.setForeground(1, self.palette().placeholderText())
-        for f in kept:
+        for key, f in sorted(moving.items(), key=lambda kv: os.path.basename(kv[1].path).lower()):
             parent = self.items.get(_key(f.destination))
             if parent is None:
                 continue
             item = QTreeWidgetItem(parent, [os.path.basename(f.path)])
             item.setData(0, PATH, f.path)
             item.setData(0, KIND, "kept")
-            item.setText(1, f"folder that moves as it is · {f.files:,} files")
+            item.setToolTip(0, f"{f.path}\nMoves here as it is, with everything in it")
+            item.setText(1, f"moves here as it is · from {self.service.display(os.path.dirname(f.path))} · "
+                            f"{f.files:,} file{'s' if f.files != 1 else ''}")
             item.setForeground(1, self.palette().placeholderText())
+            if key in in_batch:
+                above = parent
+                while above is not None:
+                    above.setExpanded(True)
+                    above = above.parent()
         self.tree.resizeColumnToContents(0)
         first = next((i for i in self.tree.findItems("*", Qt.MatchFlag.MatchWildcard | Qt.MatchFlag.MatchRecursive)
                       if i.data(0, KIND) in ("file", "kept")), None)
@@ -334,8 +352,14 @@ class ReviewPage(QWidget):
             self.tree.clearSelection()
             item.setSelected(True)
         menu = QMenu(self)
+        folders = self.selected_folders()
+        if len(folders) > 1:
+            menu.addAction(f"Put these {len(folders)} folders into one folder…", lambda: self.too_many_folders(folders))
         if item.data(0, KIND) == "folder":
             folder = item.data(0, PATH)
+            if len(folders) <= 1 and self.flow.look_alike([f for f in self._children(folder) if os.path.isdir(f)]):
+                menu.addAction("Too many folders in here? Put look-alike folders together…",
+                               lambda: self.too_many_folders([folder]))
             menu.addAction("New folder here…", self.new_folder)
             remove = menu.addAction("Delete this folder from the plan", self.delete_folder)
             remove.setEnabled(not os.path.isdir(folder))
@@ -395,8 +419,8 @@ class ReviewPage(QWidget):
             self.details_name.setText(os.path.basename(path) or path)
             if kind == "kept":
                 f = self.flow.plan.folder(path)
-                self.details_why.setText(f"Moves as it is, with its {f.files:,} files, to "
-                                         f"{self.service.display(f.destination)}." if f else "")
+                self.details_why.setText(f"Moves as it is, with its {f.files:,} file{'s' if f.files != 1 else ''}, "
+                                         f"to {self.service.display(f.destination)}." if f else "")
             else:
                 new = not os.path.isdir(path)
                 self.details_why.setText("Still to be made: it is made when files move into it." if new else
@@ -481,7 +505,8 @@ class ReviewPage(QWidget):
         planned = {_key(f) for f in self.flow.planned_folders()}
         moved_folders = [p for p in paths if _key(p) in planned]
         files = [p for p in paths if _key(p) not in planned and self.flow.plan.for_path(p) is not None]
-        kept = [p for p in paths if self.flow.plan.folder(p) is not None]
+        existing = [p for p in paths if os.path.isdir(p) and _key(p) not in planned]
+        existing = [p for p in existing if not any(_key(p).startswith(_key(o) + os.sep) for o in existing)]
         try:
             for p in moved_folders:
                 new = self.flow.move_planned_folder(p, folder)
@@ -496,12 +521,80 @@ class ReviewPage(QWidget):
             self.window.statusBar().showMessage(
                 f"{len(files):,} file{'s' if len(files) != 1 else ''} now go to {self.service.display(folder)}. "
                 "SortZen learns from it.", 6000)
-        for p in kept:
-            f = self.flow.plan.folder(p)
-            previous = f.destination
-            f.destination = folder
-            self.window._push_undo("Change where a folder goes", lambda x=f, d=previous: setattr(x, "destination", d))
+        if existing:
+            self.move_folders(existing, folder)
+            return
         self.show_batch()
+
+    def move_folders(self, folders: list[str], target: str) -> None:
+        """Folders go, as they are, into another folder when the files move; SortZen remembers it."""
+        try:
+            undo = self.flow.move_folders(folders, target)
+        except ValueError as exc:
+            QMessageBox.information(self, "Move folders", str(exc))
+            return
+        n = len(folders)
+        self.window._push_undo("Move folders" if n > 1 else "Move a folder",
+                               lambda: (self.flow.undo_move_folders(undo), self.show_batch()))
+        self.window._report(f"{n:,} folder{'s' if n != 1 else ''} go{'es' if n == 1 else ''} into "
+                            f"{self.service.display(target)} as {'they are' if n > 1 else 'it is'}. Nothing moves "
+                            "until you confirm the last batch.")
+        self.show_batch()
+
+    def selected_folders(self) -> list[str]:
+        """Existing folders chosen in the tree (not the folders added themselves)."""
+        return [i.data(0, PATH) for i in self._selected()
+                if i.data(0, KIND) in ("folder", "kept") and i.parent() is not None and os.path.isdir(i.data(0, PATH))]
+
+    def too_many_folders(self, chosen: list[str] | None = None, name: str | None = None) -> None:
+        """Gather folders into one new folder: the chosen ones, or the look-alike folders in the chosen folder."""
+        if self.flow is None:
+            return
+        folders = chosen if chosen is not None else self.selected_folders()
+        if chosen is None and not folders and self._selected_folder():
+            folders = [self._selected_folder()]         # an added folder: the look-alike folders in it
+        if len(folders) == 1:                           # one folder: the look-alike folders inside it
+            inside = [f for f in self._children(folders[0]) if os.path.isdir(f)]
+            groups = self.flow.look_alike(inside)
+            folders = groups[0] if groups else inside
+        if len(folders) < 2:
+            QMessageBox.information(self, "Too many folders", "Select the folders to put together (Ctrl- or "
+                                    "Shift-click), or a folder whose folders look alike, then click "
+                                    "“Too many folders?” again. You can also drag folders onto another folder.")
+            return
+        parent = os.path.dirname(folders[0])
+        if name is None:
+            from .dialogs import GroupFoldersDialog
+
+            dialog = GroupFoldersDialog(self, folders, parent, self.service.display)
+            if not dialog.exec():
+                return
+            folders, name = dialog.chosen(), dialog.name()
+        try:
+            new, undo = self.flow.group_folders(folders, parent, name)
+        except ValueError as exc:
+            QMessageBox.information(self, "Too many folders", str(exc))
+            return
+        self.window._push_undo("Put folders together", lambda: (self.flow.undo_group_folders(undo), self.show_batch()))
+        self.window._report(f"{len(folders):,} folders go into “{os.path.basename(new)}” (new). Nothing moves until "
+                            "you confirm the last batch.")
+        self.show_batch()
+
+    def _children(self, folder: str) -> list[str]:
+        """The folders in a folder: those in it now and those the plan moves into it."""
+        found = {}
+        item = self.items.get(_key(folder))
+        if item is not None:
+            for i in range(item.childCount()):
+                if item.child(i).data(0, KIND) in ("folder", "kept"):
+                    found[_key(item.child(i).data(0, PATH))] = item.child(i).data(0, PATH)
+        try:
+            for entry in os.scandir(folder):
+                if entry.is_dir() and not entry.name.startswith((".", "$")):
+                    found.setdefault(_key(entry.path), entry.path)
+        except OSError:
+            pass
+        return sorted(found.values(), key=str.lower)
 
     def new_folder(self, name: str | None = None) -> str | None:
         parent = self._selected_folder() or next(iter(self.service.destination_folders()), None)

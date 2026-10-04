@@ -832,6 +832,48 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual(self.service.autonomy(), 50)
 
 
+    def test_review_folders_dragged_and_too_many_folders_put_together(self):
+        from unittest import mock
+
+        from sortzen.engine.planner import TIDY
+        from sortzen.ui.dialogs import GroupFoldersDialog
+
+        base = Path(self.dir.name)
+        downloads, sorted_ = base / "Downloads", base / "Sorted"
+        for name in ("Tide Log-windows", "Tide Log-windows (1)", "Tide Log-windows (2)", "old tools"):
+            (downloads / name).mkdir(parents=True)
+            (downloads / name / f"{name} readme.txt").write_text(f"notes {name}")
+        (sorted_ / "Programs").mkdir(parents=True)
+        (sorted_ / "Programs" / "Paint helper.txt").write_text("program")
+        self.service.add_source(str(downloads), TIDY)
+        self.service.add_destination(str(sorted_))
+        self.window.flow = self.service.new_session("Old versions")
+        self.window._after_plan = "review"
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and not self.service.jobs.busy))
+        review = self.window.review_page
+        versions = [str(downloads / n) for n in ("Tide Log-windows", "Tide Log-windows (1)", "Tide Log-windows (2)")]
+        review.tree.clearSelection()
+        review.items[os.path.normcase(str(downloads))].setSelected(True)       # one folder: its look-alike folders
+
+        def put_together(dialog):
+            self.assertEqual(sorted(dialog.chosen()), versions)
+            self.assertEqual(dialog.name(), "Tide Log-windows (old versions)")
+            return 1
+
+        with mock.patch.object(GroupFoldersDialog, "exec", put_together):
+            review.group_button.click()
+        new = str(downloads / "Tide Log-windows (old versions)")
+        moving = self.window.flow.moving_folders()
+        self.assertEqual({moving[os.path.normcase(v)].destination for v in versions}, {new})
+        self.assertEqual(review.items[os.path.normcase(new)].childCount(), 3)   # shown where they go
+        review.dropped([str(downloads / "old tools")], str(sorted_ / "Programs"))
+        self.assertEqual(moving and self.window.flow.moving_folders()[os.path.normcase(str(downloads / "old tools"))]
+                         .destination, str(sorted_ / "Programs"))
+        self.window.undo()
+        self.assertNotIn(os.path.normcase(str(downloads / "old tools")), self.window.flow.moving_folders())
+
     def test_right_click_open_containing_folder_and_delete_everywhere(self):
         from unittest import mock
 

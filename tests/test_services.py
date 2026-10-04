@@ -9,6 +9,7 @@ from sortzen.config import AppPaths
 from sortzen.services import AppService
 from tests.test_repositories import FakeKeyring
 from sortzen.repositories.api_keys import ApiKeyStore
+from sortzen.repositories.file_index import path_key
 
 
 class AppServiceTest(unittest.TestCase):
@@ -1028,3 +1029,57 @@ class ChangeRuleTest(CatalogTest):
             self.service.edited_rule(again, str(self.sorted), "")
         self.service.restore_rules(before)
         self.assertEqual(self.service.rules(), [])
+
+
+class FolderMovesInReviewTest(unittest.TestCase):
+    """Folders dragged in Review, or put together because there are too many, move as they are."""
+
+    def setUp(self):
+        from sortzen.engine.planner import TIDY
+
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.downloads, self.sorted = base / "Downloads", base / "Sorted"
+        for name in ("Tide Log-windows", "Tide Log-windows (1)", "Tide Log-windows (2)", "Recipes"):
+            (self.downloads / name).mkdir(parents=True)
+            (self.downloads / name / f"{name} readme.txt").write_text(f"notes for {name}", encoding="utf-8")
+        (self.sorted / "Programs").mkdir(parents=True)
+        (self.sorted / "Programs" / "Paint helper.txt").write_text("a program", encoding="utf-8")
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads), TIDY)
+        self.service.add_destination(str(self.sorted))
+        self.flow = self.service.new_session("Old versions")
+        self.flow.start_review(self.service.make_plan())
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_too_many_folders_go_into_one_and_move_as_they_are(self):
+        versions = [str(self.downloads / n) for n in ("Tide Log-windows", "Tide Log-windows (1)",
+                                                      "Tide Log-windows (2)")]
+        self.assertEqual(sorted(self.flow.look_alike(versions + [str(self.downloads / "Recipes")])[0]), versions)
+        new, undo = self.flow.group_folders(versions, str(self.downloads), "Tide Log (old versions)")
+        self.assertIn(new, self.flow.planned_folders())
+        moving = self.flow.moving_folders()
+        self.assertEqual({moving[path_key(v)].destination for v in versions}, {new})
+        self.flow.undo_group_folders(undo)                                    # SortZen's own grouping again
+        self.assertEqual({os.path.basename(f.destination) for f in self.flow.moving_folders().values()},
+                         {"Tide Log (all copies)"})
+        self.assertNotIn(new, self.flow.planned_folders())
+        with self.assertRaises(ValueError):
+            self.flow.move_folders([str(self.downloads)], str(self.sorted))       # added folders stay put
+        with self.assertRaises(ValueError):
+            self.flow.move_folders([versions[0]], versions[0])                   # never into itself
+        self.flow.move_folders([str(self.downloads / "Recipes")], str(self.sorted / "Programs"))
+        new, _ = self.flow.group_folders(versions, str(self.downloads), "Tide Log (old versions)")
+        reopened = self.service.open_session(self.flow.session.file)           # remembered with the session
+        reopened.start_review(self.service.make_plan())
+        self.assertEqual(len(reopened.moving_folders()), 4)
+        result = self.service.move(reopened.plan, reopened.move_rows())
+        self.assertFalse(result.failed)
+        self.assertTrue((self.downloads / "Tide Log (old versions)" / "Tide Log-windows (1)" /
+                         "Tide Log-windows (1) readme.txt").exists())
+        self.assertTrue((self.sorted / "Programs" / "Recipes").is_dir())
+        self.service.undo_move(result.log)
+        self.assertTrue((self.downloads / "Tide Log-windows (1)").is_dir())

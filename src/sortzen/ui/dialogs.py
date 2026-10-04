@@ -332,3 +332,52 @@ class RuleDialog(QDialog):
             QMessageBox.information(self, self.windowTitle(), str(exc))
             return
         super().accept()
+
+
+class GroupFoldersDialog(QDialog):
+    """Too many folders: which of them go together into one new folder, and its name."""
+
+    def __init__(self, parent, folders: list[str], where: str, display):
+        super().__init__(parent)
+        import re
+
+        self.setWindowTitle("Put folders together")
+        self.resize(560, 460)
+        col = QVBoxLayout(self)
+        col.addWidget(_hint(f"These folders go, as they are, into one new folder in {display(where)}. Untick any "
+                            "that should stay where they are. Nothing moves until you confirm the last batch, and "
+                            "Undo puts it back."))
+        self.list = QListWidget()
+        for folder in folders:
+            item = QListWidgetItem(os.path.basename(folder))
+            item.setData(Qt.ItemDataRole.UserRole, folder)
+            item.setToolTip(folder)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self.list.addItem(item)
+        col.addWidget(self.list, 1)
+        col.addWidget(QLabel("Name of the new folder", objectName="fieldLabel"))
+        names = [os.path.basename(f) for f in folders]
+        base = os.path.commonprefix(names).rstrip(" -_.(0123456789v").strip() or names[0]
+        base = re.sub(r"[\s_\-.]+$", "", base)
+        self.name_box = QLineEdit(f"{base} (old versions)")
+        self.name_box.setAccessibleName("Name of the new folder")
+        col.addWidget(self.name_box)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.button(QDialogButtonBox.StandardButton.Ok).setText("Put them together")
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        col.addWidget(box)
+
+    def chosen(self) -> list[str]:
+        return [self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())
+                if self.list.item(i).checkState() == Qt.CheckState.Checked]
+
+    def name(self) -> str:
+        return self.name_box.text().strip()
+
+    def accept(self) -> None:
+        if len(self.chosen()) < 1 or not self.name():
+            QMessageBox.information(self, self.windowTitle(), "Tick the folders and type a name for the new folder.")
+            return
+        super().accept()
