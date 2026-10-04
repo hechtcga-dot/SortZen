@@ -103,6 +103,11 @@ class SettingsWindow(QDialog):
             self.rules.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
         r.addWidget(self.rules, 1)
         row = QHBoxLayout()
+        change_rule = QPushButton("Change…")
+        change_rule.setToolTip("Choose another folder, label or word for the selected rule")
+        change_rule.clicked.connect(self._change_rule)
+        row.addWidget(change_rule)
+        self.rules.itemDoubleClicked.connect(lambda _: self._change_rule())
         remove_rule = QPushButton("Remove")
         remove_rule.clicked.connect(lambda: [self.rules.takeItem(self.rules.row(i)) for i in self.rules.selectedItems()])
         row.addWidget(remove_rule)
@@ -124,6 +129,18 @@ class SettingsWindow(QDialog):
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i) == tab:
                 self.tabs.setCurrentIndex(i)
+
+    def _change_rule(self) -> None:
+        from .dialogs import RuleDialog
+
+        item = self.rules.currentItem()
+        rule = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if rule is None:
+            return
+        dialog = RuleDialog(self, self.service, rule)
+        if dialog.exec() and dialog.chosen is not None:
+            item.setData(Qt.ItemDataRole.UserRole, dialog.chosen)
+            item.setText(self.service.describe_rule(dialog.chosen))
 
     def _option(self, name: str) -> QWidget:
         title, text = OPTION_TEXT[name]

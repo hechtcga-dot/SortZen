@@ -109,6 +109,7 @@ class MainWindow(QMainWindow):
                              (self.catalog_page.feedback, self.category_feedback),
                              (self.catalog_page.accept, self.accept_suggestion),
                              (self.catalog_page.decline, self.decline_suggestion),
+                             (self.catalog_page.change_rule, lambda x: self.change_suggested_rule(x.rule)),
                              (self.catalog_page.ask_ai, self.ask_ai_about_catalog),
                              (self.catalog_page.place, self.place_in_category),
                              (self.catalog_page.move_files, self.move_files_to),
@@ -1444,16 +1445,37 @@ class MainWindow(QMainWindow):
         if answer is None:
             box = QMessageBox(QMessageBox.Icon.Question, "Make this a rule?", text, parent=self)
             make = box.addButton("Make a rule and update the plan", QMessageBox.ButtonRole.AcceptRole)
+            change = box.addButton("Change it…", QMessageBox.ButtonRole.ActionRole)
             box.addButton("Not now", QMessageBox.ButtonRole.RejectRole)
             never = box.addButton("Don't suggest this again", QMessageBox.ButtonRole.DestructiveRole)
             box.exec()
-            answer = "make" if box.clickedButton() is make else "never" if box.clickedButton() is never else "no"
-        if answer == "never":
+            answer = "make" if box.clickedButton() is make else "never" if box.clickedButton() is never else \
+                "change" if box.clickedButton() is change else "no"
+        if answer == "change":
+            self.change_suggested_rule(suggestion.rule)
+        elif answer == "never":
             self.service.decline_rule(suggestion.rule)
         elif answer == "make":
             before = self.service.add_rule(suggestion.rule)
             self._push_undo("Make a rule", lambda: self.service.restore_rules(before))
             self.make_plan()
+
+    def change_suggested_rule(self, rule, chosen=None) -> None:
+        """Make a suggested rule with another folder, label or word; the suggestion isn't offered again."""
+        if chosen is None:
+            from .dialogs import RuleDialog
+
+            dialog = RuleDialog(self, self.service, rule, self.plan, "Change the rule, then make it")
+            if not dialog.exec() or dialog.chosen is None:
+                return
+            chosen = dialog.chosen
+        before = self.service.settings_snapshot()
+        self.service.change_rule(rule, chosen)
+        self.service.decline_rule(rule)
+        self._push_undo("Make a rule", lambda: self.service.restore_settings(before))
+        self.statusBar().showMessage(f"{self.service.describe_rule(chosen)}. Updating the plan…", 6000)
+        self._keep_tab = self.tabs.currentWidget()
+        self.make_plan()
 
     def note_folder(self, folder: str, text: str | None = None) -> None:
         """Write what belongs in a folder; SortZen and the AI use the words like the folder's name."""

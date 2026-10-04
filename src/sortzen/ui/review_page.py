@@ -371,6 +371,7 @@ class ReviewPage(QWidget):
             for rule in rules:
                 row = QHBoxLayout()
                 row.addWidget(_label(self.service.describe_rule(rule) + "."), 1)
+                row.addWidget(_link("Change…", lambda _=False, x=rule: self.change_rule(x)))
                 row.addWidget(_link("Remove", lambda _=False, x=rule: self.remove_rule(x)))
                 self.rules.addLayout(row)
         self.delete_button.setEnabled(bool(folder) and not os.path.isdir(folder or ""))
@@ -401,6 +402,20 @@ class ReviewPage(QWidget):
         before = self.service.add_rule(Rule("", folder, label=label))
         self.window._push_undo("Make a rule", lambda: self.service.restore_rules(before))
         self.window.statusBar().showMessage("Rule saved: it places files in the next plans.", 6000)
+        self._show_details()
+
+    def change_rule(self, rule, chosen=None) -> None:
+        """A rule gets another folder, label or word; files it places follow in the next plan."""
+        if chosen is None:
+            from .dialogs import RuleDialog
+
+            dialog = RuleDialog(self, self.service, rule, self.flow.plan if self.flow else None)
+            if not dialog.exec() or dialog.chosen is None:
+                return
+            chosen = dialog.chosen
+        before = self.service.change_rule(rule, chosen)
+        self.window._push_undo("Change a rule", lambda: self.service.restore_rules(before))
+        self.window.statusBar().showMessage(f"{self.service.describe_rule(chosen)}. Used in the next plan.", 6000)
         self._show_details()
 
     def remove_rule(self, rule) -> None:

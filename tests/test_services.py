@@ -1003,3 +1003,28 @@ class SessionFlowTest(unittest.TestCase):
         flow.moved(result)
         self.assertGreater(result.moved, 0)
         self.assertEqual(self.service.recent_sessions()[0][1], f"Moved · {result.moved:,} files")
+
+
+class ChangeRuleTest(CatalogTest):
+    def test_a_suggested_or_saved_rule_gets_another_folder_label_or_word(self):
+        from sortzen.engine.rules import Rule
+        from sortzen.services.app_service import FolderError
+
+        self.service.add_label("Programs")
+        suggested = Rule("", str(self.downloads / "old tools"), label="Programs")
+        target = str(self.downloads / "Program projects" / "Tide Log")
+        changed = self.service.edited_rule(suggested, target, "Programs")
+        self.assertEqual((changed.destination, changed.label), (target, "Programs"))
+        before = self.service.change_rule(suggested, changed)               # not saved yet: added
+        self.assertEqual(before, [])
+        self.assertEqual([r.destination for r in self.service.rules()], [target])
+        again = self.service.edited_rule(changed, str(self.sorted / "Recipes"), "Baking")
+        self.service.change_rule(changed, again)                             # saved: replaced
+        self.assertEqual([(r.label, os.path.basename(r.destination)) for r in self.service.rules()],
+                         [("Baking", "Recipes")])
+        word = self.service.edited_rule(Rule("budget", str(self.sorted)), str(self.sorted / "Work"), word="Forecasts")
+        self.assertEqual(word.word, "forecast")
+        with self.assertRaises(FolderError):
+            self.service.edited_rule(again, str(self.sorted), "")
+        self.service.restore_rules(before)
+        self.assertEqual(self.service.rules(), [])

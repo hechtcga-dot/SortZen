@@ -180,6 +180,7 @@ class CatalogPage(QWidget):
     feedback = Signal(str, str)              # category, kind
     accept = Signal(object)                  # a suggestion
     decline = Signal(object)
+    change_rule = Signal(object)             # a suggested rule, to change before it is made
     ask_ai = Signal()
     place = Signal(list, str)                # paths put into a category's folder
     move_files = Signal(list)                # paths to put into a category chosen from a list
@@ -467,6 +468,11 @@ class CatalogPage(QWidget):
             no = QPushButton("Not this")
             no.clicked.connect(lambda _=False, x=s: self.decline.emit(x))
             row.addWidget(yes)
+            if hasattr(s, "rule"):
+                change = QPushButton("Change…")
+                change.setToolTip("Choose another folder (or label) before making the rule")
+                change.clicked.connect(lambda _=False, x=s: self.change_rule.emit(x))
+                row.addWidget(change)
             row.addWidget(no)
             card.suggestion = s
             self.suggestion_box.addWidget(card)

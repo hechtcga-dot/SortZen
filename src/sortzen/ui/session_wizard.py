@@ -96,10 +96,17 @@ class StepBar(QWidget):
         self.row.addWidget(self.count)
 
     def show_step(self, index: int, count: str = "") -> None:
+        from PySide6.QtGui import QFontMetrics
+
         for i, label in enumerate(self.steps):
             label.setObjectName("stepOn" if i == index else "stepOff")
             label.style().unpolish(label)
             label.style().polish(label)
+            bold = label.font()
+            bold.setBold(True)                  # room for the bold text and the pill's padding, so it is never cut
+            label.setMinimumWidth(QFontMetrics(bold).horizontalAdvance(label.text()) + 24)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.updateGeometry()
         self.count.setText(count)
 
 
@@ -502,8 +509,12 @@ class CatalogPage(QWidget):
         self.banner_text = _label()
         brow.addWidget(self.banner_text, 1)
         self.banner_yes = QPushButton()
+        self.banner_change = QPushButton("Change it…")
+        self.banner_change.setToolTip("Choose another folder (or label) before making the rule")
+        self.banner_change.clicked.connect(self._change_rule)
         self.banner_no = QPushButton("Not now")
         brow.addWidget(self.banner_yes)
+        brow.addWidget(self.banner_change)
         brow.addWidget(self.banner_no)
         self.banner_yes.clicked.connect(lambda: self._banner_answer(True))
         self.banner_no.clicked.connect(lambda: self._banner_answer(False))
@@ -744,6 +755,7 @@ class CatalogPage(QWidget):
             return
         self.banner_text.setText("<b>Learned from your last batch:</b> " + " ".join(parts))
         self.banner_yes.setVisible(self.offer is not None)
+        self.banner_change.setVisible(self.offer is not None and self.offer[0] == "folder")
         self.banner_no.setText("Not now" if self.offer else "OK")
         self.banner.show()
 
@@ -765,6 +777,26 @@ class CatalogPage(QWidget):
             self.wizard.window.statusBar().showMessage(f"{what.title}: used when the plan is made for Review.", 6000)
         else:
             self.service.decline_rule(what.rule)
+        self.show_batch()
+
+    def _change_rule(self) -> None:
+        """Make the suggested rule with another folder or label; the suggestion itself isn't offered again."""
+        from .dialogs import RuleDialog
+
+        if self.offer is None or self.offer[0] != "folder":
+            return
+        suggestion = self.offer[1]
+        dialog = RuleDialog(self, self.service, suggestion.rule, self.wizard.flow.plan, "Change the rule, then make it")
+        if not dialog.exec() or dialog.chosen is None:
+            return
+        self.offer = None
+        self.banner.hide()
+        before = self.service.settings_snapshot()
+        self.service.change_rule(suggestion.rule, dialog.chosen)
+        self.service.decline_rule(suggestion.rule)
+        self.wizard.window._push_undo("Make a rule", lambda: self.service.restore_settings(before))
+        self.wizard.window.statusBar().showMessage(
+            f"{self.service.describe_rule(dialog.chosen)}: used when the plan is made for Review.", 6000)
         self.show_batch()
 
     def skip(self) -> None:

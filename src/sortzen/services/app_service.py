@@ -1172,6 +1172,35 @@ class AppService:
                                     != rule.key])
         return before
 
+    def change_rule(self, old: Rule, new: Rule) -> list[dict]:
+        """Put a changed rule in place of a saved one (or add it when the old one isn't saved, as for a suggested
+        rule changed before it was made). Returns the rules before, for Undo."""
+        before = list(self.settings.get("rules") or [])
+        kept = [r for r in self.rules() if r.key != old.key and r.key != new.key]
+        self.settings.set("rules", [_rule_dict(r) for r in kept + [new]])
+        self._learned()
+        return before
+
+    def edited_rule(self, rule: Rule, destination: str, label: str = "", word: str = "") -> Rule:
+        """A rule with a new folder, label or name word. Raises FolderError when one is missing."""
+        from dataclasses import replace
+
+        from ..engine.features import words
+
+        if not destination:
+            raise FolderError("Choose the folder the files go to.")
+        if rule.label:
+            label = " ".join((label or "").split())
+            if not label:
+                raise FolderError("Choose a label.")
+            return replace(rule, destination=os.path.abspath(destination), label=label)
+        if not rule.shape:
+            found = words(word or "")
+            if not found:
+                raise FolderError("Type the word the names have in common.")
+            return replace(rule, destination=os.path.abspath(destination), word=found[0])
+        return replace(rule, destination=os.path.abspath(destination))
+
     def restore_rules(self, before: list) -> None:
         """Set the rules (dictionaries as saved, or Rule objects)."""
         self.settings.set("rules", [r if isinstance(r, dict) else _rule_dict(r) for r in before])

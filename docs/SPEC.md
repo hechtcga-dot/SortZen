@@ -232,7 +232,9 @@ users labelled before, files that go with another file and topic members are not
   of at least 20 checks, batches it is at least 85% sure of are settled by themselves ("3 more
   batches (27 files) are now settled and skipped"). It also suggests merging two labels that
   are surely the same ("Tax" into "Taxes": every file and rule follows) and folders for labels
-  (§7.2b); each with a button and "Not now".
+  (§7.2b); each with a button and "Not now". A suggested rule can be changed before it is made
+  ("Change it…": another folder, picked or typed, a new one included, or another label); the
+  suggestion as it was isn't offered again.
 - The footer shows the files left, the agreement meter ("SortZen matched your choice in 46 of
   your last 50") and how many batches SortZen settled by itself.
 
@@ -251,7 +253,7 @@ still be changed.
   move into it); "Delete folder" deletes a folder still to be made, and its files go to the
   folder it was in (folders that exist are deleted in Explorer).
 - Right: the selected file's labels, why it goes there and a note box; for a folder, its
-  rules ("Files labelled Taxes go to Documents/Taxes") with Remove and "Add a rule…". Rules
+  rules ("Files labelled Taxes go to Documents/Taxes") with Change…, Remove and "Add a rule…". Rules
   are not shown in the tree.
 - "Confirm and next batch" keeps the batch's plan (SortZen remembers each file's folder) and
   shows the next; "Previous batch"; "Skip for now". After the last batch the **Move window**
@@ -333,7 +335,9 @@ leans towards it (up to 95%). Users' choices and rules are never overruled. A ru
 one folder (80% of those they put there), and in the Cataloguing tab when a folder holds mostly
 files with that label (half or more, at least 3), or as a new folder named after the label
 when at least 5 unsure files carry it and they don't mostly lean towards one folder already.
-No folder is ever suggested for a file type alone.
+No folder is ever suggested for a file type alone. Every rule can be changed: its folder (picked
+from the list, typed, or a new one), its label, or its name word, wherever rules are suggested or
+shown (the wizard, the Cataloguing tab, "Make this a rule?", Review and Settings › Rules).
 
 ### 4. Files that go with another file
 Subtitles (.srt, .sub, .idx, .ass, .ssa, .vtt, .smi), .nfo and .thm files go with the movie

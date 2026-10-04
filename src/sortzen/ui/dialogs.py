@@ -260,3 +260,75 @@ class LabelChoiceDialog(QDialog):
     def chosen(self) -> list[str]:
         return [self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())
                 if self.list.item(i).checkState() == Qt.CheckState.Checked]
+
+
+class RuleDialog(QDialog):
+    """Change a rule before or after it is made: the folder its files go to, and its label or name word."""
+
+    def __init__(self, parent, service, rule, plan=None, title: str = "Change the rule"):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QComboBox, QHBoxLayout
+
+        from .to_place_page import FolderPicker
+
+        self.service, self.rule, self.chosen = service, rule, None
+        self.setWindowTitle(title)
+        self.resize(620, 260)
+        col = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self.label = self.word = None
+        if rule.label:
+            row.addWidget(QLabel("Files labelled"))
+            self.label = QComboBox()
+            self.label.setEditable(True)
+            self.label.addItems(service.labels())
+            self.label.setEditText(rule.label)
+            self.label.setAccessibleName("Label")
+            self.label.editTextChanged.connect(self._preview)
+            row.addWidget(self.label, 1)
+        elif not rule.shape:
+            row.addWidget(QLabel("Names with the word"))
+            self.word = QLineEdit(rule.word)
+            self.word.setAccessibleName("Word in the name")
+            self.word.textChanged.connect(self._preview)
+            row.addWidget(self.word, 1)
+        else:
+            row.addWidget(QLabel(rule.describe(service.display).split(" go to ")[0]))
+            row.addStretch(1)
+        col.addLayout(row)
+        col.addWidget(QLabel("go to"))
+        self.folder = FolderPicker(service, plan, service.destination_choices(plan), service.recent_destinations(plan),
+                                   rule.destination)
+        self.folder.changed.connect(self._preview)
+        col.addWidget(self.folder)
+        col.addWidget(_hint("Pick a folder, or type one such as “Downloads/Program projects/Tide Log”. A folder that "
+                            "doesn't exist yet is made when files first move into it."))
+        self.preview = QLabel(objectName="cardTitle")
+        self.preview.setWordWrap(True)
+        col.addWidget(self.preview)
+        col.addStretch(1)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.button(QDialogButtonBox.StandardButton.Ok).setText("Save the rule")
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        col.addWidget(box)
+        self._preview()
+
+    def _edited(self):
+        return self.service.edited_rule(self.rule, self.folder.folder() or "",
+                                        self.label.currentText() if self.label else "",
+                                        self.word.text() if self.word else "")
+
+    def _preview(self, *_) -> None:
+        try:
+            self.preview.setText(self.service.describe_rule(self._edited()) + ".")
+        except ValueError as exc:
+            self.preview.setText(str(exc))
+
+    def accept(self) -> None:
+        try:
+            self.chosen = self._edited()
+        except ValueError as exc:
+            QMessageBox.information(self, self.windowTitle(), str(exc))
+            return
+        super().accept()

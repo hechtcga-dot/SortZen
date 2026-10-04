@@ -832,6 +832,65 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual(self.service.autonomy(), 50)
 
 
+    def test_rules_change_in_a_dialog_from_suggestions_review_and_settings(self):
+        import shutil
+        from unittest import mock
+
+        from sortzen.engine.rules import Rule
+        from sortzen.services.app_service import LabelFolderSuggestion
+        from sortzen.services.flow import Learned
+        from sortzen.ui.dialogs import RuleDialog
+
+        root = Path(self.dir.name) / "folders"
+        shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
+        shutil.copytree(shared_test_folders() / "Sorted", root / "Sorted")
+        self.service.add_source(str(root / "Downloads"))
+        self.service.add_destination(str(root / "Sorted"))
+        self.service.add_label("Programs")
+        rule = Rule("", str(root / "Downloads" / "older downloads"), label="Programs")
+        dialog = RuleDialog(self.window, self.service, rule)
+        self.assertIn("Files labelled “Programs” go to Downloads/older downloads", dialog.preview.text())
+        dialog.folder.box.setEditText("Downloads/Program projects/Tide Log")       # a folder still to be made
+        self.assertIn("go to Downloads/Program projects/Tide Log", dialog.preview.text())
+        dialog.accept()
+        target = str(root / "Downloads" / "Program projects" / "Tide Log")
+        self.assertEqual(dialog.chosen.destination, target)
+
+        self.window.plan_button.click()                                    # the banner in Step 3
+        wizard = self.window.wizard
+        wizard.choose.refresh()
+        wizard.next_button.click()
+        self.assertTrue(wait_until(self.app, lambda: wizard.stack.currentWidget() is not wizard.choose
+                                   and not self.service.jobs.busy))
+        wizard.show_catalog()
+        page = wizard.catalog
+        page._show_learned(Learned(folder=LabelFolderSuggestion(rule, "Files labelled “Programs” go to …", "why", 20)))
+        self.assertTrue(page.banner_change.isVisible())
+
+        def chose(dialog_self):
+            dialog_self.chosen = dialog.chosen
+            return 1
+
+        with mock.patch.object(RuleDialog, "exec", chose):
+            page.banner_change.click()
+        self.assertEqual([r.destination for r in self.service.rules()], [target])
+        self.assertIn(rule.key, self.service.settings.get("declined_rules"))  # the suggestion isn't offered again
+        self.assertFalse(page.banner.isVisible())
+        self.window.undo()
+        self.assertEqual(self.service.rules(), [])
+        wizard.close()
+
+        from sortzen.ui.settings_window import SettingsWindow
+
+        self.service.add_rule(rule)
+        settings = SettingsWindow(self.window, self.service, "Rules")
+        settings.rules.setCurrentRow(0)
+        with mock.patch.object(RuleDialog, "exec", chose):
+            settings._change_rule()
+        self.assertIn("Tide Log", settings.rules.item(0).text())
+        settings.accept()
+        self.assertEqual([r.destination for r in self.service.rules()], [target])
+
     def test_organizing_session_wizard_review_and_move(self):
         import shutil
         from unittest import mock
