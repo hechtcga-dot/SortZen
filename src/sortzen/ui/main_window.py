@@ -1721,7 +1721,7 @@ class MainWindow(QMainWindow):
         else:
             log.info("%s finished", event.name)
         if isinstance(event, JobFinished):
-            if event.name != "count":                # a count has no window; a later job's stays open
+            if event.name not in ("count", "plan"):  # a count has no window; the plan's closes once it is shown
                 self._close_progress()
                 self.statusBar().showMessage("Ready")
             if event.name == "count":
@@ -1758,10 +1758,20 @@ class MainWindow(QMainWindow):
             if event.name in ("move", "undo-move", "queue"):
                 self._moved(event.result, event.name == "undo-move", event.name == "queue")
             if event.name == "plan":
+                progress = self.progress
+                if progress:
+                    progress.set_step("Showing the plan", "")
+                    QApplication.processEvents()
                 if event.result is None:
                     self.statusBar().showMessage("Stopped. Nothing was changed.", 6000)
                 else:
                     self.show_plan(event.result)
+                if self.progress is progress:          # a job started from the plan keeps its own window
+                    self._close_progress()
+                elif progress:
+                    progress.finish()
+                if not self.service.jobs.busy:
+                    self.statusBar().showMessage("Ready")
         elif isinstance(event, JobFailed):
             if event.name != "count":
                 self._close_progress()
