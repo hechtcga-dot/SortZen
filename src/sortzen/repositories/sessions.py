@@ -44,7 +44,9 @@ class Session:
     @property
     def catalogued(self) -> set[str]:
         """Files Step 3 has finished with."""
-        return {os.path.normcase(p) for p in (*self.done, *self.settled, *self.to_review, *self.passed)}
+        from .file_index import path_key
+
+        return {path_key(p) for p in (*self.done, *self.settled, *self.to_review, *self.passed)}
 
 
 class SessionStore:

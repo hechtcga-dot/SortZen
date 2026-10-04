@@ -177,6 +177,7 @@ class CopiesPage(QWidget):
         menu.addAction("Tick", lambda: self._set_ticks(chosen, True))
         menu.addAction("Untick", lambda: self._set_ticks(chosen, False))
         if copy is not None:
-            menu.addSeparator()
-            menu.addAction("Open folder", lambda: self.open_folder.emit(os.path.dirname(copy.path)))
+            from .opening import add_file_actions
+
+            add_file_actions(menu, [c.path for c in chosen if not c.keep] or [copy.path], self.open_folder.emit)
         menu.exec(self.tree.viewport().mapToGlobal(pos))

@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
 from ..engine.planner import TIDY
 from .catalog_page import CategoryTree, paths_mime
 from .opening import open_on_double_click
-from .session_wizard import _clear, _label, _link
+from ..services.file_facts import day
+from .session_wizard import _clear, _label, _link, describe_facts
 from .to_place_page import FlowLayout
 
 PATH = Qt.ItemDataRole.UserRole
@@ -79,6 +80,11 @@ class ReviewPage(QWidget):
                                    "files move into it")
         self.new_button.clicked.connect(self.new_folder)
         head.addWidget(self.new_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.delete_files_button = QPushButton("Delete…")
+        self.delete_files_button.setToolTip("Move the selected files into the “To delete” folder (Undo puts them back)")
+        self.delete_files_button.clicked.connect(lambda: self.selected_files() and
+                                                 self.window.delete_files(self.selected_files()))
+        head.addWidget(self.delete_files_button, 0, Qt.AlignmentFlag.AlignTop)
         self.delete_button = QPushButton("Delete folder")
         self.delete_button.setToolTip("Delete a folder still to be made; its files go to the folder it was in")
         self.delete_button.clicked.connect(self.delete_folder)
@@ -95,6 +101,8 @@ class ReviewPage(QWidget):
         self.tree.setColumnWidth(0, 330)
         self.tree.dropped.connect(self.dropped)
         self.tree.itemSelectionChanged.connect(self._show_details)
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu)
         open_on_double_click(self.tree, lambda item: item.data(0, PATH), window.open_folder)
         lcol.addWidget(self.tree, 1)
         lcol.addWidget(_label("Drag files or new folders onto a folder to change the plan; SortZen learns from "
@@ -111,6 +119,8 @@ class ReviewPage(QWidget):
         dcol.addWidget(self.details_caption)
         self.details_name = _label("", "cardTitle")
         dcol.addWidget(self.details_name)
+        self.details_facts = _label("", "hint")
+        dcol.addWidget(self.details_facts)
         self.chips = FlowLayout(spacing=6)
         holder = QWidget()
         holder.setLayout(self.chips)
@@ -238,6 +248,7 @@ class ReviewPage(QWidget):
             while parent is not None:
                 parent.setExpanded(True)
                 parent = parent.parent()
+        facts = self.service.file_facts([s.path for s in files])
         for s in sorted(files, key=lambda s: os.path.basename(s.path).lower()):
             parent = self.items.get(_key(s.destination)) if s.destination else None
             if parent is None:
@@ -246,7 +257,8 @@ class ReviewPage(QWidget):
             item.setData(0, PATH, s.path)
             item.setData(0, KIND, "file")
             item.setToolTip(0, s.path)
-            item.setText(1, f"from {self.service.display(s.current_folder)}")
+            added = day(facts[s.path].added)
+            item.setText(1, f"from {self.service.display(s.current_folder)}" + (f" · {added}" if added else ""))
             item.setForeground(1, self.palette().placeholderText())
         for f in kept:
             parent = self.items.get(_key(f.destination))
@@ -307,6 +319,41 @@ class ReviewPage(QWidget):
         self.tree.setItemWidget(item, 1, box)
 
     # ---------------------------------------------------------------- the details box
+    def selected_files(self) -> list[str]:
+        return [i.data(0, PATH) for i in self._selected() if i.data(0, KIND) in ("file", "kept")]
+
+    def _menu(self, pos) -> None:
+        from PySide6.QtWidgets import QMenu
+
+        from .opening import add_file_actions
+
+        item = self.tree.itemAt(pos)
+        if item is None:
+            return
+        if not item.isSelected():
+            self.tree.clearSelection()
+            item.setSelected(True)
+        menu = QMenu(self)
+        if item.data(0, KIND) == "folder":
+            folder = item.data(0, PATH)
+            menu.addAction("New folder here…", self.new_folder)
+            remove = menu.addAction("Delete this folder from the plan", self.delete_folder)
+            remove.setEnabled(not os.path.isdir(folder))
+            add_file_actions(menu, [folder], self.window.open_folder, delete=False)
+        else:
+            add_file_actions(menu, self.selected_files(), self.window.open_folder)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def drop(self, paths: list[str]) -> None:
+        """Files that went to “To delete” leave the Review batches."""
+        if self.flow is None or not self.flow.review:
+            return
+        gone = {_key(p) for p in paths}
+        for r in self.flow.review:
+            r.batch.paths = [p for p in r.batch.paths if _key(p) not in gone]
+            r.folders = [p for p in r.folders if _key(p) not in gone]
+        self.show_batch()
+
     def _selected(self) -> list[QTreeWidgetItem]:
         return self.tree.selectedItems()
 
@@ -337,10 +384,13 @@ class ReviewPage(QWidget):
             where = self.service.display(s.destination) + (" (new)" if s.new_folder else "") if s else ""
             reasons = "; ".join(r.text for r in (s.reasons if s else []) if r.supports)
             self.details_why.setText(f"Goes to {where}: {reasons}." if reasons else f"Goes to {where}.")
+            self.details_facts.setText(describe_facts(self.service.file_facts([path])[path]))
+            self.details_facts.show()
             self.note.setPlainText(self.service.file_note(path))
             for w in (self.note_label, self.note):
                 w.show()
         elif kind in ("folder", "kept"):
+            self.details_facts.hide()
             self.details_caption.setText("SELECTED FOLDER")
             self.details_name.setText(os.path.basename(path) or path)
             if kind == "kept":
@@ -354,6 +404,7 @@ class ReviewPage(QWidget):
             for w in (self.note_label, self.note):
                 w.hide()
         else:
+            self.details_facts.hide()
             self.details_caption.setText("")
             self.details_name.setText("Select a file or folder")
             self.details_why.setText("")

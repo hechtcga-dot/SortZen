@@ -265,8 +265,9 @@ class FoldersPage(QWidget):
             has = bool(self.service.folder_note(path))
             menu.addAction("Change the note about this folder…" if has else "Write a note about this folder…",
                            lambda: self.note_folder.emit(path))
-        menu.addAction("Open in Explorer", lambda: self.open_folder.emit(path if kind != "file"
-                                                                         else os.path.dirname(path)))
+        from .opening import add_file_actions
+
+        add_file_actions(menu, paths, self.open_folder.emit, delete=kind not in ("root-source", "root-destination"))
         if kind in ("root-source", "root-destination"):
             menu.addAction("Remove from SortZen", lambda: self.remove_folder.emit(path))
         menu.exec(self.tree.viewport().mapToGlobal(pos))

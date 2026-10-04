@@ -13,6 +13,7 @@ class SettingsRepository:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.data = self._read()
+        self.version = 0            # goes up on every save, so what is worked out from settings can be kept
 
     def _read(self) -> dict:
         try:
@@ -26,8 +27,9 @@ class SettingsRepository:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(self.data, indent=2, ensure_ascii=False), encoding="utf-8")
+        temp.write_text(json.dumps(self.data, indent=1, ensure_ascii=False), encoding="utf-8")
         os.replace(temp, self.path)
+        self.version += 1
 
     def get(self, key, default=None):
         return self.data.get(key, default)

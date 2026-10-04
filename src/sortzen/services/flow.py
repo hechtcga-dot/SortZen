@@ -8,6 +8,7 @@ guesses match users' choices often enough, the batches it is now sure of are set
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 
@@ -42,7 +43,7 @@ class ReviewBatch:
 
 
 def _key(path: str) -> str:
-    return os.path.normcase(os.path.abspath(path))
+    return path_key(path)
 
 
 class Flow:
@@ -84,6 +85,8 @@ class Flow:
     def set_plan(self, plan: Plan) -> None:
         self.plan = plan
         self.batches = []
+        self._made = False
+        self._vector_cache = {}
 
     # ---------------------------------------------------------------- Step 2: Duplicates
     def copies(self) -> list:
@@ -135,15 +138,50 @@ class Flow:
 
     def make_batches(self) -> list[Batch]:
         """The batches still to label: new files surest first, then the files that come back later."""
+        self.batches = self._form(self._batch_inputs())
+        self._made = True
+        if not self.session.batches_at_start:
+            self.session.batches_at_start = len(self.batches)
+            self.save()
+        return self.batches
+
+    def _vectors_for(self, candidates: list) -> dict:
+        """How alike files are, worked out once for the files being sorted (they don't change in a session)."""
+        cache = self.__dict__.setdefault("_vector_cache", {})
+        missing = [s.path for s in candidates if s.path not in cache]
+        if missing:
+            cache.update(self.service._vectors(missing))
+        return {s.path: cache[s.path] for s in candidates if s.path in cache}
+
+    def _batch_inputs(self, guesses: dict | None = None) -> dict:
+        """Everything forming the batches needs, taken at once (so it can be used away from the window)."""
         later = {_key(p) for p in self.session.later}
         candidates = self._candidates()
-        fresh = [s for s in candidates if _key(s.path) not in later]
-        again = [s for s in candidates if _key(s.path) in later]
-        vectors = self.service._vectors([s.path for s in candidates])
-        guesses = {s.path: [(label, percent) for label, percent, _ in self.service.label_guesses(s.path)]
-                   for s in candidates}
-        display = self.service.display
-        apart = {_key(p) for p in self.session.apart}
+        mine, ai = self.service._label_index()
+        return {"fresh": [s for s in candidates if _key(s.path) not in later],
+                "again": [s for s in candidates if _key(s.path) in later],
+                "apart": {_key(p) for p in self.session.apart},
+                "vectors": self._vectors_for(candidates), "mine": mine, "ai": ai,
+                "guesses": guesses if guesses is not None else dict(self.service._guesses),
+                "display": self.service.display}
+
+    @staticmethod
+    def _labels_by_path(inputs: dict) -> dict[str, list[tuple[str, int]]]:
+        found = {}
+        for s in [*inputs["fresh"], *inputs["again"]]:
+            key = path_key(s.path)
+            if key in inputs["mine"]:
+                found[s.path] = [(label, 100) for label in inputs["mine"][key]]
+            elif inputs["ai"].get(key):
+                found[s.path] = sorted(((a, int(b)) for a, b in inputs["ai"][key]), key=lambda x: -x[1])
+            else:
+                found[s.path] = [(label, percent) for label, percent, _ in inputs["guesses"].get(key, [])]
+        return found
+
+    @classmethod
+    def _form(cls, inputs: dict) -> list[Batch]:
+        guesses = cls._labels_by_path(inputs)
+        display, apart, vectors = inputs["display"], inputs["apart"], inputs["vectors"]
 
         def batches(files):
             together = [s for s in files if _key(s.path) not in apart]
@@ -153,14 +191,10 @@ class Flow:
             found = catalog_batches(together, guesses, vectors, display) + alone
             return sorted([b for b in found if b.paths], key=lambda b: (-b.certainty, -len(b.paths), b.title.lower()))
 
-        self.batches = batches(fresh) + batches(again)
-        if not self.session.batches_at_start:
-            self.session.batches_at_start = len(self.batches)
-            self.save()
-        return self.batches
+        return batches(inputs["fresh"]) + batches(inputs["again"])
 
     def current(self) -> Batch | None:
-        if not self.batches:
+        if not self.batches and not getattr(self, "_made", False):
             self.make_batches()
         return self.batches[0] if self.batches else None
 
@@ -171,46 +205,80 @@ class Flow:
         later = {_key(p) for p in self.session.later}
         return bool(batch.paths) and all(_key(p) in later for p in batch.paths)
 
+    # ---------------------------------------------------------------- answers (quick: no learning here)
+    SNAPSHOT_KEYS = ("labels", "checks", "learned_since_plan")
+
     def _remember(self) -> None:
         lists = {k: list(getattr(self.session, k)) for k in ("done", "settled", "to_review", "later", "passed", "apart")}
         lists["settled_batches"] = self.session.settled_batches
         lists["answered"] = self.session.answered
         self.session.answered += 1
-        self._history.append((lists, self.service.settings_snapshot()))
+        settings = {k: json.loads(json.dumps(self.service.settings.data.get(k))) for k in self.SNAPSHOT_KEYS}
+        self._history.append((lists, settings, self.service._guesses, list(self.batches)))
 
     def can_go_back(self) -> bool:
         return bool(self._history)
 
     def back(self) -> bool:
-        """Undo the last batch's answer and show that batch again."""
+        """Undo the last batch's answer and show that batch again (at once: nothing is worked out again)."""
         if not self._history:
             return False
-        lists, settings = self._history.pop()
+        lists, settings, guesses, batches = self._history.pop()
         for k, v in lists.items():
             setattr(self.session, k, v)
-        self.service.restore_settings(settings)
-        self.service.guess_labels()
-        self.make_batches()
+        for k, v in settings.items():
+            if v is None:
+                self.service.settings.data.pop(k, None)
+            else:
+                self.service.settings.data[k] = v
+        self.service.settings.save()
+        self.service._guesses = guesses
+        self.batches = batches
+        self.epoch += 1                     # learning that was under way belongs to the answer taken back
         self.save()
         return True
 
-    def _come_back_later(self, paths: list[str]) -> None:
-        """Files skipped or left unticked come back at the end; skipped again, they go to Review as they are."""
+    epoch = 0
+
+    def _come_back_later(self, paths: list[str]) -> list[str]:
+        """Files skipped or left unticked come back at the end; skipped again, they go to Review as they are.
+        Returns the files that come back."""
         later = {_key(p) for p in self.session.later}
+        back = []
         for p in paths:
             if _key(p) in later:
                 self.session.later = [x for x in self.session.later if _key(x) != _key(p)]
                 self.session.passed.append(p)
             else:
                 self.session.later.append(p)
+                back.append(p)
+        return back
 
     def _finished(self, paths: list[str], into: str) -> None:
         keys = {_key(p) for p in paths}
         self.session.later = [x for x in self.session.later if _key(x) not in keys]
         getattr(self.session, into).extend(paths)
 
-    def confirm(self, batch: Batch, ticked: list[str], labels: list[str]) -> Learned:
-        """The ticked files get exactly these labels; unticked ones come back later. SortZen learns."""
+    def _take_out(self, batch: Batch, coming_back: list[str] = (), alone: list[str] = ()) -> None:
+        """The answered batch leaves the list; files that come back go to the end (alone ones one by one)."""
+        self.batches = [b for b in self.batches if b is not batch]
+        by_path = {s.path: s for s in self.plan.files} if self.plan else {}
+        guesses = {p: [(label, percent) for label, percent, _ in self.service.label_guesses(p)]
+                   for p in [*coming_back, *alone]}
+        display = self.service.display
+        rest = [by_path[p] for p in coming_back if p in by_path and p not in set(alone)]
+        if rest:
+            self.batches += catalog_batches(rest, guesses, None, display)
+        for p in alone:
+            if p in by_path:
+                b = catalog_batches([by_path[p]], guesses, None, display)[0]
+                b.title, b.why = os.path.basename(p), "Kept apart from the files it was shown with"
+                self.batches.append(b)
+        self.batches = [b for b in self.batches if b.paths]
+
+    def confirm(self, batch: Batch, ticked: list[str], labels: list[str], learn: bool = True) -> Learned | None:
+        """The ticked files get exactly these labels; unticked ones come back later. With ``learn``, SortZen
+        learns at once; otherwise the window has it learn in the background (``learning_inputs``)."""
         self._remember()
         for name in labels:
             if name.lower() not in {x.lower() for x in self.service.labels()}:
@@ -219,18 +287,16 @@ class Flow:
         if ticked:
             self.service.set_file_labels(ticked, labels)
             self._finished(ticked, "done")
-        self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys])
-        learned = self._learn()
+        self._take_out(batch, self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys]))
         self.save()
-        return learned
+        return self.learn_now() if learn else None
 
     def send_to_review(self, batch: Batch, ticked: list[str]) -> None:
         """The ticked files go to Review without labels."""
         self._remember()
         ticked_keys = {_key(p) for p in ticked}
         self._finished(ticked, "to_review")
-        self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys])
-        self.make_batches()
+        self._take_out(batch, self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys]))
         self.save()
 
     def keep_apart(self, batch: Batch, ticked: list[str]) -> None:
@@ -238,17 +304,21 @@ class Flow:
         self._remember()
         keys = {_key(p) for p in self.session.apart}
         self.session.apart += [p for p in ticked if _key(p) not in keys]
-        self._come_back_later(ticked)
-        self.make_batches()
+        ticked_keys = {_key(p) for p in ticked}
+        alone = self._come_back_later(ticked)
+        rest = self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys])
+        self._take_out(batch, rest + alone, alone)
         self.save()
 
     def drop(self, paths: list[str]) -> None:
         """Files moved into "To delete" from Step 3 leave the session."""
+        gone = {_key(p) for p in paths}
         if self.plan is not None:
-            gone = {_key(p) for p in paths}
             self.plan.files = [s for s in self.plan.files if _key(s.path) not in gone]
             self.service.forget_files(paths)
-        self.make_batches()
+        for b in self.batches:
+            b.paths = [p for p in b.paths if _key(p) not in gone]
+        self.batches = [b for b in self.batches if b.paths]
 
     def batch_number(self) -> tuple[int, int]:
         """(this batch's number, how many batches there are now)."""
@@ -256,17 +326,62 @@ class Flow:
 
     def skip(self, batch: Batch) -> None:
         self._remember()
-        self._come_back_later(batch.paths)
-        self.make_batches()
+        self._take_out(batch, self._come_back_later(batch.paths))
         self.save()
 
     def learned_enough(self) -> bool:
         agreed, total = self.service.agreement()
         return total >= SETTLE_CHECKS and agreed >= SETTLE_AGREE * total
 
-    def _learn(self) -> Learned:
-        self.service.guess_labels()
-        self.make_batches()
+    # ---------------------------------------------------------------- learning (can run in the background)
+    def learning_inputs(self) -> dict:
+        """What learning needs, taken at once in the window, so ``learn`` can run in the background."""
+        names = self.service.labels()
+        mine, ai = self.service._label_index()
+        known = dict(mine)
+        for k, v in ai.items():
+            known.setdefault(k, [a for a, b in v if b >= 50])
+        inputs = self._batch_inputs()
+        inputs.update(records=list(self.service._records.values()), names=names, known=known,
+                      notes=dict(self.service.file_notes()), epoch=self.epoch,
+                      answered=self.session.answered)
+        return inputs
+
+    def learn(self, inputs: dict) -> dict:
+        """Labels guessed again from everything users answered, the batches formed again with them, and a
+        folder for a label to suggest. Reads only ``inputs`` and the plan; safe away from the window."""
+        from ..engine.labeling import guess_labels
+
+        guesses = {}
+        if inputs["names"] and inputs["records"]:
+            found = guess_labels(inputs["records"], inputs["names"], inputs["known"], inputs["notes"])
+            guesses = {path_key(k): v for k, v in found.items()}
+        inputs = dict(inputs, guesses=guesses)
+        folder = None
+        if self.plan is not None:
+            folder = next(iter(self.service.label_folder_suggestions(self.plan, guesses)), None)
+        return {"guesses": guesses, "batches": self._form(inputs), "folder": folder, "epoch": inputs["epoch"],
+                "answered": inputs["answered"]}
+
+    def apply_learning(self, result: dict, keep: Batch | None = None) -> Learned | None:
+        """Use what was learned; ``keep`` (the batch on screen) stays first, as it is. None when the
+        learning belongs to an answer taken back since."""
+        if result["epoch"] != self.epoch:
+            return None
+        self.service._guesses = result["guesses"]
+        finished = self.session.catalogued
+        shown = {_key(p) for p in keep.paths} if keep is not None else set()
+        batches = []
+        for b in result["batches"]:             # files answered since learning started leave
+            b.paths = [p for p in b.paths if _key(p) not in finished and _key(p) not in shown]
+            if b.paths:
+                batches.append(b)
+        later_now = {_key(p) for p in self.session.later}
+        known = {_key(p) for b in batches for p in b.paths} | shown
+        missing = [p for b in self.batches for p in b.paths if _key(p) not in known]   # came back since
+        self.batches = batches
+        if missing:
+            self._take_out(Batch("", "", []), [p for p in missing if _key(p) in later_now])
         learned = Learned()
         if self.learned_enough():
             for b in [b for b in self.batches if not self.is_later(b) and b.labels and b.certainty >= SETTLE]:
@@ -275,19 +390,23 @@ class Flow:
                 learned.settled_files += len(b.paths)
             if learned.settled_batches:
                 self.session.settled_batches += learned.settled_batches
-                self.make_batches()
+                settled = {_key(p) for p in self.session.settled}
+                self.batches = [b for b in self.batches if not all(_key(p) in settled for p in b.paths)]
+        if keep is not None and keep.paths:
+            self.batches.insert(0, keep)
         declined = set(self.service.settings.get("declined_merges") or [])
         merge = label_merge_suggestion(self.service.labels())
         if merge and f"{merge[0]}>{merge[1]}" not in declined:
             learned.merge = merge
-        if self.plan is not None:
-            learned.folder = next(iter(self.service.label_folder_suggestions(self.plan)), None)
+        learned.folder = result["folder"]
+        self.save()
         return learned
+
+    def learn_now(self) -> Learned:
+        return self.apply_learning(self.learn(self.learning_inputs()))
 
     def merge_labels(self, drop: str, keep: str) -> None:
         self.service.merge_label(drop, keep)
-        self.service.guess_labels()
-        self.make_batches()
 
     def decline_merge(self, drop: str, keep: str) -> None:
         declined = list(self.service.settings.get("declined_merges") or [])

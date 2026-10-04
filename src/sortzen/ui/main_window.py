@@ -56,6 +56,9 @@ class MainWindow(QMainWindow):
     def __init__(self, service: AppService | None = None):
         super().__init__()
         self.service = service or AppService()
+        from . import opening
+
+        opening.set_handlers(self._report, self.delete_files)
         self.bridge = EventBridge(self)
         self.bridge.event.connect(self._on_job_event)
         self.plan = None
@@ -643,6 +646,8 @@ class MainWindow(QMainWindow):
             if self.wizard is not None and self.wizard.flow is not None:
                 self.wizard.flow.drop([old for old, _ in result.moves])
                 self.wizard.catalog.show_batch()
+            if self.flow is not None and self.review_page.flow is self.flow:
+                self.review_page.drop([old for old, _ in result.moves])
             self.statusBar().showMessage(f"{result.moved:,} moved to “To delete”. Edit › Undo puts them back.", 8000)
             return
         self.catalog_page.refresh()
@@ -867,7 +872,9 @@ class MainWindow(QMainWindow):
                     a.setCheckable(True)
                     a.setChecked(mode == current)
                 menu.addSeparator()
-            menu.addAction("Open in Explorer", lambda: self.open_folder(path))
+            from .opening import add_file_actions
+
+            add_file_actions(menu, [path], self.open_folder, delete=False)
             menu.addAction("Remove from SortZen", lambda: self.remove_folder(path))
         else:
             menu.addAction(self.add_source_action)
@@ -929,13 +936,19 @@ class MainWindow(QMainWindow):
         self.refresh_folders()
 
     def open_folder(self, path: str) -> None:
-        """Open a file with its program, or a folder in Explorer."""
+        """Open a file with its program, or a folder in Explorer (in the background: the click never waits)."""
         from .opening import open_path
 
         if not open_path(path):
-            self.statusBar().showMessage(f"“{os.path.basename(path) or path}” isn't there"
-                                         + (" yet: SortZen makes it when files move into it." if not
-                                            os.path.splitext(path)[1] else "."), 6000)
+            self._report(f"“{os.path.basename(path) or path}” isn't there"
+                         + (" yet: SortZen makes it when files move into it." if not
+                            os.path.splitext(path)[1] else "."))
+
+    def _report(self, text: str) -> None:
+        """A short message: in the status bar, and at the bottom of the wizard while it is open."""
+        self.statusBar().showMessage(text, 6000)
+        if self.wizard is not None and self.wizard.isVisible():
+            self.wizard.notice(text)
 
     # ---------------------------------------------------------------- the plan
     def make_plan(self) -> None:

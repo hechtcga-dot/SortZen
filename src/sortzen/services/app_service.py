@@ -632,16 +632,28 @@ class AppService:
                               ai={k: [x for x in v if x[0] != name] for k, v in self.ai_labels().items()})
         self._guesses = {}
 
-    def label_guesses(self, path: str) -> list[tuple[str, int, str]]:
+    def _label_index(self) -> tuple[dict, dict]:
+        """Users' and the AI's labels by path key, worked out again only when the settings change."""
+        cached = self.__dict__.get("_label_cache")
+        if cached is None or cached[0] != self.settings.version or cached[1] is not self.settings.data:
+            data = self._label_data()
+            mine = {path_key(k): list(v) for k, v in (data.get("files") or {}).items()}
+            ai = {path_key(k): [list(x) for x in v] for k, v in (data.get("ai") or {}).items()}
+            cached = (self.settings.version, self.settings.data, mine, ai)
+            self._label_cache = cached
+        return cached[2], cached[3]
+
+    def label_guesses(self, path: str, guesses: dict | None = None) -> list[tuple[str, int, str]]:
         """Every label a file has, surest first: (label, percent, who or why). Users' own labels are 100%."""
         key = path_key(path)
-        mine = next((v for k, v in self.users_labels().items() if path_key(k) == key), None)
+        mine_by_key, ai_by_key = self._label_index()
+        mine = mine_by_key.get(key)
         if mine is not None:
             return [(label, 100, "You") for label in mine]
-        ai = next((v for k, v in self.ai_labels().items() if path_key(k) == key), None)
+        ai = ai_by_key.get(key)
         if ai:
             return [(a, int(b), "AI") for a, b in sorted(ai, key=lambda x: -x[1])]
-        return list(getattr(self, "_guesses", {}).get(key, []))
+        return list((guesses if guesses is not None else getattr(self, "_guesses", {})).get(key, []))
 
     def labels_of(self, path: str, sure: int = 50) -> list[str]:
         """The labels a file has (users' own, or guessed at least this sure)."""
@@ -651,9 +663,10 @@ class AppService:
         """Give files a label, or take it away. A file's labels become users' own: what SortZen or the AI
         guessed for it is kept, with this change. Each change checks SortZen's guess."""
         files = self.users_labels()
+        keys = {path_key(k): k for k in files}
         checks = []
         for path in paths:
-            key = next((k for k in files if path_key(k) == path_key(path)), os.path.abspath(path))
+            key = keys.get(path_key(path), os.path.abspath(path))
             if key not in files:
                 guessed = self.labels_of(path)
                 checks.append((name in guessed) == on)
@@ -666,9 +679,10 @@ class AppService:
     def set_file_labels(self, paths: list[str], names: list[str]) -> None:
         """Files get exactly these labels, as users' own. Each file checks SortZen's guess."""
         files = self.users_labels()
+        keys = {path_key(k): k for k in files}
         checks = []
         for path in paths:
-            key = next((k for k in files if path_key(k) == path_key(path)), None)
+            key = keys.get(path_key(path))
             if key is None:
                 checks.append(set(self.labels_of(path)) == set(names))
                 key = os.path.abspath(path)
@@ -716,6 +730,19 @@ class AppService:
                         continue
                     names.setdefault(key, name)
         return [names[k] for k, _ in sizes.most_common(limit)]
+
+    def file_facts(self, paths: list[str]) -> dict:
+        """What helps users recognise each file: when it was downloaded (or added), from which site, its size,
+        type, title and the start of its text. Read on this PC only; remembered for this plan."""
+        from .file_facts import facts_for
+
+        cache = self.__dict__.setdefault("_facts", {})
+        found = {}
+        for path in paths:
+            if path not in cache:
+                cache[path] = facts_for(path, self._records.get(path))
+            found[path] = cache[path]
+        return found
 
     def forget_files(self, paths: list[str]) -> None:
         """Files that left the folders (moved into "To delete") leave what SortZen read too."""
@@ -770,10 +797,10 @@ class AppService:
         self._guesses = {path_key(k): v for k, v in guesses.items()}
         return sum(1 for r in self._records.values() if self.labels_of(r.path))
 
-    def _effective_labels(self) -> dict[str, list[tuple[str, int]]]:
+    def _effective_labels(self, guesses: dict | None = None) -> dict[str, list[tuple[str, int]]]:
         found = {}
-        for r in self._records.values():
-            labels = [(label, percent) for label, percent, _ in self.label_guesses(r.path) if percent >= 50]
+        for r in list(self._records.values()):
+            labels = [(label, percent) for label, percent, _ in self.label_guesses(r.path, guesses) if percent >= 50]
             if labels:
                 found[r.path] = labels
         return found
@@ -834,7 +861,7 @@ class AppService:
         return found
 
     # ---------------------------------------------------------------- folders for labels
-    def label_folder_suggestions(self, plan: Plan) -> list:
+    def label_folder_suggestions(self, plan: Plan, guesses: dict | None = None) -> list:
         """Where labels' files belong: "Files labelled Taxes go to Documents/Taxes" when a folder holds mostly
         files with that label, or a new folder for a label whose files have no home. Accepting makes a rule;
         a new folder is made when files first move into it. Never for files that go with another file."""
@@ -844,7 +871,7 @@ class AppService:
         names = self.labels()
         if not names or not self._records:
             return []
-        labelled = {p: v for p, v in self._effective_labels().items() if p not in plan.companions}
+        labelled = {p: v for p, v in self._effective_labels(guesses).items() if p not in plan.companions}
         corrections = self.corrections()
         valid = self._ai_valid(plan)
         places = {os.path.normcase(os.path.dirname(r.path)) for r in self._records.values()
@@ -1443,6 +1470,7 @@ class AppService:
         plan = planner.plan()
         plan.copies = find_copies(records, plan, self.is_left_out)
         self._records = {r.path: r for r in records}
+        self._facts = {}
         names = self.settings.get("folder_names") or {}
         if names:
             rename_planned(plan, {k: v for k, v in names.items() if not os.path.isdir(k)})

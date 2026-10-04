@@ -832,6 +832,40 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual(self.service.autonomy(), 50)
 
 
+    def test_right_click_open_containing_folder_and_delete_everywhere(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMenu
+
+        from sortzen.ui import opening
+
+        file = Path(self.dir.name) / "Downloads" / "Lakeview lease.docx"
+        file.parent.mkdir(parents=True)
+        file.write_text("lease")
+        menu = QMenu()
+        opening.add_file_actions(menu, [str(file)])
+        texts = [a.text() for a in menu.actions() if a.text()]
+        self.assertEqual(texts[:2], ["Open", "Open containing folder"])
+        self.assertTrue(texts[2].startswith("Delete"))
+        with mock.patch.object(self.window, "delete_files") as delete:
+            opening.set_handlers(self.window._report, delete)
+            menu = QMenu()
+            opening.add_file_actions(menu, [str(file)])
+            next(a for a in menu.actions() if a.text().startswith("Delete")).trigger()
+            delete.assert_called_once_with([str(file)])
+        opening.set_handlers(self.window._report, self.window.delete_files)
+        with mock.patch("sortzen.ui.opening.QDesktopServices.openUrl") as opened, \
+                mock.patch("sortzen.ui.opening.sys.platform", "linux"):
+            self.assertTrue(opening.show_in_folder(str(file)))
+            self.assertTrue(opening.open_path(str(file)))
+        self.assertEqual(opened.call_count, 2)
+        self.assertIn("Opening", self.window.statusBar().currentMessage())
+        self.assertFalse(opening.open_path(str(file) + ".gone"))
+
+        facts = self.service.file_facts([str(file)])[str(file)]
+        self.assertEqual((facts.kind, facts.size), ("Word", 5))
+        self.assertGreater(facts.added, 0)
+
     def test_rules_change_in_a_dialog_from_suggestions_review_and_settings(self):
         import shutil
         from unittest import mock

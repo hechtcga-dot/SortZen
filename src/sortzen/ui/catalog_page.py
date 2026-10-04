@@ -553,10 +553,10 @@ class CatalogPage(QWidget):
 
         label_menus(menu, self.service, paths, self.label.emit)
         menu.addAction(f"Move {some} to…", lambda: self.move_files.emit(paths))
-        menu.addAction(f"Delete {some}…", lambda: self.delete_files.emit(paths))
-        if n == 1:
-            menu.addAction("Open", lambda: self.open_path.emit(paths[0]))
-        menu.addAction("Open the folder", lambda: self.open_path.emit(os.path.dirname(paths[0])))
+        from .opening import add_file_actions
+
+        add_file_actions(menu, paths, self.open_path.emit, delete=False)
+        menu.addAction(f"Delete {some}… (to the “To delete” folder)", lambda: self.delete_files.emit(paths))
         menu.exec(self.files.viewport().mapToGlobal(pos))
 
     def _menu(self, pos) -> None:
@@ -579,6 +579,9 @@ class CatalogPage(QWidget):
         menu.addAction("Put files here again" if hidden else "Don't put files here",
                        lambda: self.hide.emit(path, not hidden))
         menu.addAction("Open the folder", lambda: self.open_path.emit(path))
+        from .opening import show_in_folder
+
+        menu.addAction("Open containing folder", lambda: show_in_folder(path))
         feedback = menu.addMenu("How is this category?")
         for kind in ("right", "too_broad", "too_narrow", "wrong_name", "comment"):
             feedback.addAction(FEEDBACK[kind] + ("…" if kind == "comment" else ""),

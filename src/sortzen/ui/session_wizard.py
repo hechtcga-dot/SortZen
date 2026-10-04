@@ -16,7 +16,9 @@ from __future__ import annotations
 import os
 import time
 
-from PySide6.QtCore import Qt, Signal
+import threading
+
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
@@ -30,6 +32,7 @@ from ..engine.planner import SORT_OUT, TIDY
 from . import theme
 from .catalog_page import paths_from
 from .opening import open_on_double_click
+from ..services.file_facts import day
 from .sortable import human_size
 from .to_place_page import FlowLayout
 
@@ -65,6 +68,24 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
     body.setSpacing(8)
     col.addLayout(body)
     return frame, body
+
+
+def describe_facts(f) -> str:
+    """One or two lines that help recognise a file: type, size, dates, site, title, pages and its first words."""
+    parts = [f.kind] if f.kind else []
+    if f.size:
+        parts.append(human_size(f.size))
+    if f.added:
+        parts.append(f"downloaded or added {day(f.added)}" + (f" from {f.site}" if f.site else ""))
+    if f.modified and day(f.modified) != day(f.added):
+        parts.append(f"last saved {day(f.modified)}")
+    if f.title:
+        parts.append(f"title “{f.title}”")
+    parts += f.extra
+    text = " · ".join(parts)
+    if f.snippet:
+        text += f"\n“{f.snippet}”"
+    return text
 
 
 def _clear(layout) -> None:
@@ -470,12 +491,15 @@ class DuplicatesPage(QWidget):
     def _menu(self, pos) -> None:
         item = self.tree.itemAt(pos)
         copy = item.data(0, COPY) if item else None
-        if copy is None or copy.keep:
+        if copy is None:
             return
         menu = QMenu(self)
         group = next(g for g in self.groups if copy in g.copies)
-        menu.addAction("Keep this copy instead", lambda: (group.keep_instead(copy.path), self._fill()))
-        menu.addAction("Open", lambda: self.wizard.window.open_folder(copy.path))
+        if not copy.keep:
+            menu.addAction("Keep this copy instead", lambda: (group.keep_instead(copy.path), self._fill()))
+        from .opening import add_file_actions
+
+        add_file_actions(menu, [copy.path], self.wizard.window.open_folder, delete=False)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _update(self) -> None:
@@ -538,13 +562,22 @@ class CatalogPage(QWidget):
         head.addWidget(self.why, 1)
         lcol.addLayout(head)
         self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
-        self.tree.setColumnCount(2)
+        self.tree.setHeaderLabels(["Name", "Downloaded", "Size", "Folder", "From"])
+        self.tree.headerItem().setToolTip(1, "When the file arrived on this PC: downloaded, copied or saved there")
+        self.tree.headerItem().setToolTip(4, "The website it was downloaded from, when Windows noted it")
         self.tree.setRootIsDecorated(False)
-        self.tree.setColumnWidth(0, 300)
+        self.tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        for column, width in enumerate((200, 90, 66, 130, 110)):
+            self.tree.setColumnWidth(column, width)
         self.tree.itemChanged.connect(self._ticked)
+        self.tree.currentItemChanged.connect(lambda item, _: self._show_facts(item))
         open_on_double_click(self.tree, lambda item: item.data(0, PATH), wizard.window.open_folder)
         lcol.addWidget(self.tree, 1)
+        self.facts = QLabel(objectName="hint")
+        self.facts.setWordWrap(True)
+        self.facts.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.facts.setContentsMargins(12, 6, 12, 0)
+        lcol.addWidget(self.facts)
         foot = QHBoxLayout()
         foot.setContentsMargins(12, 6, 12, 8)
         foot.addWidget(_link("Select all", lambda: self._tick_all(True)))
@@ -552,7 +585,7 @@ class CatalogPage(QWidget):
         foot.addStretch(1)
         foot.addWidget(QLabel("Double-click a file to open it", objectName="hint"))
         lcol.addLayout(foot)
-        row.addWidget(left, 120)
+        row.addWidget(left, 140)
 
         self.panel = QFrame(objectName="card")
         self.pcol = QVBoxLayout(self.panel)
@@ -598,6 +631,13 @@ class CatalogPage(QWidget):
         flow = self.wizard.flow
         self.batch = flow.current()
         if self.batch is None:
+            if self.wizard.learning:            # the last answers may bring files back: wait for them
+                self.tree.clear()
+                self.files_title.setText("Files")
+                self.why.setText("")
+                self.panel_title.setText("SortZen is learning from your answers…")
+                self.wizard.next_button.setEnabled(False)
+                return
             self.wizard.catalog_done()
             return
         number, total = flow.batch_number()
@@ -608,14 +648,21 @@ class CatalogPage(QWidget):
         self.progress.setValue(number - 1)
         self._filling = True
         self.tree.clear()
+        facts = self.service.file_facts(self.batch.paths)
         for path in self.batch.paths:
-            item = QTreeWidgetItem(self.tree, [os.path.basename(path),
-                                               self.service.display(os.path.dirname(path))])
+            f = facts[path]
+            item = QTreeWidgetItem(self.tree, [os.path.basename(path), day(f.added), human_size(f.size) if f.size else "",
+                                               self.service.display(os.path.dirname(path)), f.site])
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(0, Qt.CheckState.Checked)
             item.setData(0, PATH, path)
-            item.setToolTip(0, path)
+            item.setToolTip(0, f"{path}\n{describe_facts(f)}")
+            item.setTextAlignment(2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._filling = False
+        first = self.tree.topLevelItem(0)
+        if first is not None:
+            self.tree.setCurrentItem(first)
+        self._show_facts(first)
         n = len(self.batch.paths)
         self.files_title.setText(f"Files · {n:,}")
         self.why.setText(self.batch.why)
@@ -624,6 +671,29 @@ class CatalogPage(QWidget):
         self.wizard.back_button.setEnabled(True)
         self._fill_labels()
         self._update()
+
+    def refresh_counts(self) -> None:
+        """The batch number, progress and footer after SortZen learned, without touching the list on screen."""
+        flow = self.wizard.flow
+        if self.batch is None:
+            return
+        number, total = flow.batch_number()
+        self.wizard.steps.show_step(2, f"Batch {number} of {total} · " + ("they came back" if flow.is_later(self.batch)
+                                                                            else "surest first"))
+        self.progress.setMaximum(max(1, total))
+        self.progress.setValue(number - 1)
+        self._update()
+
+    def _show_facts(self, item) -> None:
+        """What helps recognise the selected file, under the list."""
+        path = item.data(0, PATH) if item is not None else None
+        if not path:
+            self.facts.setText("")
+            return
+        from html import escape
+
+        self.facts.setText(f"<b>{escape(os.path.basename(path))}</b> · " + escape(describe_facts(
+            self.service.file_facts([path])[path])).replace("\n", "<br>"))
 
     def _fill_labels(self) -> None:
         _clear(self.suggested)
@@ -700,7 +770,7 @@ class CatalogPage(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             off = item.checkState(0) != Qt.CheckState.Checked
-            item.setText(1, self.service.display(os.path.dirname(item.data(0, PATH)))
+            item.setText(3, self.service.display(os.path.dirname(item.data(0, PATH)))
                          + (" · unticked: comes back later" if off else ""))
         if self.batch.labels:
             self.panel_title.setText(f"Confirm labels for the {ticked:,} ticked file{'s' if ticked != 1 else ''}")
@@ -729,10 +799,11 @@ class CatalogPage(QWidget):
             self._typed_label()
         if not self.chosen or self.batch is None:
             return
-        learned = self.wizard.flow.confirm(self.batch, self.ticked(), list(self.chosen))
-        self._show_learned(learned)
+        self.wizard.flow.confirm(self.batch, self.ticked(), list(self.chosen), learn=False)
+        self.banner.hide()
+        self.show_batch()                       # the next batch at once; SortZen learns in the background
+        self.wizard.start_learning()
         self.wizard.changed()
-        self.show_batch()
 
     def _show_learned(self, learned) -> None:
         parts = []
@@ -768,6 +839,7 @@ class CatalogPage(QWidget):
         if kind == "merge":
             if yes:
                 self.wizard.flow.merge_labels(*what)
+                self.wizard.start_learning()
                 self.wizard.window.statusBar().showMessage(f"“{what[0]}” merged into “{what[1]}”.", 6000)
             else:
                 self.wizard.flow.decline_merge(*what)
@@ -854,6 +926,10 @@ class CatalogPage(QWidget):
             self.wizard.window.delete_files(ticked)
 
 
+class _Learner(QObject):
+    done = Signal(object)
+
+
 class SessionWizard(QDialog):
     """Steps 1 to 3 of an organizing session. ``flow`` is None until Step 1 is done."""
     step_done = Signal(str)                 # "choose", "duplicates", "catalog": the main window carries on
@@ -863,6 +939,10 @@ class SessionWizard(QDialog):
         self.window = window
         self.service = window.service
         self.flow = flow
+        self.learning = False
+        self._again = False
+        self._hub = _Learner(self)
+        self._hub.done.connect(self._learned)
         self.setWindowTitle("New organizing session" if flow is None else flow.session.name)
         self.resize(980, 760)
         self.setAcceptDrops(True)
@@ -884,9 +964,15 @@ class SessionWizard(QDialog):
         self.back_button = QPushButton("Back")
         self.back_button.clicked.connect(self._back)
         row.addWidget(self.back_button)
+        words = QVBoxLayout()
+        words.setSpacing(2)
         self.footer_text = QLabel(objectName="hint")
         self.footer_text.setWordWrap(True)
-        row.addWidget(self.footer_text, 1)
+        words.addWidget(self.footer_text)
+        self.notice_label = QLabel(objectName="muted")
+        self.notice_label.hide()
+        words.addWidget(self.notice_label)
+        row.addLayout(words, 1)
         self.skip_button = QPushButton()
         self.skip_button.clicked.connect(self._skip)
         row.addWidget(self.skip_button)
@@ -932,7 +1018,55 @@ class SessionWizard(QDialog):
         self.catalog.show_batch()
 
     def changed(self) -> None:
-        self.window.refresh_sessions()
+        """The start screen's list of sessions is brought up to date when the wizard closes."""
+
+    # ---------------------------------------------------------------- learning in the background
+    def start_learning(self) -> None:
+        """SortZen learns from the answers so far without holding up the window; the result comes back to
+        ``_learned``. Answers given meanwhile start another round when this one ends."""
+        if self.learning:
+            self._again = True
+            return
+        self.learning = True
+        self._again = False
+        flow, inputs, hub = self.flow, self.flow.learning_inputs(), self._hub
+
+        def work():
+            try:
+                result = flow.learn(inputs)
+            except Exception:                   # reported in the log; the batches stay as they are
+                import logging
+
+                logging.getLogger("sortzen").exception("Learning from the answers stopped")
+                result = None
+            try:
+                hub.done.emit(result)
+            except RuntimeError:                # the wizard has closed
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _learned(self, result) -> None:
+        self.learning = False
+        if result is not None and self.flow is not None:
+            learned = self.flow.apply_learning(result, keep=self.catalog.batch)
+            if learned is not None and self.stack.currentWidget() is self.catalog:
+                self.catalog._show_learned(learned)
+        if self._again:
+            self.start_learning()
+        if self.stack.currentWidget() is self.catalog:
+            if self.catalog.batch is None:
+                self.catalog.show_batch()
+            else:
+                self.catalog.refresh_counts()
+
+    def notice(self, text: str) -> None:
+        """A short message under the steps, such as “Opening …”; it goes after a few seconds."""
+        from PySide6.QtCore import QTimer
+
+        self.notice_label.setText(text)
+        self.notice_label.show()
+        QTimer.singleShot(5000, lambda: self.notice_label.text() == text and self.notice_label.hide())
 
     def catalog_done(self) -> None:
         self.flow.finish_catalog()

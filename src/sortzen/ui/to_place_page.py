@@ -529,9 +529,10 @@ class ToPlacePage(QWidget):
         else:
             menu.addAction(f"Put {some} in a folder…", lambda: self.put_in_folder.emit(paths))
         menu.addAction(f"Delete {some}… (to the “To delete” folder)", lambda: self.delete_files.emit(paths))
-        if len(paths) == 1 and item.data(0, PATH):
-            menu.addAction("Open", lambda: self.open_path.emit(paths[0]))
-            menu.addAction("Open the folder it's in", lambda: self.open_path.emit(os.path.dirname(paths[0])))
+        if item.data(0, PATH):
+            from .opening import add_file_actions
+
+            add_file_actions(menu, paths, self.open_path.emit, delete=False)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _put_group(self, group) -> None:

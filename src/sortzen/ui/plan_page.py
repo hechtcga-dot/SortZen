@@ -433,7 +433,9 @@ class PlanPage(QWidget):
         rename.setEnabled(bool(destination))
         note = menu.addAction("Write a note about its destination folder…", lambda: self.note_folder.emit(destination))
         note.setEnabled(bool(destination))
-        menu.addAction("Open the folder it is in", lambda: self.open_folder.emit(rows[0].current))
+        from .opening import add_file_actions
+
+        add_file_actions(menu, [r.path for r in rows], self.open_folder.emit)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     # ---------------------------------------------------------------- level
