@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..scanning.records import FileRecord
 
@@ -84,6 +84,19 @@ class Clues:
 
 
 def clues_for(record: FileRecord) -> Clues:
+    """A file's clues. Worked out once per record and kept on it; each call returns its own copy, so a
+    caller can give it its own vector."""
+    cached = getattr(record, "_clues", None)
+    if cached is None:
+        cached = _clues_for(record)
+        try:
+            record._clues = cached
+        except AttributeError:
+            pass
+    return replace(cached, vector={})
+
+
+def _clues_for(record: FileRecord) -> Clues:
     stem = stem_of(record.name)
     name_words = words(stem)
     weights: dict[str, float] = {}
