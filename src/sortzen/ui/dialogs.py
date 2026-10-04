@@ -6,7 +6,7 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QDialogButtonBox, QFileDialog, QInputDialog, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QVBoxLayout,
+    QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 from ..engine.planner import SORT_OUT, TIDY
@@ -263,67 +263,160 @@ class LabelChoiceDialog(QDialog):
 
 
 class RuleDialog(QDialog):
-    """Change a rule before or after it is made: the folder its files go to, and its label or name word."""
+    """Make or change a rule: what the files have in common (any of: a label, text in the name, a kind of file,
+    an ending, the folder they are in), where they go (with a folder for each year or month if wanted), a name,
+    and whether it is on. A preview shows which files of the plan it places."""
 
-    def __init__(self, parent, service, rule, plan=None, title: str = "Change the rule"):
+    def __init__(self, parent, service, rule=None, plan=None, title: str = "Change the rule", destination: str = ""):
         super().__init__(parent)
-        from PySide6.QtWidgets import QComboBox, QHBoxLayout
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout
 
+        from ..engine.rules import Rule, KINDS
         from .to_place_page import FolderPicker
 
-        self.service, self.rule, self.chosen = service, rule, None
+        rule = rule or Rule("", destination or "")
+        self.service, self.rule, self.plan, self.chosen = service, rule, plan, None
         self.setWindowTitle(title)
-        self.resize(620, 260)
+        self.resize(720, 620)
         col = QVBoxLayout(self)
-        row = QHBoxLayout()
-        self.label = self.word = None
-        if rule.label:
-            row.addWidget(QLabel("Files labelled"))
-            self.label = QComboBox()
-            self.label.setEditable(True)
-            self.label.addItems(service.labels())
-            self.label.setEditText(rule.label)
-            self.label.setAccessibleName("Label")
-            self.label.editTextChanged.connect(self._preview)
-            row.addWidget(self.label, 1)
-        elif not rule.shape:
-            row.addWidget(QLabel("Names with the word"))
-            self.word = QLineEdit(rule.word)
-            self.word.setAccessibleName("Word in the name")
-            self.word.textChanged.connect(self._preview)
-            row.addWidget(self.word, 1)
-        else:
-            row.addWidget(QLabel(rule.describe(service.display).split(" go to ")[0]))
-            row.addStretch(1)
-        col.addLayout(row)
-        col.addWidget(QLabel("go to"))
-        self.folder = FolderPicker(service, plan, service.destination_choices(plan), service.recent_destinations(plan),
-                                   rule.destination)
-        self.folder.changed.connect(self._preview)
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Name", objectName="fieldLabel"))
+        self.name = QLineEdit(rule.name, placeholderText="Optional, for example: Tax slips")
+        self.name.setAccessibleName("Name of the rule")
+        name_row.addWidget(self.name, 1)
+        col.addLayout(name_row)
+
+        col.addWidget(QLabel("Files that…", objectName="cardTitle"))
+        box = QFrame(objectName="card")
+        grid = QGridLayout(box)
+        grid.setContentsMargins(12, 10, 12, 10)
+        grid.setColumnStretch(1, 1)
+        choices = service.destination_choices(plan)
+        recent = service.recent_destinations(plan)
+
+        def condition(row: int, text: str, widget, on: bool):
+            check = QCheckBox(text, checked=on)
+            grid.addWidget(check, row, 0)
+            grid.addWidget(widget, row, 1)
+            widget.setEnabled(on)
+            check.toggled.connect(widget.setEnabled)
+            check.toggled.connect(self._changed)
+            return check
+
+        self.label = QComboBox()
+        self.label.setEditable(True)
+        self.label.addItems(service.labels())
+        self.label.setEditText(rule.label)
+        self.label.setAccessibleName("Label")
+        self.use_label = condition(0, "have the label", self.label, bool(rule.label))
+        text_row = QWidget()
+        tr = QHBoxLayout(text_row)
+        tr.setContentsMargins(0, 0, 0, 0)
+        self.text = QLineEdit(rule.word or rule.contains, placeholderText="For example: T4, invoice, IMG_")
+        self.text.setAccessibleName("Text in the name")
+        self.whole_word = QCheckBox("as a whole word", checked=bool(rule.word))
+        tr.addWidget(self.text, 1)
+        tr.addWidget(self.whole_word)
+        self.use_text = condition(1, "have in their name", text_row, bool(rule.word or rule.contains))
+        self.kind = QComboBox()
+        for key, plural in KINDS.items():
+            self.kind.addItem(plural[0].upper() + plural[1:], key)
+        self.kind.setCurrentIndex(max(0, self.kind.findData(rule.kind)))
+        self.kind.setAccessibleName("Kind of file")
+        self.use_kind = condition(2, "are", self.kind, bool(rule.kind))
+        self.ext = QLineEdit(rule.ext, placeholderText=".pdf")
+        self.ext.setAccessibleName("Ending")
+        self.use_ext = condition(3, "end in", self.ext, bool(rule.ext))
+        self.inside = FolderPicker(service, plan, [f["path"] for f in service.source_folders()] + choices, [],
+                                   rule.inside or None)
+        self.use_inside = condition(4, "are in the folder", self.inside, bool(rule.inside))
+        self.use_shape = None
+        if rule.shape:
+            what = "names that are only numbers" if rule.shape == "#" else f"names like “{rule.example or rule.shape}”"
+            self.use_shape = QCheckBox(f"have {what}", checked=True)
+            self.use_shape.toggled.connect(self._changed)
+            grid.addWidget(self.use_shape, 5, 0, 1, 2)
+        col.addWidget(box)
+        col.addWidget(_hint("Every ticked condition must fit. Typing in a box ticks it."))
+
+        col.addWidget(QLabel("go to", objectName="cardTitle"))
+        self.folder = FolderPicker(service, plan, choices, recent, rule.destination or None)
         col.addWidget(self.folder)
+        by_row = QHBoxLayout()
+        self.use_by = QCheckBox("in a folder for each", checked=bool(rule.by))
+        self.by = QComboBox()
+        self.by.addItem("year (from the name, or when the file was saved)", "year")
+        self.by.addItem("month (when the file was saved)", "month")
+        self.by.setCurrentIndex(1 if rule.by == "month" else 0)
+        self.by.setEnabled(bool(rule.by))
+        self.use_by.toggled.connect(self.by.setEnabled)
+        by_row.addWidget(self.use_by)
+        by_row.addWidget(self.by, 1)
+        col.addLayout(by_row)
         col.addWidget(_hint("Pick a folder, or type one such as “Downloads/Program projects/Tide Log”. A folder that "
                             "doesn't exist yet is made when files first move into it."))
+        self.on = QCheckBox("This rule is on", checked=rule.on)
+        col.addWidget(self.on)
         self.preview = QLabel(objectName="cardTitle")
         self.preview.setWordWrap(True)
         col.addWidget(self.preview)
+        self.examples = _hint("")
+        col.addWidget(self.examples)
         col.addStretch(1)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        box.button(QDialogButtonBox.StandardButton.Ok).setText("Save the rule")
-        box.accepted.connect(self.accept)
-        box.rejected.connect(self.reject)
-        col.addWidget(box)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save the rule")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        col.addWidget(buttons)
+
+        self._timer = QTimer(self, singleShot=True, interval=250)
+        self._timer.timeout.connect(self._preview)
+        for check, widget in ((self.use_label, self.label), (self.use_ext, self.ext)):
+            signal = widget.editTextChanged if hasattr(widget, "editTextChanged") else widget.textChanged
+            signal.connect(lambda _=None, c=check: (c.setChecked(True), self._changed()))
+        self.text.textChanged.connect(lambda _: (self.use_text.setChecked(True), self._changed()))
+        self.kind.currentIndexChanged.connect(lambda _: self._changed())
+        self.inside.changed.connect(lambda: (self.use_inside.setChecked(True), self._changed()))
+        for widget in (self.whole_word, self.use_by, self.on):
+            widget.toggled.connect(self._changed)
+        self.by.currentIndexChanged.connect(lambda _: self._changed())
+        self.folder.changed.connect(self._changed)
+        self.name.textChanged.connect(self._changed)
         self._preview()
 
-    def _edited(self):
-        return self.service.edited_rule(self.rule, self.folder.folder() or "",
-                                        self.label.currentText() if self.label else "",
-                                        self.word.text() if self.word else "")
+    def _changed(self, *_) -> None:
+        self._timer.start()
 
-    def _preview(self, *_) -> None:
+    def _edited(self):
+        keep_shape = self.use_shape is not None and self.use_shape.isChecked()
+        return self.service.build_rule(
+            self.folder.folder() or "",
+            label=self.label.currentText() if self.use_label.isChecked() else "",
+            text=self.text.text() if self.use_text.isChecked() else "",
+            whole_word=self.whole_word.isChecked(),
+            kind=self.kind.currentData() if self.use_kind.isChecked() else "",
+            ext=self.ext.text() if self.use_ext.isChecked() else "",
+            inside=(self.inside.folder() or "") if self.use_inside.isChecked() else "",
+            by=self.by.currentData() if self.use_by.isChecked() else "",
+            name=self.name.text(), on=self.on.isChecked(),
+            shape=self.rule.shape if keep_shape else "", example=self.rule.example if keep_shape else "")
+
+    def _preview(self) -> None:
         try:
-            self.preview.setText(self.service.describe_rule(self._edited()) + ".")
+            rule = self._edited()
         except ValueError as exc:
             self.preview.setText(str(exc))
+            self.examples.setText("")
+            return
+        self.preview.setText(self.service.describe_rule(rule) + ".")
+        if self.plan is None:
+            self.examples.setText("")
+            return
+        found = self.service.rule_matches(rule, self.plan)
+        names = ", ".join(os.path.basename(p) for p in found[:6]) + (", …" if len(found) > 6 else "")
+        self.examples.setText(f"In this plan it places {len(found):,} file{'s' if len(found) != 1 else ''}"
+                              + (f": {names}" if found else ". Files you placed yourself keep your choice."))
 
     def accept(self) -> None:
         try:

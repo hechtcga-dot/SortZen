@@ -90,21 +90,23 @@ class SettingsWindow(QDialog):
         rules = QWidget()
         r = QVBoxLayout(rules)
         r.setContentsMargins(0, 0, 0, 0)
-        r.addWidget(hint("Rules place every matching file at 100%. SortZen suggests a rule when you send several "
-                         "files with a word in common to the same folder. Files you place yourself keep your choice."))
+        r.addWidget(hint("Rules place every matching file at 100%: files with a label, text in their name, a kind of "
+                         "file or from a folder go to the folder you choose, by year or month if you like. SortZen "
+                         "suggests rules from your choices. Untick a rule to switch it off. Rules with more conditions "
+                         "come first; files you place yourself keep your choice."))
+        self.plan = getattr(parent, "plan", None)
         self.rules = QListWidget()
         self.rules.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.rules.setWordWrap(True)
         for rule in service.rules():
-            item = QListWidgetItem(service.describe_rule(rule))
-            item.setData(Qt.ItemDataRole.UserRole, rule)
-            self.rules.addItem(item)
-        if not self.rules.count():
-            self.rules.addItem("No rules yet.")
-            self.rules.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+            self._rule_item(rule)
         r.addWidget(self.rules, 1)
         row = QHBoxLayout()
+        add_rule = QPushButton("Add a rule…")
+        add_rule.clicked.connect(self._add_rule)
+        row.addWidget(add_rule)
         change_rule = QPushButton("Change…")
-        change_rule.setToolTip("Choose another folder, label or word for the selected rule")
+        change_rule.setToolTip("Change what the selected rule matches, where its files go, its name, or switch it off")
         change_rule.clicked.connect(self._change_rule)
         row.addWidget(change_rule)
         self.rules.itemDoubleClicked.connect(lambda _: self._change_rule())
@@ -130,17 +132,50 @@ class SettingsWindow(QDialog):
             if self.tabs.tabText(i) == tab:
                 self.tabs.setCurrentIndex(i)
 
+    def _rule_item(self, rule, item: QListWidgetItem | None = None) -> QListWidgetItem:
+        from dataclasses import replace
+
+        item = item or QListWidgetItem()
+        if item.listWidget() is None:
+            self.rules.addItem(item)
+        item.setText(self.service.describe_rule(replace(rule, on=True)))
+        item.setData(Qt.ItemDataRole.UserRole, rule)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if rule.on else Qt.CheckState.Unchecked)
+        item.setToolTip("Ticked: the rule is on. Double-click to change it.")
+        return item
+
+    def _rules_shown(self) -> list:
+        from dataclasses import replace
+
+        found = []
+        for i in range(self.rules.count()):
+            item = self.rules.item(i)
+            rule = item.data(Qt.ItemDataRole.UserRole)
+            if rule is not None:
+                found.append(replace(rule, on=item.checkState() == Qt.CheckState.Checked))
+        return found
+
+    def _add_rule(self) -> None:
+        from .dialogs import RuleDialog
+
+        dialog = RuleDialog(self, self.service, None, self.plan, "Add a rule")
+        if dialog.exec() and dialog.chosen is not None:
+            self._rule_item(dialog.chosen)
+
     def _change_rule(self) -> None:
+        from dataclasses import replace
+
         from .dialogs import RuleDialog
 
         item = self.rules.currentItem()
         rule = item.data(Qt.ItemDataRole.UserRole) if item else None
         if rule is None:
             return
-        dialog = RuleDialog(self, self.service, rule)
+        rule = replace(rule, on=item.checkState() == Qt.CheckState.Checked)
+        dialog = RuleDialog(self, self.service, rule, self.plan)
         if dialog.exec() and dialog.chosen is not None:
-            item.setData(Qt.ItemDataRole.UserRole, dialog.chosen)
-            item.setText(self.service.describe_rule(dialog.chosen))
+            self._rule_item(dialog.chosen, item)
 
     def _option(self, name: str) -> QWidget:
         title, text = OPTION_TEXT[name]
@@ -165,6 +200,5 @@ class SettingsWindow(QDialog):
         self.ai_box.apply()
         self.privacy_mode.apply()
         self.privacy_lists.apply()
-        kept = [self.rules.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.rules.count())]
-        self.service.restore_rules([x for x in kept if x])
+        self.service.restore_rules(self._rules_shown())
         super().accept()

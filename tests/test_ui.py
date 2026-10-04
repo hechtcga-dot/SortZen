@@ -927,10 +927,25 @@ class MainWindowTest(unittest.TestCase):
         dialog = RuleDialog(self.window, self.service, rule)
         self.assertIn("Files labelled “Programs” go to Downloads/older downloads", dialog.preview.text())
         dialog.folder.box.setEditText("Downloads/Program projects/Tide Log")       # a folder still to be made
+        dialog._preview()
         self.assertIn("go to Downloads/Program projects/Tide Log", dialog.preview.text())
         dialog.accept()
         target = str(root / "Downloads" / "Program projects" / "Tide Log")
         self.assertEqual(dialog.chosen.destination, target)
+
+        editor = RuleDialog(self.window, self.service, None, None, "Add a rule", destination=str(root / "Sorted"))
+        editor._preview()
+        self.assertIn("at least one thing", editor.preview.text())             # a rule needs a condition
+        editor.text.setText("receipt")
+        editor.use_kind.setChecked(True)
+        editor.kind.setCurrentIndex(editor.kind.findData("pdf"))
+        editor.use_by.setChecked(True)
+        editor.name.setText("Receipts by year")
+        editor._preview()
+        self.assertEqual(editor.preview.text(), "Receipts by year: Names containing “receipt”, PDFs go to Sorted, "
+                                                "in a folder for each year.")
+        editor.accept()
+        self.assertEqual((editor.chosen.contains, editor.chosen.kind, editor.chosen.by), ("receipt", "pdf", "year"))
 
         self.window.plan_button.click()                                    # the banner in Step 3
         wizard = self.window.wizard

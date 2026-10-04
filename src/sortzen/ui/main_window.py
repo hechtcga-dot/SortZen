@@ -416,6 +416,9 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.runs_action)
         edit_menu.addSeparator()
+        edit_menu.addAction(action("Rules…", lambda: self.show_settings("Rules"),
+                                   tip="Make, change, switch off or remove rules: files that have something in common "
+                                       "go to a folder you choose"))
         edit_menu.addAction(self.settings_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.wizard_action)

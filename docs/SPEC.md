@@ -33,8 +33,12 @@ decision; when the code and this file disagree, this file wins until it is chang
 - Everything is right-clickable, with the same actions as the buttons; Shift-click and
   Ctrl-click select several items.
 - Double-clicking a file or folder in any list opens it (a file with its program, a folder
-  in Explorer); in trees the arrow expands and collapses. A folder the plan hasn't made yet
-  says so in the status bar.
+  in Explorer), handed to Windows in the background so the click never waits; in trees the
+  arrow expands and collapses. A folder the plan hasn't made yet says so in the status bar.
+- Right-clicking a file or folder anywhere it is listed offers Open, Open containing folder
+  (Explorer with it selected) and, where it makes sense, Delete (into "To delete", after
+  confirmation, with Undo).
+- Clicks answer at once; slow work runs in the background, or behind a progress window.
 - Every change can be undone (Ctrl+Z and Undo buttons). Optional panels can be shown or
   hidden.
 - Features are reachable from the toolbar, the menus, the folder tree and the start
@@ -216,7 +220,10 @@ word or files that look alike, then files SortZen would give the same labels and
 same folder, then files with no clear label by kind; at most 40 files (bigger ones come in
 parts). Its certainty is how sure SortZen is of its labels (70%) and its folder (30%). Files
 users labelled before, files that go with another file and topic members are not shown.
-- The files have tick boxes (Select all / Select none; double-click opens). "Confirm labels for
+- The files have tick boxes (Select all / Select none; double-click opens) and, to recognise them,
+  when each was downloaded or added to the PC, its size, its folder and the site it was downloaded
+  from (when Windows noted it); under the list, the selected file's type, dates, title, pages,
+  camera and first words. All of it is read on the PC. "Confirm labels for
   the N ticked files": the suggested labels as buttons with their percent, on unless clicked
   off; any other label, or "+ New label". Confirm gives the ticked files exactly those labels,
   as users' own, and each file checks SortZen's guess; unticked files come back later.
@@ -227,8 +234,9 @@ users labelled before, files that go with another file and topic members are not
 - "Skip for now": the batch comes back at the end; skipped again, its files go to Review as
   they are. Back undoes the last answer and shows that batch again (on the first batch, it goes
   back to Step 1).
-- **Learning as it goes**: after each confirmed batch the labels are guessed again and the
-  remaining batches formed again. Once SortZen's guesses matched users' choices in at least 90%
+- **Learning as it goes**: after each confirmed batch the next batch shows at once while, in the
+  background, the labels are guessed again and the remaining batches formed again (the batch on
+  screen stays as it is). Once SortZen's guesses matched users' choices in at least 90%
   of at least 20 checks, batches it is at least 85% sure of are settled by themselves ("3 more
   batches (27 files) are now settled and skipped"). It also suggests merging two labels that
   are surely the same ("Tax" into "Taxes": every file and rule follows) and folders for labels
@@ -252,8 +260,16 @@ still be changed.
   "New folder" makes a folder in the plan inside the selected one (made on disk when files
   move into it); "Delete folder" deletes a folder still to be made, and its files go to the
   folder it was in (folders that exist are deleted in Explorer).
-- Right: the selected file's labels, why it goes there and a note box; for a folder, its
-  rules ("Files labelled Taxes go to Documents/Taxes") with Change…, Remove and "Add a rule…". Rules
+- Right: the selected file's labels, when it was downloaded or added, its type, size, title and first
+  words, why it goes there and a note box; for a folder, its rules ("Files labelled Taxes go to
+  Documents/Taxes") with Change…, Remove and "Add a rule…".
+- Folders can be dragged onto another folder too (several at once with Shift- or Ctrl-click): they
+  move as they are when the files move, and SortZen remembers it with the session (and, for folders
+  in the folders being sorted, as their answer). Folders the plan moves are shown where they go
+  ("moves here as it is"). **Too many folders?** (button or right-click) puts the chosen folders, or
+  the look-alike folders in the chosen folder ("Report", "Report (2)", "Report-1.2"), together into
+  one new folder users name ("Report (old versions)"); the window lists them with tick boxes.
+- "Delete…" (button or right-click) moves the selected files into "To delete". Rules
   are not shown in the tree.
 - "Confirm and next batch" keeps the batch's plan (SortZen remembers each file's folder) and
   shows the next; "Previous batch"; "Skip for now". After the last batch the **Move window**
@@ -335,9 +351,20 @@ leans towards it (up to 95%). Users' choices and rules are never overruled. A ru
 one folder (80% of those they put there), and in the Cataloguing tab when a folder holds mostly
 files with that label (half or more, at least 3), or as a new folder named after the label
 when at least 5 unsure files carry it and they don't mostly lean towards one folder already.
-No folder is ever suggested for a file type alone. Every rule can be changed: its folder (picked
-from the list, typed, or a new one), its label, or its name word, wherever rules are suggested or
-shown (the wizard, the Cataloguing tab, "Make this a rule?", Review and Settings › Rules).
+No folder is ever suggested for a file type alone.
+
+**Rules** send every file that meets all of a rule's conditions to its folder, at 100%:
+- conditions (any combination; every one ticked must fit): a label; text in the name (anywhere, or
+  as a whole word); a kind of file (PDFs, pictures, programs …); an ending (".msi"); the folder the
+  file is in now (and the folders in it); a name shape from a suggested rule ("names like IMG_#");
+- where they go: a folder picked, typed or still to be made, optionally with a folder for each year
+  (from a year in the name, otherwise when the file was last saved) or each month inside it;
+- a name ("Tax slips"), and on or off.
+Rules with more conditions come first. A rule without a condition places nothing and says so.
+Users' own choices are never overruled. The rule window previews the files of the plan a rule
+places. Rules are made, changed, switched off and removed in Edit › Rules… (Settings › Rules), and
+changed or added from wherever they are suggested or shown (the wizard, the Cataloguing tab, "Make
+this a rule?" and the Review tab's folder box).
 
 ### 4. Files that go with another file
 Subtitles (.srt, .sub, .idx, .ass, .ssa, .vtt, .smi), .nfo and .thm files go with the movie

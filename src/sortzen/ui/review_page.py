@@ -462,19 +462,19 @@ class ReviewPage(QWidget):
         folder = self._selected_folder()
         if not folder:
             return
-        if label is None:
-            labels = self.service.labels()
-            if not labels:
-                QMessageBox.information(self, "Add a rule", "Make a label first: rules here send files with a label "
-                                        "to this folder.")
-                return
-            label, ok = QInputDialog.getItem(self, "Add a rule", f"Files with this label go to "
-                                             f"{self.service.display(folder)}:", labels, 0, False)
-            if not ok:
-                return
         from ..engine.rules import Rule
 
-        before = self.service.add_rule(Rule("", folder, label=label))
+        if label is None:
+            from .dialogs import RuleDialog
+
+            dialog = RuleDialog(self, self.service, None, self.flow.plan if self.flow else None, "Add a rule",
+                                destination=folder)
+            if not dialog.exec() or dialog.chosen is None:
+                return
+            rule = dialog.chosen
+        else:
+            rule = Rule("", folder, label=label)
+        before = self.service.add_rule(rule)
         self.window._push_undo("Make a rule", lambda: self.service.restore_rules(before))
         self.window.statusBar().showMessage("Rule saved: it places files in the next plans.", 6000)
         self._show_details()

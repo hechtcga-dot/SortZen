@@ -1083,3 +1083,27 @@ class FolderMovesInReviewTest(unittest.TestCase):
         self.assertTrue((self.sorted / "Programs" / "Recipes").is_dir())
         self.service.undo_move(result.log)
         self.assertTrue((self.downloads / "Tide Log-windows (1)").is_dir())
+
+
+class RuleEditorTest(CatalogTest):
+    def test_rules_with_conditions_are_saved_previewed_switched_off_and_place_files_by_year(self):
+        from sortzen.services.app_service import FolderError
+
+        budget = str(self.sorted / "Work" / "Budget")
+        rule = self.service.build_rule(budget, text="budget", kind="text", inside=str(self.downloads), by="year",
+                                       name="Budgets")
+        self.assertEqual(self.service.rule_matches(rule, self.plan), [str(self.downloads / "Budget 2026.txt")])
+        self.service.add_rule(rule)
+        self.assertEqual(self.service.rules(), [rule])                         # every part is kept
+        plan = self.service.make_plan()
+        s = plan.for_path(str(self.downloads / "Budget 2026.txt"))
+        self.assertEqual((s.destination, s.percent), (os.path.join(budget, "2026"), 100))
+        self.assertIn("Your rule: Budgets:", s.reasons[0].text)
+        self.service.switch_rule(rule, False)
+        self.assertFalse(self.service.rules()[0].on)
+        plan = self.service.make_plan()
+        self.assertNotEqual(plan.for_path(str(self.downloads / "Budget 2026.txt")).percent, 100)
+        with self.assertRaises(FolderError):
+            self.service.build_rule(budget)                                      # nothing in common: no rule
+        with self.assertRaises(FolderError):
+            self.service.build_rule(budget, text="two words", whole_word=True)

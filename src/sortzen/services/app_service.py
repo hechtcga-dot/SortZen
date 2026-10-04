@@ -1179,9 +1179,8 @@ class AppService:
         found = []
         for r in self.settings.get("rules") or []:
             try:
-                found.append(Rule(str(r.get("word") or ""), str(r["destination"]), str(r.get("ext") or ""),
-                                  str(r.get("shape") or ""), str(r.get("example") or ""), str(r.get("label") or "")))
-            except (KeyError, TypeError):
+                found.append(_rule_from(r))
+            except (KeyError, TypeError, AttributeError):
                 continue
         return found
 
@@ -1194,39 +1193,85 @@ class AppService:
 
     def remove_rule(self, rule: Rule) -> list[dict]:
         before = list(self.settings.get("rules") or [])
-        self.settings.set("rules", [r for r in before if Rule(r.get("word") or "", r["destination"], r.get("ext") or "",
-                                                              r.get("shape") or "", label=r.get("label") or "").key
-                                    != rule.key])
+        self.settings.set("rules", [_rule_dict(r) for r in self.rules() if r.key != rule.key])
         return before
 
     def change_rule(self, old: Rule, new: Rule) -> list[dict]:
         """Put a changed rule in place of a saved one (or add it when the old one isn't saved, as for a suggested
         rule changed before it was made). Returns the rules before, for Undo."""
         before = list(self.settings.get("rules") or [])
-        kept = [r for r in self.rules() if r.key != old.key and r.key != new.key]
-        self.settings.set("rules", [_rule_dict(r) for r in kept + [new]])
+        rules = [r for r in self.rules() if r.key != new.key or r.key == old.key]
+        at = next((i for i, r in enumerate(rules) if r.key == old.key), None)
+        if at is None:
+            rules.append(new)
+        else:
+            rules[at] = new
+        self.settings.set("rules", [_rule_dict(r) for r in rules])
         self._learned()
         return before
 
-    def edited_rule(self, rule: Rule, destination: str, label: str = "", word: str = "") -> Rule:
-        """A rule with a new folder, label or name word. Raises FolderError when one is missing."""
+    def switch_rule(self, rule: Rule, on: bool) -> list[dict]:
         from dataclasses import replace
 
+        return self.change_rule(rule, replace(rule, on=bool(on)))
+
+    def build_rule(self, destination: str, *, label: str = "", text: str = "", whole_word: bool = False,
+                   kind: str = "", ext: str = "", inside: str = "", by: str = "", name: str = "", on: bool = True,
+                   shape: str = "", example: str = "") -> Rule:
+        """A rule from what users chose in the rule window. Raises FolderError when something is missing."""
         from ..engine.features import words
+        from ..engine.rules import BY, KINDS
 
         if not destination:
             raise FolderError("Choose the folder the files go to.")
+        text = " ".join((text or "").split())
+        word = ""
+        if text and whole_word:
+            found = words(text)
+            if len(found) != 1:
+                raise FolderError("Type one word for “as a whole word” (or untick it to match any text).")
+            word, text = found[0], ""
+        ext = (ext or "").strip().lower()
+        if ext and not ext.startswith("."):
+            ext = "." + ext
+        if kind and kind not in KINDS:
+            raise FolderError(f"Unknown kind of file: {kind}")
+        rule = Rule(word, os.path.abspath(destination), ext, shape, example, " ".join((label or "").split()),
+                    text, kind, os.path.abspath(inside) if inside else "", by if by in BY else "",
+                    " ".join((name or "").split()), bool(on))
+        if not rule.conditions:
+            raise FolderError("Choose at least one thing the files have in common: a label, text in the name, a "
+                              "kind of file or the folder they are in.")
+        return rule
+
+    def edited_rule(self, rule: Rule, destination: str, label: str = "", word: str = "") -> Rule:
+        """A rule with a new folder, label or name word. Raises FolderError when one is missing."""
         if rule.label:
-            label = " ".join((label or "").split())
-            if not label:
+            if not " ".join((label or "").split()):
                 raise FolderError("Choose a label.")
-            return replace(rule, destination=os.path.abspath(destination), label=label)
+            return self.build_rule(destination, label=label, kind=rule.kind, ext=rule.ext, inside=rule.inside,
+                                   by=rule.by, name=rule.name, on=rule.on, shape=rule.shape, example=rule.example,
+                                   text=rule.contains or rule.word, whole_word=bool(rule.word))
         if not rule.shape:
-            found = words(word or "")
-            if not found:
+            if not (word or "").strip():
                 raise FolderError("Type the word the names have in common.")
-            return replace(rule, destination=os.path.abspath(destination), word=found[0])
+            return self.build_rule(destination, text=word, whole_word=True, kind=rule.kind, ext=rule.ext,
+                                   inside=rule.inside, by=rule.by, name=rule.name, on=rule.on)
+        from dataclasses import replace
+
+        if not destination:
+            raise FolderError("Choose the folder the files go to.")
         return replace(rule, destination=os.path.abspath(destination))
+
+    def rule_matches(self, rule: Rule, plan: Plan | None) -> list[str]:
+        """The files from the folders being sorted that a rule places (users' own choices aside)."""
+        if plan is None:
+            return []
+        corrected = {path_key(p) for p in self.corrections()}
+        return [s.path for s in plan.files
+                if s.path in self._records and self._records[s.path].role == "source"
+                and path_key(s.path) not in corrected
+                and rule.matches(os.path.basename(s.path), self.labels_of(s.path), s.path)]
 
     def restore_rules(self, before: list) -> None:
         """Set the rules (dictionaries as saved, or Rule objects)."""
@@ -1335,7 +1380,8 @@ class AppService:
             apply_rules(plan, rules, lambda f: not self.is_left_out(f)
                         and not any(is_queue_folder(part) for part in f.split(os.sep)),
                         lambda p: p in self._records and self._records[p].role == "source"
-                        and not self.is_left_out(p), self.display, self.labels_of)
+                        and not self.is_left_out(p), self.display, self.labels_of,
+                        lambda p: self._records[p].modified_ns / 1e9 if p in self._records else 0.0)
 
     # ---------------------------------------------------------------- renaming folders
     def rename_folder(self, plan: Plan | None, folder: str, new_name: str, emit=None) -> RunResult | None:
@@ -1938,9 +1984,18 @@ def _rule_dict(rule: Rule) -> dict:
     found = {"word": rule.word, "ext": rule.ext, "destination": rule.destination}
     if rule.shape:
         found.update(shape=rule.shape, example=rule.example)
-    if rule.label:
-        found["label"] = rule.label
+    for name in ("label", "contains", "kind", "inside", "by", "name"):
+        if getattr(rule, name):
+            found[name] = getattr(rule, name)
+    if not rule.on:
+        found["on"] = False
     return found
+
+
+def _rule_from(r: dict) -> Rule:
+    text = lambda name: str(r.get(name) or "")                          # noqa: E731
+    return Rule(text("word"), str(r["destination"]), text("ext"), text("shape"), text("example"), text("label"),
+                text("contains"), text("kind"), text("inside"), text("by"), text("name"), r.get("on", True) is not False)
 
 
 def _subfolders(folder: str) -> list[str]:
