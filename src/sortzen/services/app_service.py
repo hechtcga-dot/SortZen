@@ -20,6 +20,7 @@ from ..engine.rules import Rule, RuleSuggestion, apply_rules, rename_planned, su
 from ..repositories.ai_answers import AIAnswers, answer_key
 from ..repositories.api_keys import ApiKeyStore
 from ..repositories.file_index import FileIndex, path_key
+from ..repositories.sessions import SessionStore
 from ..repositories.settings import SettingsRepository
 from ..engine import Planner, Source
 from ..engine.duplicates import CopyGroup, find_copies
@@ -119,6 +120,7 @@ class AppService:
         self.scanner = Scanner(self.index)
         self.mover = Mover(self.paths.runs_dir)
         self.ai_answers = AIAnswers(self.paths.database_path)
+        self.sessions = SessionStore(self.paths.sessions_dir)
         self._records: dict = {}            # the last plan's files, by path
         self._guesses: dict = {}            # labels SortZen guessed for them, by path key
         self._embedder = None               # the meaning model (loaded when first needed)
@@ -660,6 +662,66 @@ class AppService:
         self._save_label_data(files=files)
         self._check(checks)
         self._learned(len(paths))
+
+    def set_file_labels(self, paths: list[str], names: list[str]) -> None:
+        """Files get exactly these labels, as users' own. Each file checks SortZen's guess."""
+        files = self.users_labels()
+        checks = []
+        for path in paths:
+            key = next((k for k in files if path_key(k) == path_key(path)), None)
+            if key is None:
+                checks.append(set(self.labels_of(path)) == set(names))
+                key = os.path.abspath(path)
+            files[key] = list(names)
+        self._save_label_data(files=files)
+        self._check(checks)
+        self._learned(len(paths))
+
+    def merge_label(self, drop: str, keep: str) -> None:
+        """Two labels are the same: every file and rule with ``drop`` gets ``keep`` instead."""
+        def swap(v):
+            return list(dict.fromkeys(keep if x == drop else x for x in v))
+
+        ai = {}
+        for k, v in self.ai_labels().items():
+            best: dict[str, int] = {}
+            for a, b in v:
+                a = keep if a == drop else a
+                best[a] = max(best.get(a, 0), int(b))
+            ai[k] = [[a, b] for a, b in best.items()]
+        self._save_label_data(names=[x for x in self.labels() if x != drop],
+                              files={k: swap(v) for k, v in self.users_labels().items()}, ai=ai)
+        self.settings.set("rules", [dict(r, label=keep) if r.get("label") == drop else r
+                                    for r in self.settings.get("rules") or []])
+        self._guesses = {}
+
+    def label_ideas(self, limit: int = 12) -> list[str]:
+        """Labels to start with: the names of the folders in the destination folders (two levels down) that
+        hold the most, leaving out general names like Documents or a year."""
+        general = {"documents", "pictures", "music", "videos", "downloads", "desktop", "new folder", "misc",
+                   "miscellaneous", "other", "others", "old", "archive", "stuff", "files", "temp", "backup"}
+        known = {x.lower() for x in self.labels()}
+        sizes: Counter = Counter()
+        names: dict[str, str] = {}
+        for root in self.destination_folders():
+            for first in _subfolders(root):
+                for folder in [first, *_subfolders(first)]:
+                    name = os.path.basename(folder)
+                    key = name.lower()
+                    if key in general or key in known or re.fullmatch(r"[\d\W_]+", name) or is_queue_folder(name):
+                        continue
+                    try:
+                        sizes[key] += len(os.listdir(folder))
+                    except OSError:
+                        continue
+                    names.setdefault(key, name)
+        return [names[k] for k, _ in sizes.most_common(limit)]
+
+    def forget_files(self, paths: list[str]) -> None:
+        """Files that left the folders (moved into "To delete") leave what SortZen read too."""
+        gone = {path_key(p) for p in paths}
+        self._records = {k: v for k, v in self._records.items() if path_key(k) not in gone}
+        self._guesses = {k: v for k, v in self._guesses.items() if k not in gone}
 
     def confirm_labels(self, paths: list[str]) -> None:
         """Users agree with the labels SortZen or the AI gave these files: they become users' own."""
@@ -1678,6 +1740,25 @@ class AppService:
         inside = [(r, role) for r, role in roots if _inside(key, path_key(r))]
         return max(inside, key=lambda x: len(x[0])) if inside else None
 
+    # ---------------------------------------------------------------- organizing sessions
+    def new_session(self, name: str):
+        """A new organizing session, saved at once so it can be carried on later."""
+        from .flow import Flow
+
+        return Flow(self, self.sessions.new(name))
+
+    def open_session(self, file: str):
+        from .flow import Flow
+
+        session = self.sessions.load(file)
+        return Flow(self, session) if session is not None else None
+
+    def recent_sessions(self, limit: int = 6) -> list:
+        """Saved sessions, the latest used first: (session, where it is)."""
+        from .flow import describe
+
+        return [(s, describe(s)) for s in self.sessions.sessions()[:limit]]
+
     # ---------------------------------------------------------------- profiles
     def save_profile(self, path: str, include_keys: bool = False) -> None:
         """Save folders, choices, answers and settings to a profile file (API keys only when asked)."""
@@ -1803,6 +1884,13 @@ def _rule_dict(rule: Rule) -> dict:
     if rule.label:
         found["label"] = rule.label
     return found
+
+
+def _subfolders(folder: str) -> list[str]:
+    try:
+        return sorted(e.path for e in os.scandir(folder) if e.is_dir() and not e.name.startswith((".", "$")))
+    except OSError:
+        return []
 
 
 def _no_paths(text: str) -> str:

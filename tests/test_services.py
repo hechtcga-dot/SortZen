@@ -874,3 +874,132 @@ class CatalogSuggestionsTest(CatalogTest):
         waiting = self.service.catalog_suggestions()
         self.assertNotIn(found[0].key, {s.key for s in waiting})
         self.assertIn(found[1].key, {s.key for s in waiting})
+
+
+class SessionFlowTest(unittest.TestCase):
+    """An organizing session on copies of the test folders: Choose, Duplicates, Catalog, Review, Move."""
+
+    def setUp(self):
+        import shutil
+        from tests.fixtures import shared_test_folders
+
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        for name in ("Downloads", "Sorted"):
+            shutil.copytree(shared_test_folders() / name, base / name)
+        self.base = base
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(base / "Downloads"))
+        self.service.add_destination(str(base / "Sorted"))
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_sessions_are_named_saved_listed_and_reopened(self):
+        flow = self.service.new_session("Downloads clean-up")
+        flow.use_folders()
+        other = self.service.new_session("Downloads clean-up")
+        self.assertNotEqual(flow.session.file, other.session.file)
+        other.rename("Old laptop backup")
+        names = [s.name for s, _ in self.service.recent_sessions()]
+        self.assertEqual(names, ["Old laptop backup", "Downloads clean-up"])        # the latest used first
+        self.assertEqual(self.service.recent_sessions()[0][1], "Step 1 Choose")
+        self.service.remove_folder(str(self.base / "Sorted"))
+        again = self.service.open_session(flow.session.file)
+        self.assertEqual(again.restore_folders(), [])
+        self.assertEqual(self.service.destination_folders(), [str(self.base / "Sorted")])   # its folders come back
+
+    def test_label_ideas_merge_and_exact_labels(self):
+        ideas = self.service.label_ideas()
+        self.assertIn("Work", ideas)
+        self.assertNotIn("Documents", ideas)                   # general names are left out
+        self.service.add_label("Tax")
+        self.service.add_label("Taxes")
+        receipt = str(self.base / "Downloads" / "a.txt")
+        self.service.set_file_labels([receipt], ["Tax", "Work"])
+        self.service.merge_label("Tax", "Taxes")
+        self.assertEqual(self.service.labels(), ["Taxes"])
+        self.assertEqual(self.service.labels_of(receipt), ["Taxes", "Work"])
+
+    def test_wizard_duplicates_batches_learning_review_and_move(self):
+        flow = self.service.new_session("Downloads clean-up")
+        for name in self.service.label_ideas()[:8]:
+            self.service.add_label(name)
+        flow.use_folders()
+        flow.set_plan(self.service.make_plan())
+        copies = flow.copies()
+        self.assertTrue(copies)
+        flow.keep_by("oldest")
+        oldest = copies[0].kept
+        self.assertTrue(all(oldest.modified_ns <= c.modified_ns for c in copies[0].copies))
+        flow.keep_by("newest")
+        extras = flow.ticked_copies()
+        self.assertGreater(extras, 0)
+        result = self.service.queue_copies(copies)
+        flow.copies_queued(result)
+        self.assertEqual(flow.session.copies_queued, result.moved)
+        gone = {os.path.normcase(old) for old, _ in result.moves}
+
+        batches = flow.make_batches()
+        self.assertTrue(batches)
+        paths = [p for b in batches for p in b.paths]
+        self.assertEqual(len(paths), len(set(paths)))                         # every file in one batch
+        self.assertFalse(gone & {os.path.normcase(p) for p in paths})          # the extra copies have left
+        self.assertEqual([b.certainty for b in batches if b.labels],
+                         sorted([b.certainty for b in batches if b.labels], reverse=True))   # surest first
+        first = flow.current()
+        self.assertTrue(first.labels)
+        before = flow.files_left()
+        unticked = first.paths[-1]
+        learned = flow.confirm(first, first.paths[:-1], [first.labels[0][0]])
+        self.assertEqual(self.service.labels_of(first.paths[0]), [first.labels[0][0]])
+        self.assertLess(flow.files_left(), before)
+        self.assertIn(unticked, flow.session.later)                           # unticked: comes back later
+        self.assertTrue(flow.is_later(flow.batches[-1]))
+        self.assertTrue(flow.back())                                          # Back undoes the answer
+        self.assertEqual(flow.current().paths, first.paths)
+        self.assertEqual(flow.session.done, [])
+
+        while flow.current() is not None and not flow.learned_enough():       # confirm until SortZen has learned
+            b = flow.current()
+            if b.labels:
+                learned = flow.confirm(b, b.paths, [b.labels[0][0]])
+            else:
+                flow.send_to_review(b, b.paths)
+        self.assertTrue(flow.learned_enough())
+        self.assertIsInstance(learned.settled_batches, int)
+        b = flow.current()
+        if b is not None:
+            flow.skip(b)
+            self.assertTrue(all(p in flow.session.later for p in b.paths))
+        flow.finish_catalog()
+
+        review = flow.start_review(self.service.make_plan())
+        self.assertTrue(review)
+        self.assertTrue(any(r.sure for r in review))
+        self.assertTrue(all(flow.is_reviewed(r) for r in review if r.sure))   # sure batches need no check
+        todo = next(r for r in review if not flow.is_reviewed(r) and r.batch.paths)
+        s = flow.files_in(todo)[0]
+        new = flow.new_folder(str(self.base / "Sorted"), "Jordan")
+        self.assertIn(new, flow.planned_folders())
+        undo = flow.move_file([s.path], new)
+        self.assertEqual(self.service.corrections()[s.path], new)
+        self.assertTrue(s.new_folder)
+        deleted = flow.delete_folder(new)                                     # its files go to the folder it was in
+        self.assertEqual(s.destination, str(self.base / "Sorted"))
+        flow.undo_delete_folder(deleted)
+        self.assertEqual(s.destination, new)
+        flow.undo_move_file(undo)
+        with self.assertRaises(ValueError):
+            flow.delete_folder(str(self.base / "Sorted"))                      # folders that exist: in Explorer
+        for r in review:
+            if not flow.is_reviewed(r):
+                last = flow.confirm_review(r)
+        self.assertTrue(last)
+        rows = flow.move_rows()
+        self.assertTrue(rows)
+        result = self.service.move(flow.plan, rows)
+        flow.moved(result)
+        self.assertGreater(result.moved, 0)
+        self.assertEqual(self.service.recent_sessions()[0][1], f"Moved · {result.moved:,} files")
