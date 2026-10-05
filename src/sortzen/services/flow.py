@@ -34,6 +34,14 @@ class Learned:
     folder: object | None = None                # a LabelFolderSuggestion
 
 
+@dataclass
+class RuleIdea:
+    rule: object                    # an engine Rule
+    why: str
+    places: int                     # files and folders of the plan it would place
+    source: str = "SortZen"         # or "AI"
+
+
 def _key(path: str) -> str:
     return path_key(path)
 
@@ -301,8 +309,14 @@ class Flow:
         self._take_out(batch, rest + alone, alone)
         self.save()
 
+    def note_deleted(self, paths: list[str]) -> None:
+        """Remember the names of files users deleted (for suggesting rules)."""
+        self.session.deleted = (self.session.deleted + [os.path.basename(p) for p in paths])[-500:]
+        self.save()
+
     def drop(self, paths: list[str]) -> None:
         """Files moved into "To delete" from Step 3 leave the session."""
+        self.note_deleted(paths)
         gone = {_key(p) for p in paths}
         if self.plan is not None:
             self.plan.files = [s for s in self.plan.files if _key(s.path) not in gone]
@@ -691,6 +705,118 @@ class Flow:
             if len(key) >= 3:
                 groups.setdefault(key, []).append(f)
         return sorted([g for g in groups.values() if len(g) >= 2], key=lambda g: -len(g))
+
+    # ---------------------------------------------------------------- rules from what users did
+    def _users_choices(self) -> dict[str, list[str]]:
+        """Folder key -> names of the files and folders users sent there (in this session or before)."""
+        found: dict[str, list[str]] = {}
+        for path, folder in self.service.corrections().items():
+            if folder and _key(folder) != _key(os.path.dirname(path)):
+                found.setdefault(_key(folder), []).append(os.path.basename(path))
+        for folder, target in self.session.folder_moves.items():
+            found.setdefault(_key(target), []).append(os.path.basename(folder))
+        return found
+
+    def rule_ideas(self) -> list:
+        """Rules SortZen would make from what users did: a folder for a label, and names in common among the
+        files and folders users sent to one folder. Rules made or turned down before are left out."""
+        from ..engine.rules import suggest_rule
+
+        if self.plan is None:
+            return []
+        known = {r.key for r in self.service.rules()} | set(self.service.settings.get("declined_rules") or [])
+        ideas, seen = [], set()
+
+        def add(rule, why, places):
+            if rule.key not in known and rule.key not in seen and places:
+                seen.add(rule.key)
+                ideas.append(RuleIdea(rule, why, places, "SortZen"))
+
+        for s in self.service.label_folder_suggestions(self.plan):
+            add(s.rule, s.why, s.files)
+        corrected = {path_key(p) for p in self.service.corrections()} | {_key(f) for f in self.session.folder_moves}
+        def sure(destination, percent):          # a folder SortZen only plans to make never stands in the way
+            return percent if destination and os.path.isdir(destination) else min(percent, 89)
+
+        others = [(s.path, s.destination, sure(s.destination, s.percent)) for s in self._sources_files()
+                  if path_key(s.path) not in corrected]
+        others += [(f.path, f.destination, sure(f.destination, f.percent)) for f in self.plan.folders
+                   if _key(f.path) not in corrected]
+        destinations = {_key(d): d for d in [*self.service.corrections().values(), *self.session.folder_moves.values()]
+                        if d}
+        for key, names in self._users_choices().items():
+            found = suggest_rule(names, destinations.get(key, key), others, self.service.rules(), known | seen)
+            if found:
+                more = len(found.matches)
+                add(found.rule, f"You sent {found.examples} like this there; {more:,} more "
+                                f"would go too", more)
+        return sorted(ideas, key=lambda i: -i.places)
+
+    def session_summary(self) -> dict:
+        """What users did, for the AI: names only (long numbers removed), folders as shown."""
+        from ..ai import privacy
+
+        display = self.service.display
+        choices = [(privacy.scrub_name(os.path.basename(p)), display(d)) for p, d in self.service.corrections().items()
+                   if d and _key(d) != _key(os.path.dirname(p))]
+        choices += [(privacy.scrub_name(os.path.basename(f)), display(t)) for f, t in self.session.folder_moves.items()]
+        labels = []
+        if self.plan is not None:
+            by_folder: dict[str, list[str]] = {}
+            for s in self.plan.files:
+                if s.destination:
+                    by_folder.setdefault(s.destination, []).extend(self.service.labels_of(s.path))
+            for folder, found in by_folder.items():
+                common = [x for x in dict.fromkeys(found) if found.count(x) >= max(2, len(found) // 2)]
+                if common:
+                    labels.append((display(folder), common))
+        return {"choices": choices, "new_folders": [display(f) for f in self.planned_folders()],
+                "deleted": [privacy.scrub_name(n) for n in self.session.deleted],
+                "labels": labels, "folders": [display(f) for f in self.service.destination_choices(self.plan)],
+                "rules": [self.service.describe_rule(r) for r in self.service.rules()]}
+
+    def ai_rule_estimate(self) -> dict:
+        from ..ai import rule_advisor
+        from ..ai.services import SERVICES
+
+        service = SERVICES[self.service.ai_service()]
+        return {"service": service.name, "local": service.key == "ollama",
+                "cost": rule_advisor.estimate(service.key, self.session_summary()), "files": 0}
+
+    def ai_rule_ideas(self, emit=None, token=None, provider=None) -> tuple[list, list]:
+        """The AI's rule suggestions for what users did, and the existing rules it doubts: (ideas, [(rule, why)])."""
+        from ..ai import rule_advisor
+        from ..ai.costs import cost
+        from ..ai.errors import AIProblem, explain
+        from ..ai.services import SERVICES
+        from ..tasks import Status
+
+        service = SERVICES[self.service.ai_service()]
+        summary = self.session_summary()
+        if emit:
+            emit(Status(f"Asking {service.name} for rules", f"{len(summary['choices']):,} choices"))
+        try:
+            reply = (provider or self.service.provider()).generate_json(self.service.model(),
+                                                                        [rule_advisor.request(summary)])
+        except Exception as exc:
+            raise AIProblem(explain(exc, service.name, self.service.model())) from exc
+        self.service._add_spent(cost(service.key, reply.usage.input_tokens, reply.usage.output_tokens))
+        found, doubts = rule_advisor.parse(reply.text)
+        known = {r.key for r in self.service.rules()} | set(self.service.settings.get("declined_rules") or [])
+        labels = {x.lower(): x for x in self.service.labels()}
+        ideas = []
+        for item in found:
+            folder = self.service.resolve_folder(item["folder"], self.plan)
+            try:
+                rule = self.service.build_rule(folder or "", label=labels.get(item["label"].lower(), ""),
+                                               text=item["contains"], kind=item["kind"], ext=item["ending"],
+                                               by=item["by"], name=item["name"])
+            except ValueError:
+                continue
+            if rule.key not in known and (not item["label"] or rule.label):
+                ideas.append(RuleIdea(rule, item["why"], len(self.service.rule_matches(rule, self.plan)), "AI"))
+        rules = self.service.rules()
+        return ideas, [(rules[n - 1], why) for n, why in doubts if 0 < n <= len(rules)]
 
     def rules_for(self, folder: str) -> list:
         return [r for r in self.service.rules() if _key(r.destination) == _key(folder)]

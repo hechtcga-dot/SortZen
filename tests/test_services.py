@@ -1134,3 +1134,41 @@ class RenameAndDeleteLabelsTest(CatalogTest):
         self.assertEqual(self.service.remove_label("Baking"), 1)                    # its rule goes too
         self.assertEqual((self.service.labels(), self.service.rules()), (["Budget"], []))
         self.assertEqual(self.service.labels_of(cake), [])
+
+
+class RuleIdeasTest(FolderMovesInReviewTest):
+    def test_rules_from_what_users_did_and_from_the_ai(self):
+        import json
+
+        from sortzen.ai.provider import AIProvider, AIResponse, TokenUsage
+
+        programs = str(self.sorted / "Programs")
+        self.flow.move_folders([str(self.downloads / "Tide Log-windows"),
+                                str(self.downloads / "Tide Log-windows (1)")], programs)
+        ideas = self.flow.rule_ideas()
+        rule = next(i.rule for i in ideas if i.rule.destination == programs)
+        self.assertTrue(rule.matches("Tide Log-windows (2)"))              # the third one would follow
+        self.assertGreaterEqual(next(i.places for i in ideas if i.rule is rule), 1)
+        self.service.add_rule(rule)
+        self.flow.start_review(self.service.make_plan())
+        third = self.flow.moving_folders()[path_key(str(self.downloads / "Tide Log-windows (2)"))]
+        self.assertEqual((third.destination, third.percent), (programs, 100))   # the rule moves the folder
+        self.assertNotIn(rule.key, {i.rule.key for i in self.flow.rule_ideas()})  # made: not suggested again
+
+        summary = self.flow.session_summary()
+        self.assertIn(("Tide Log-windows", "Sorted/Programs"), summary["choices"])
+
+        class Advisor(AIProvider):
+            def generate_json(self, model, contents):
+                assert "Tide Log-windows -> Sorted/Programs" in contents[0]
+                return AIResponse(json.dumps({"rules": [
+                    {"name": "Recipes", "contains": "Recipes", "folder": "Sorted/Recipes", "why": "recipes"},
+                    {"name": "Nothing", "folder": "Sorted/Programs"}],
+                    "doubts": [{"rule": 1, "why": "too wide"}]}), TokenUsage(10, 10, 20))
+
+        self.service.set_ai_value("ai_enabled", True)
+        ideas, doubts = self.flow.ai_rule_ideas(provider=Advisor())
+        self.assertEqual([(i.rule.contains, os.path.basename(i.rule.destination), i.source) for i in ideas],
+                         [("Recipes", "Recipes", "AI")])                     # a rule without a condition is dropped
+        self.assertEqual(doubts[0][0].key, rule.key)
+        self.assertGreater(self.flow.ai_rule_estimate()["cost"], 0)

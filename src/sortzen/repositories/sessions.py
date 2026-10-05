@@ -38,6 +38,7 @@ class Session:
     settled_batches: int = 0
     new_folders: list = field(default_factory=list)     # folders made in Review, made on disk when files move in
     folder_moves: dict = field(default_factory=dict)    # folders users dragged in Review: folder -> where it goes
+    deleted: list = field(default_factory=list)         # names of files users moved into "To delete"
     moved: int = 0
 
     @property
