@@ -323,6 +323,8 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(found[0].rule.describe(), "AVI files go to /s/Movies")
         self.assertEqual(Rule("", "/s/Movies", kind="video").describe(), "Videos go to /s/Movies")
         self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", [], [], set()), [])   # places nothing
+        agreeing = [("/d/Lake day.avi", "/s/Movies", 80)]                  # SortZen sends them there already
+        self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", agreeing, [], set())[0].rule.ext, ".avi")
         self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", others, [], set(), ["Pond.avi"]), [])
         sure = [("/d/Lake day.avi", "/s/Family", 95)]
         self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", sure, [], set()), [])

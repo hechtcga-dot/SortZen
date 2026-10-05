@@ -271,9 +271,10 @@ def suggest_rules(examples: list[str], destination: str, others: list[tuple[str,
     """Several rules for the files and folders users sent to ``destination`` (their names in ``examples``): one
     for each name part shared by two or more of them ("Tide Log" files, "Harbor Map" files), the part covering
     the most first; then, for videos, music and e-books, one for their type (".avi files", or "videos" when
-    there are several endings), even from one file when it places others too. A rule never takes a name users
-    sent to another folder (``elsewhere``) or a file SortZen is sure belongs elsewhere; one that places nothing
-    more today is kept when three or more names share it. Names a rule already sends there are left out."""
+    there are several endings), even from one file when other files of that type go (or already go) there. A rule
+    never takes a name users sent to another folder (``elsewhere``) or a file SortZen is sure belongs elsewhere;
+    one that places nothing more today is kept when three or more names share it. Names a rule already sends
+    there are left out."""
     if not examples:
         return []
     known = {r.key for r in rules} | set(declined)
@@ -306,17 +307,18 @@ def suggest_rules(examples: list[str], destination: str, others: list[tuple[str,
             if rule.key in known or any(rule.matches(n) for n in elsewhere):
                 tried.add((how, low))
                 continue
-            gain, harm = [], 0
+            gain, harm, agree = [], 0, 0
             for path, current, percent in others:
                 if not rule.matches(os.path.basename(path)):
                     continue
                 if current and os.path.normcase(current) == os.path.normcase(destination):
+                    agree += 1
                     continue
                 if current and percent >= SURE_ELSEWHERE:
                     harm += 1
                     break
                 gain.append(path)
-            if harm or (not gain and count < MIN_EXAMPLES + 1):
+            if harm or (not gain and count < MIN_EXAMPLES + 1 and not (by_type and agree)):
                 tried.add((how, low))
                 continue
             score = (not by_type, count, len(gain), how == "contains", how == "kind", -order[(how, low)],
