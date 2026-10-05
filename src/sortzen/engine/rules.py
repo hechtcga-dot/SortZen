@@ -121,12 +121,14 @@ class Rule:
             parts.append(KINDS.get(self.kind, self.kind))
         if self.inside:
             parts.append(f"in {display(self.inside)}")
-        if not parts:
-            parts.append("files")
-        what = "Files " + ", ".join(parts) if parts[0].startswith("labelled") else \
-            parts[0][0].upper() + parts[0][1:] + (", " + ", ".join(parts[1:]) if parts[1:] else "")
-        if self.ext:
-            what += f" ({self.ext.lstrip('.').upper()} files)"
+        if not parts and self.ext:
+            what = f"{self.ext.lstrip('.').upper()} files"
+        else:
+            parts = parts or ["files"]
+            what = "Files " + ", ".join(parts) if parts[0].startswith("labelled") else \
+                parts[0][0].upper() + parts[0][1:] + (", " + ", ".join(parts[1:]) if parts[1:] else "")
+            if self.ext:
+                what += f" ({self.ext.lstrip('.').upper()} files)"
         text = f"{what} go to {display(self.destination)}" + (f", {BY[self.by]}" if self.by in BY and self.by else "")
         text = text if self.on else f"{text} (switched off)"
         return f"{self.name}: {text}" if self.name else text

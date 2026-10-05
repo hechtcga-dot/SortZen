@@ -320,6 +320,8 @@ class RulesTest(unittest.TestCase):
         found = suggest_rules(["Harbor trip.avi"], "/s/Movies", others, [], set())
         self.assertEqual([f.rule for f in found], [Rule("", "/s/Movies", ext=".avi")])   # one file is enough
         self.assertEqual(found[0].matches, ["/d/Lake day.avi"])
+        self.assertEqual(found[0].rule.describe(), "AVI files go to /s/Movies")
+        self.assertEqual(Rule("", "/s/Movies", kind="video").describe(), "Videos go to /s/Movies")
         self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", [], [], set()), [])   # places nothing
         self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", others, [], set(), ["Pond.avi"]), [])
         sure = [("/d/Lake day.avi", "/s/Family", 95)]
@@ -783,7 +785,7 @@ class RuleConditionsTest(unittest.TestCase):
         self.assertFalse(Rule("", "/s/Anything").matches("anything.pdf", ["Taxes"], "/d/anything.pdf"))
         self.assertIn("Needs a condition", Rule("", "/s/Anything").describe())
         self.assertFalse(Rule("", "/s/Taxes", label="Taxes", on=False).matches("a.pdf", ["Taxes"]))
-        self.assertEqual(Rule("", "/s/Installers", ".msi").describe(), "Files (MSI files) go to /s/Installers")
+        self.assertEqual(Rule("", "/s/Installers", ".msi").describe(), "MSI files go to /s/Installers")
 
     def test_a_folder_for_each_year_or_month(self):
         import time
