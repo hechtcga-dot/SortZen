@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from ..scanning.file_types import kind_of
 from .features import stem_of, words
-from .plan import FOLDER_REVIEW, KEEP_TOGETHER, Plan, Reason
+from .plan import FOLDER_REVIEW, KEEP_TOGETHER, STAYS, Plan, Reason
 
 MIN_EXAMPLES = 2            # files sent to the same folder before a rule is suggested
 SURE_ELSEWHERE = 90         # a suggestion this sure is never overruled by a suggested rule
@@ -167,8 +167,8 @@ def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lamb
         s.new_folder = not os.path.isdir(target)
         s.reasons = [Reason(True, f"Your rule: {rule.describe(display)}")]
         placed += 1
-    for f in plan.folders:                  # a folder that moves as it is follows a rule its name meets
-        if f.percent >= 100 or f.outcome not in (KEEP_TOGETHER, FOLDER_REVIEW) or not is_source_folder(f.path):
+    for f in plan.folders:                  # a folder kept whole follows a rule its name meets (not sorted inside)
+        if f.percent >= 100 or f.outcome not in (KEEP_TOGETHER, FOLDER_REVIEW, STAYS) or not is_source_folder(f.path):
             continue
         name = os.path.basename(f.path)
         rule = next((r for r in ordered if r.matches(name, (), f.path) and is_valid(r.destination)), None)
