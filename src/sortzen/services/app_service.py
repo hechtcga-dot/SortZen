@@ -1427,7 +1427,9 @@ class AppService:
                         and not any(is_queue_folder(part) for part in f.split(os.sep)),
                         lambda p: p in self._records and self._records[p].role == "source"
                         and not self.is_left_out(p), self.display, self.labels_of,
-                        lambda p: self._records[p].modified_ns / 1e9 if p in self._records else 0.0)
+                        lambda p: self._records[p].modified_ns / 1e9 if p in self._records else 0.0,
+                        lambda f: any(_inside(path_key(f), path_key(src["path"])) and path_key(f) != path_key(src["path"])
+                                      for src in self.source_folders()) and not self.is_left_out(f))
 
     # ---------------------------------------------------------------- renaming folders
     def rename_folder(self, plan: Plan | None, folder: str, new_name: str, emit=None) -> RunResult | None:

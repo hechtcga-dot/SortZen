@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from ..scanning.file_types import kind_of
 from .features import stem_of, words
-from .plan import Plan, Reason
+from .plan import FOLDER_REVIEW, KEEP_TOGETHER, Plan, Reason
 
 MIN_EXAMPLES = 2            # files sent to the same folder before a rule is suggested
 SURE_ELSEWHERE = 90         # a suggestion this sure is never overruled by a suggested rule
@@ -146,8 +146,10 @@ def _ordered(rules: list[Rule]) -> list[Rule]:
 
 
 def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lambda p: p,
-                labels_of=lambda path: (), modified_of=lambda path: 0.0) -> int:
-    """Place matching files by the rules. Returns how many files a rule placed."""
+                labels_of=lambda path: (), modified_of=lambda path: 0.0, is_source_folder=lambda path: False) -> int:
+    """Place matching files by the rules, and folders that move as they are by the rules their names meet.
+    ``is_source`` and ``is_source_folder`` say whether a file or folder is in a folder being sorted. Returns how
+    many files and folders a rule placed."""
     ordered = _ordered(rules)
     placed = 0
     for s in plan.files:
@@ -164,6 +166,16 @@ def apply_rules(plan: Plan, rules: list[Rule], is_valid, is_source, display=lamb
         s.destination, s.percent = target, 100
         s.new_folder = not os.path.isdir(target)
         s.reasons = [Reason(True, f"Your rule: {rule.describe(display)}")]
+        placed += 1
+    for f in plan.folders:                  # a folder that moves as it is follows a rule its name meets
+        if f.percent >= 100 or f.outcome not in (KEEP_TOGETHER, FOLDER_REVIEW) or not is_source_folder(f.path):
+            continue
+        name = os.path.basename(f.path)
+        rule = next((r for r in ordered if r.matches(name, (), f.path) and is_valid(r.destination)), None)
+        if rule is None or os.path.normcase(rule.destination) == os.path.normcase(os.path.dirname(f.path)):
+            continue
+        f.outcome, f.destination, f.percent = KEEP_TOGETHER, rule.destination, 100
+        f.reasons = [Reason(True, f"Your rule: {rule.describe(display)}")]
         placed += 1
     return placed
 

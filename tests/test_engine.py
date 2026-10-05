@@ -774,3 +774,25 @@ class RuleConditionsTest(unittest.TestCase):
         self.assertEqual(placed, 2)
         self.assertEqual(plan.files[0].destination, "/s/Slips")             # label and text: more specific
         self.assertEqual(plan.files[1].destination, os.path.join("/s/Taxes", "2024"))
+
+
+class RulesForFoldersTest(unittest.TestCase):
+    def test_a_folder_that_moves_as_it_is_follows_a_rule_its_name_meets(self):
+        from sortzen.engine.plan import FOLDER_REVIEW, KEEP_TOGETHER, STAYS, FolderSuggestion, Plan
+        from sortzen.engine.rules import Rule, apply_rules
+
+        plan = Plan(folders=[FolderSuggestion("/d/Tide Log-windows (2)", KEEP_TOGETHER, 90, destination="/d/x"),
+                             FolderSuggestion("/d/Tide Log old", FOLDER_REVIEW, 60),
+                             FolderSuggestion("/d/Tide Log notes", STAYS, 90),
+                             FolderSuggestion("/d/Recipes", KEEP_TOGETHER, 90, destination="/s/Recipes")])
+        rules = [Rule("", "/s/Programs", contains="tide log"), Rule("", "/s/Taxes", label="Taxes")]
+        placed = apply_rules(plan, rules, lambda f: True, lambda p: True, is_source_folder=lambda p: True)
+        self.assertEqual(placed, 2)
+        moved = {f.path: (f.outcome, f.destination, f.percent) for f in plan.folders}
+        self.assertEqual(moved["/d/Tide Log-windows (2)"], (KEEP_TOGETHER, "/s/Programs", 100))
+        self.assertEqual(moved["/d/Tide Log old"], (KEEP_TOGETHER, "/s/Programs", 100))
+        self.assertEqual(moved["/d/Tide Log notes"][0], STAYS)              # folders that stay are left alone
+        self.assertEqual(moved["/d/Recipes"][1], "/s/Recipes")              # labels are for files only
+        plan.folders[1].percent = 60
+        self.assertEqual(apply_rules(Plan(folders=[FolderSuggestion("/d/Tide Log b", KEEP_TOGETHER, 90)]), rules,
+                                     lambda f: True, lambda p: True), 0)  # not in a folder being sorted
