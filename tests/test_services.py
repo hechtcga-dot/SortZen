@@ -1172,3 +1172,47 @@ class RuleIdeasTest(FolderMovesInReviewTest):
                          [("Recipes", "Recipes", "AI")])                     # a rule without a condition is dropped
         self.assertEqual(doubts[0][0].key, rule.key)
         self.assertGreater(self.flow.ai_rule_estimate()["cost"], 0)
+
+
+class RulesAboutWhatWasJustDoneTest(unittest.TestCase):
+    """Rule ideas in a session are about what users just did, a few at a time."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        base = Path(self.dir.name)
+        self.downloads, self.movies = base / "Downloads", base / "Sorted" / "Movies"
+        self.downloads.mkdir()
+        self.movies.mkdir(parents=True)
+        for name in ("Old film.avi", "Beach day.avi", "Snow walk.avi"):
+            (self.movies / name).write_bytes(b"x" * 40)
+        for name in ("Harbor trip.avi", "Lake day.avi", "Budget 2024.pdf"):
+            (self.downloads / name).write_bytes(b"x" * 50)
+        self.service = AppService(AppPaths(base / "data"), ApiKeyStore(FakeKeyring()))
+        self.service.scanner.protected = []
+        self.service.add_source(str(self.downloads))
+        self.service.add_destination(str(base / "Sorted"))
+        self.flow = self.service.new_session("Movies")
+        self.flow.set_plan(self.service.make_plan())
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_a_file_just_labelled_gives_rules_about_it(self):
+        from sortzen.services.flow import RULES_AT_ONCE, Batch
+
+        harbor = str(self.downloads / "Harbor trip.avi")
+        suggestion = self.flow.plan.for_path(harbor)
+        suggestion.destination, suggestion.percent = str(self.movies), 80
+        self.flow.confirm(Batch("", "", [harbor]), [harbor], ["Holidays"], learn=False)
+        inputs = self.flow.learning_inputs()
+        self.assertEqual(inputs["about"]["paths"], [harbor])
+        self.assertIsNone(self.flow.take_change())                         # taken once
+        learned = self.flow.apply_learning(self.flow.learn(inputs))
+        avi = [i for i in learned.ideas if i.rule.ext == ".avi"]
+        self.assertEqual([i.rule.destination for i in avi], [str(self.movies)])
+        self.assertEqual(avi[0].example, "Harbor trip.avi")
+        self.assertEqual(avi[0].why, "The plan sends “Harbor trip.avi” to Sorted/Movies")
+        self.assertLessEqual(len(learned.ideas), RULES_AT_ONCE)
+        nothing = self.flow.rule_ideas(about={"paths": [str(self.downloads / "Budget 2024.pdf")], "labels": [],
+                                              "folder": None})
+        self.assertEqual(nothing, [])                                       # a PDF never gets a rule by type

@@ -20,6 +20,7 @@ from ..repositories.file_index import path_key
 from ..repositories.sessions import CATALOG, DUPLICATES, MOVED, REVIEW, Session
 from . import plan_view
 
+RULES_AT_ONCE = 3       # rules suggested at most in one go (at the start of Step 3, or after a change)
 SETTLE = 85             # a batch this sure is settled by itself...
 SETTLE_CHECKS = 20      # ...once SortZen's guesses were checked this many times...
 SETTLE_AGREE = 0.9      # ...and matched users' choices this often
@@ -41,6 +42,7 @@ class RuleIdea:
     why: str
     places: int                     # files and folders of the plan it would place
     source: str = "SortZen"         # or "AI"
+    example: str = ""               # the name of a file or folder just placed that it comes from
 
 
 def _key(path: str) -> str:
@@ -55,6 +57,8 @@ class Flow:
         self.batches: list[Batch] = []
         self._history: list[tuple[dict, dict]] = []
         self.offered: set[str] = set()          # rules already suggested while the session is open
+        self._about: dict | None = None         # what users just did, for the next rule ideas
+        self._opened = False                    # the first rule ideas of Step 3 were looked for
 
     def save(self) -> None:
         self.service.sessions.save(self.session)
@@ -288,6 +292,7 @@ class Flow:
         if ticked:
             self.service.set_file_labels(ticked, labels)
             self._finished(ticked, "done")
+            self.note_change(ticked, labels)
         self._take_out(batch, self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys]))
         self.save()
         return self.learn_now() if learn else None
@@ -310,6 +315,19 @@ class Flow:
         rest = self._come_back_later([p for p in batch.paths if _key(p) not in ticked_keys])
         self._take_out(batch, rest + alone, alone)
         self.save()
+
+    def note_change(self, paths: list[str], labels=(), folder: str | None = None) -> None:
+        """What users just did (files labelled, or files and folders sent to ``folder``): the next rule ideas
+        are about these."""
+        about = self._about or {"paths": [], "labels": [], "folder": None}
+        about["paths"] = about["paths"] + [p for p in paths if p not in about["paths"]]
+        about["labels"] = about["labels"] + [x for x in labels if x not in about["labels"]]
+        about["folder"] = folder or about["folder"]
+        self._about = about
+
+    def take_change(self) -> dict | None:
+        about, self._about = self._about, None
+        return about
 
     def note_deleted(self, paths: list[str]) -> None:
         """Remember the names of files users deleted (for suggesting rules)."""
@@ -349,9 +367,11 @@ class Flow:
         for k, v in ai.items():
             known.setdefault(k, [a for a, b in v if b >= 50])
         inputs = self._batch_inputs()
+        opening = not self._opened and self.plan is not None
+        self._opened = self._opened or opening
         inputs.update(records=list(self.service._records.values()), names=names, known=known,
                       notes=dict(self.service.file_notes()), epoch=self.epoch,
-                      answered=self.session.answered)
+                      answered=self.session.answered, about=self.take_change(), opening=opening)
         return inputs
 
     def learn(self, inputs: dict) -> dict:
@@ -367,8 +387,11 @@ class Flow:
         folder, ideas = None, []
         if self.plan is not None:
             folder = next(iter(self.service.label_folder_suggestions(self.plan, guesses)), None)
-            try:
-                ideas = self.rule_ideas(guesses)
+            try:                                # ideas about the answers just given, or a few to start with
+                if inputs.get("about"):
+                    ideas = self.rule_ideas(guesses, inputs["about"])
+                elif inputs.get("opening"):
+                    ideas = self.rule_ideas(guesses)
             except RuntimeError:                # the window changed a setting meanwhile: next time
                 ideas = []
         return {"guesses": guesses, "batches": self._form(inputs), "folder": folder, "ideas": ideas,
@@ -410,7 +433,7 @@ class Flow:
         if merge and f"{merge[0]}>{merge[1]}" not in declined:
             learned.merge = merge
         learned.folder = result["folder"]
-        learned.ideas = self.new_ideas(result.get("ideas", []))
+        learned.ideas = self.new_ideas(result.get("ideas", []))[:RULES_AT_ONCE]
         self.save()
         return learned
 
@@ -724,16 +747,18 @@ class Flow:
             found.setdefault(_key(target), []).append(os.path.basename(folder))
         return found
 
-    def rule_ideas(self, guesses=None) -> list:
-        """Rules SortZen would make from what users did: a folder for a label, and the names in common among the
-        files and folders users sent to one folder (several rules for one folder when the names have several
-        things in common). Rules made or turned down before are left out."""
+    def rule_ideas(self, guesses=None, about: dict | None = None) -> list:
+        """Rules SortZen would make from what users did: a folder for a label, and the names (or, for videos,
+        music and e-books, the type) in common among the files and folders users sent to one folder. With
+        ``about`` (``note_change``), only the rules for what users just did: each names the file it comes from.
+        Rules made or turned down before are left out."""
         from ..engine.rules import suggest_rules
 
         if self.plan is None:
             return []
         known = {r.key for r in self.service.rules()} | set(self.service.settings.get("declined_rules") or [])
         ideas, seen = [], set()
+        display = self.service.display
 
         def add(rule, why, places, always=False):
             if rule.key not in known and rule.key not in seen and (places or always):
@@ -743,14 +768,15 @@ class Flow:
         for s in self.service.label_folder_suggestions(self.plan, guesses):
             add(s.rule, s.why, s.files)
         corrected = {path_key(p) for p in self.service.corrections()} | {_key(f) for f in self.session.folder_moves}
+        just = {_key(p) for p in (about or {}).get("paths", [])}
 
         def sure(destination, percent):          # a folder SortZen only plans to make never stands in the way
             return percent if destination and os.path.isdir(destination) else min(percent, 89)
 
         others = [(s.path, s.destination, sure(s.destination, s.percent)) for s in self._sources_files()
-                  if path_key(s.path) not in corrected]
+                  if path_key(s.path) not in corrected and path_key(s.path) not in just]
         others += [(f.path, f.destination, sure(f.destination, f.percent)) for f in self.plan.folders
-                   if _key(f.path) not in corrected]
+                   if _key(f.path) not in corrected and _key(f.path) not in just]
         destinations = {_key(d): d for d in [*self.service.corrections().values(), *self.session.folder_moves.values()]
                         if d}
         choices = self._users_choices()
@@ -758,9 +784,41 @@ class Flow:
         for key, names in choices.items():
             elsewhere = [n for k, more in choices.items() if k != key for n in more]
             for found in suggest_rules(names, destinations.get(key, key), others, rules, known | seen, elsewhere):
-                more = len(found.matches)
-                add(found.rule, f"You sent {found.examples} like this there", more, always=True)
-        return sorted(ideas, key=lambda i: -i.places)
+                add(found.rule, f"You sent {found.examples} like this there", len(found.matches), always=True)
+        if about and not about.get("folder"):    # files just labelled: where the plan sends them
+            groups: dict[str, list[str]] = {}
+            for path in about["paths"]:
+                s = self.plan.for_path(path)
+                if s is not None and s.destination and _key(s.destination) != _key(os.path.dirname(path)):
+                    groups.setdefault(s.destination, []).append(os.path.basename(path))
+            for folder, names in groups.items():
+                elsewhere = [n for f, more in groups.items() if f != folder for n in more]
+                for found in suggest_rules(names, folder, others, rules, known | seen, elsewhere):
+                    add(found.rule, "plan", len(found.matches), always=True)
+        ideas.sort(key=lambda i: -i.places)
+        if about is None:
+            return ideas
+        return [i for i in (self._about_idea(i, about, display) for i in ideas) if i is not None]
+
+    def _about_idea(self, idea: RuleIdea, about: dict, display) -> RuleIdea | None:
+        """The idea told in terms of what users just did, or None when it isn't about that."""
+        labels = set(about.get("labels") or [])
+        if about.get("folder") and _key(idea.rule.destination) != _key(about["folder"]):
+            return None                         # never a rule sending them somewhere else
+        for path in about.get("paths") or []:
+            name = os.path.basename(path)
+            if not idea.rule.matches(name, set(self.service.labels_of(path)) | labels, path):
+                continue
+            idea.example = name
+            if about.get("folder"):
+                idea.why = f"You moved “{name}” to {display(about['folder'])}"
+            elif idea.rule.label:
+                idea.why = f"You labelled “{name}” “{idea.rule.label}”; {idea.why}"
+            else:
+                idea.why = (f"The plan sends “{name}” to {display(idea.rule.destination)}" if idea.why == "plan"
+                            else idea.why)
+            return idea
+        return None
 
     def new_ideas(self, ideas: list) -> list:
         """The ideas not suggested yet while the session is open, nor made or turned down since."""

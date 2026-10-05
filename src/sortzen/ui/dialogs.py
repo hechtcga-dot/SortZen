@@ -560,8 +560,9 @@ class LabelsDialog(QDialog):
 
 
 class SuggestedRulesDialog(QDialog):
-    """Rules suggested from what users did, by SortZen or the AI: tick the ones to make, change one first, or ask
-    the AI for more. Rules the AI doubts can be removed. Nothing is made until “Make the ticked rules”."""
+    """Rules suggested from what users did, by SortZen or the AI, three to a screen: tick the ones to make, change
+    one first, or ask the AI for more. Rules the AI doubts can be removed. Nothing is made until “Make”."""
+    PER_PAGE = 3
 
     def __init__(self, parent, service, plan, ideas: list, doubts=(), ask_ai=None, intro: str = ""):
         super().__init__(parent)
@@ -570,11 +571,13 @@ class SuggestedRulesDialog(QDialog):
         self.service, self.plan, self._ask_ai = service, plan, ask_ai
         self.rows: list[dict] = []              # {"idea", "rule", "check", "text"}
         self.doubt_rows: list[tuple] = []       # (rule, check)
+        self.items: list[QWidget] = []          # rules and doubts in order, shown three at a time
+        self.page = 0
         self.setWindowTitle("Suggested rules")
-        self.resize(760, 520)
+        self.resize(720, 430)
         col = QVBoxLayout(self)
         self.intro = QLabel(intro or "From what you did, SortZen suggests these rules. A rule sends matching files "
-                            "and folders to its folder in this plan and in later ones, at 100%.", objectName="muted")
+                            "and folders to its folder in this plan and in later ones.", objectName="cardTitle")
         self.intro.setWordWrap(True)
         col.addWidget(self.intro)
         scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.Shape.NoFrame)
@@ -585,6 +588,18 @@ class SuggestedRulesDialog(QDialog):
         self.list.addStretch(1)
         scroll.setWidget(holder)
         col.addWidget(scroll, 1)
+        pages = QHBoxLayout()
+        self.back_button = QPushButton("‹ Back")
+        self.back_button.clicked.connect(lambda *_: self.show_page(self.page - 1))
+        pages.addWidget(self.back_button)
+        self.page_label = _hint("")
+        pages.addWidget(self.page_label, 1, Qt.AlignmentFlag.AlignCenter)
+        self.next_button = QPushButton("More rules ›")
+        self.next_button.clicked.connect(lambda *_: self.show_page(self.page + 1))
+        pages.addWidget(self.next_button)
+        self.pages = QWidget()
+        self.pages.setLayout(pages)
+        col.addWidget(self.pages)
         self.empty = _hint("No new rule ideas from what you did yet."
                            + (" Ask the AI: it reads a summary of where you sent things." if ask_ai else ""))
         col.addWidget(self.empty)
@@ -644,6 +659,7 @@ class SuggestedRulesDialog(QDialog):
             change.clicked.connect(lambda *_, e=entry: self.change(e))
             self.rows.append(entry)
             self._show(entry)
+            self.items.append(box)
             self.list.insertWidget(self.list.count() - 1, box)
         for rule, why in doubts:
             if any(r.key == rule.key for r, _ in self.doubt_rows):
@@ -658,9 +674,23 @@ class SuggestedRulesDialog(QDialog):
             lcol.addWidget(check)
             lcol.addWidget(_hint(f"The AI doubts it: {why}" if why else "The AI doubts it."))
             self.doubt_rows.append((rule, check))
+            self.items.append(line)
             self.list.insertWidget(self.list.count() - 1, line)
         self.empty.setVisible(not self.rows and not self.doubt_rows)
+        self.show_page(self.page)
         self._count()
+
+    def show_page(self, page: int) -> None:
+        """Three rules (or doubts) at a time; the ticks on other screens are kept."""
+        last = max(0, (len(self.items) - 1) // self.PER_PAGE)
+        self.page = min(max(page, 0), last)
+        first = self.page * self.PER_PAGE
+        for i, item in enumerate(self.items):
+            item.setVisible(first <= i < first + self.PER_PAGE)
+        self.pages.setVisible(len(self.items) > self.PER_PAGE)
+        self.page_label.setText(f"{first + 1}–{min(first + self.PER_PAGE, len(self.items))} of {len(self.items)}")
+        self.back_button.setEnabled(self.page > 0)
+        self.next_button.setEnabled(self.page < last)
 
     def _show(self, entry: dict) -> None:
         import html
@@ -671,9 +701,9 @@ class SuggestedRulesDialog(QDialog):
         changed = " (changed)" if rule.key != idea.rule.key else ""
         places = (f"places {idea.places:,} more now" if idea.places else "for files to come") if not changed else \
             f"places {len(self.service.rule_matches(rule, self.plan)) if self.plan is not None else 0:,} now"
-        entry["text"].setText(f"<b>{html.escape(self.service.describe_rule(rule))}</b>{changed}<br>"
-                              f"<span style='color:{MUTED}'>{html.escape(idea.why)} · {places} · "
-                              f"from {html.escape(idea.source)}</span>")
+        source = " · from the AI" if idea.source == "AI" else ""
+        entry["text"].setText(f"<b>{html.escape(self.service.describe_rule(rule))}?</b>{changed}<br>"
+                              f"<span style='color:{MUTED}'>{html.escape(idea.why)} · {places}{source}</span>")
 
     def change(self, entry: dict, chosen=None) -> None:
         if chosen is None:

@@ -907,10 +907,13 @@ class MainWindowTest(unittest.TestCase):
         review, programs = self.window.review_page, str(sorted_ / "Programs")
         review.dropped([str(downloads / "Tide Log-windows"), str(downloads / "Tide Log-windows (1)")], programs)
         popup = self.rule_popups[-1]                                         # the popup came up at once
-        self.assertIn("From what you just did", popup.intro.text())
+        self.assertEqual(popup.intro.text(), "It looks like you moved “Tide Log-windows” and 1 more to "
+                                             "Sorted/Programs. Should similar ones go there from now on?")
         texts = [r["text"].text() for r in popup.rows]
-        self.assertTrue(any("go to Sorted/Programs" in t and "1 more now" in t for t in texts), texts)
-        self.assertFalse(review.suggest_new_rules())                         # not again after “Not now”
+        self.assertLessEqual(len(texts), 3)                                  # never more than three at once
+        self.assertTrue(any("“Tide Log” go to Sorted/Programs?" in t and "You moved “Tide Log-windows” to "
+                            "Sorted/Programs · places 1 more now" in t for t in texts), texts)
+        self.assertFalse(review.suggest_new_rules([str(downloads / "Tide Log-windows")], programs))   # not again
         self.assertTrue(popup.ai_button.isHidden())                         # no AI service chosen
 
         def make_first(dialog):
@@ -954,7 +957,7 @@ class MainWindowTest(unittest.TestCase):
             dialog.ask_ai()
             self.assertTrue(wait_until(self.app, lambda: dialog.ai_button.isEnabled()))
             self.assertIn("1 rule idea and 1 doubt", dialog.status.text())
-            self.assertIn("from AI", dialog.rows[-1]["text"].text())
+            self.assertIn("from the AI", dialog.rows[-1]["text"].text())
             dialog.doubt_rows[0][1].setChecked(True)                         # remove the doubted rule
             self.assertEqual(dialog.make.text(), "Make 1 rule and remove 1")
             return 1
@@ -965,6 +968,40 @@ class MainWindowTest(unittest.TestCase):
         self.assertEqual([(r.contains, os.path.basename(r.destination)) for r in self.service.rules()],
                          [("Tide Log", "Tide Log")])
         self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy and not self.window._plan_waiting))
+
+    def test_a_video_dragged_to_movies_suggests_its_type_and_rules_come_three_to_a_screen(self):
+        from sortzen.engine.rules import Rule
+        from sortzen.services.flow import RuleIdea
+        from sortzen.ui.dialogs import SuggestedRulesDialog
+
+        base = Path(self.dir.name)
+        downloads, movies = base / "Downloads", base / "Sorted" / "Movies"
+        downloads.mkdir()
+        movies.mkdir(parents=True)
+        for name in ("Harbor trip.avi", "Lake day.avi", "Budget 2024.pdf"):
+            (downloads / name).write_bytes(b"x" * 50)
+        self.service.add_source(str(downloads))
+        self.service.add_destination(str(base / "Sorted"))
+        self.window.flow = self.service.new_session("Movies")
+        self.window._after_plan = "review"
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and not self.service.jobs.busy))
+        review = self.window.review_page
+        review.dropped([str(downloads / "Harbor trip.avi")], str(movies))
+        popup = self.rule_popups[-1]
+        self.assertIn("It looks like you moved “Harbor trip.avi” to Sorted/Movies", popup.intro.text())
+        self.assertEqual([r["rule"] for r in popup.rows], [Rule("", str(movies), ext=".avi")])
+        self.assertIn("AVI files go to Sorted/Movies?", popup.rows[0]["text"].text())
+
+        ideas = [RuleIdea(Rule(f"word{i}", str(movies)), "why", 1) for i in range(5)]
+        many = SuggestedRulesDialog(self.window, self.service, None, ideas)
+        shown = [not item.isHidden() for item in many.items]
+        self.assertEqual(shown, [True, True, True, False, False])            # three to a screen
+        self.assertEqual(many.page_label.text(), "1–3 of 5")
+        many.next_button.click()
+        self.assertEqual([not item.isHidden() for item in many.items], [False, False, False, True, True])
+        self.assertEqual(many.make.text(), "Make 5 rules")                   # ticks on every screen count
 
     def test_labels_renamed_deleted_and_managed_from_anywhere(self):
         from unittest import mock

@@ -868,11 +868,15 @@ class CatalogPage(QWidget):
         if not ideas or not self.wizard.isVisible() or self.wizard.stack.currentWidget() is not self:
             return False
         if answer is None and QApplication.activeModalWidget() not in (None, self.wizard):
-            return False                        # another window is open: the ideas come back after next answer
-        made = self.wizard.window.suggest_rules(
-            flow, ideas, parent=self.wizard, answer=answer,
-            intro="Learned from your answers: SortZen suggests these rules. Tick the ones to make; they are used "
-                  "when the plan is made for Review.")
+            return False                        # another window is open: not now
+        from ..services.flow import RULES_AT_ONCE
+
+        example = next((i.example for i in ideas if i.example), "")
+        intro = (f"You just labelled “{example}”. Should files like it go to the same place from now on?" if example
+                 else "To start with, SortZen noticed these patterns in your folders. Should files like these go "
+                      "there from now on?")
+        made = self.wizard.window.suggest_rules(flow, ideas[:RULES_AT_ONCE], parent=self.wizard, answer=answer,
+                                                intro=intro)
         if made:
             self.wizard.window.statusBar().showMessage("Rules made: used when the plan is made for Review.", 6000)
         return made

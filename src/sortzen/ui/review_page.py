@@ -616,7 +616,7 @@ class ReviewPage(QWidget):
             return
         self.refresh_plan()
         if files:
-            self.suggest_new_rules()
+            self.suggest_new_rules(files, folder)
 
     def move_folders(self, folders: list[str], target: str) -> None:
         """Folders go, as they are, into another folder when the files move; SortZen remembers it."""
@@ -632,7 +632,7 @@ class ReviewPage(QWidget):
                             f"{self.service.display(target)} as {'they are' if n > 1 else 'it is'}. Nothing moves "
                             "until you click Move.")
         self.refresh_plan()
-        self.suggest_new_rules()
+        self.suggest_new_rules(folders, target)
 
     def selected_folders(self) -> list[str]:
         """Existing folders chosen in the tree (not the folders added themselves)."""
@@ -672,7 +672,7 @@ class ReviewPage(QWidget):
         self.window._report(f"{len(folders):,} folders go into “{os.path.basename(new)}” (new). Nothing moves until "
                             "you click Move.")
         self.refresh_plan()
-        self.suggest_new_rules()
+        self.suggest_new_rules(folders, new)
 
     def _children(self, folder: str) -> list[str]:
         """The folders in a folder: those in it now and those the plan moves into it."""
@@ -734,36 +734,45 @@ class ReviewPage(QWidget):
             self.window.session_move(self.flow)
 
     def suggest_rules(self, asked: bool = False, end_of_step: bool = False, answer=None) -> bool:
-        """Every rule SortZen would make from this session (and the AI's, on request); the plan is made again
-        with the rules made. At the end of Step 3 it shows only when there is something to suggest."""
+        """Suggest rules…: every rule SortZen would make from this session, three to a screen (and the AI's, on
+        request); the plan is made again with the rules made. When Step 3 ends, only the AI is asked, and only
+        when Step 1 asked for its help: SortZen's own ideas come one change at a time."""
         if self.flow is None:
             return False
-        ideas = self.flow.rule_ideas()
         ai = self.service.ai_ready()
-        if not ideas and not (asked and ai) and not (end_of_step and ai and self.window._session_wants_ai):
-            if asked:
-                QMessageBox.information(self, "Suggest rules", "No new rule ideas yet. Drag files or folders onto "
-                                        "a folder, or use Rules… to add one. Choose an AI service in Edit › "
-                                        "Settings › AI to ask it as well.")
-            return False
-        intro = ("Step 3 is done. From what you did, SortZen suggests these rules. Tick the ones to make; the "
-                 "plan uses them at once.") if end_of_step else ""
-        made = self.window.suggest_rules(self.flow, ideas, intro=intro, answer=answer,
-                                         ai_now=end_of_step and self.window._session_wants_ai)
+        if end_of_step:
+            if not (ai and self.window._session_wants_ai):
+                return False
+            ideas, intro = [], ("Step 3 is done. The AI reads a summary of what you did and suggests rules for "
+                                "similar files; tick the ones to make.")
+        else:
+            ideas, intro = self.flow.rule_ideas(), ""
+            if not ideas and not (asked and ai):
+                if asked:
+                    QMessageBox.information(self, "Suggest rules", "No new rule ideas yet. Drag files or folders "
+                                            "onto a folder, or use Rules… to add one. Choose an AI service in "
+                                            "Edit › Settings › AI to ask it as well.")
+                return False
+        made = self.window.suggest_rules(self.flow, ideas, intro=intro, answer=answer, ai_now=end_of_step)
         if made:
             self.window.replan_review()
         return made
 
-    def suggest_new_rules(self, answer=None) -> bool:
-        """After a drag: the rules it gives SortZen the idea of, if any are new."""
-        if self.flow is None:
+    def suggest_new_rules(self, paths: list[str], folder: str, answer=None) -> bool:
+        """After a drag: up to three rules for what was just moved, if SortZen has new ones."""
+        if self.flow is None or not paths:
             return False
-        ideas = self.flow.new_ideas(self.flow.rule_ideas())
+        from ..services.flow import RULES_AT_ONCE
+
+        about = {"paths": list(paths), "labels": [], "folder": folder}
+        ideas = self.flow.new_ideas(self.flow.rule_ideas(about=about))[:RULES_AT_ONCE]
         if not ideas:
             return False
-        made = self.window.suggest_rules(self.flow, ideas, intro="From what you just did, SortZen suggests "
-                                         "these rules. Tick the ones to make; the plan uses them at once.",
-                                         answer=answer)
+        name = f"“{os.path.basename(paths[0])}”" + (f" and {len(paths) - 1:,} more" if len(paths) > 1 else "")
+        made = self.window.suggest_rules(
+            self.flow, ideas, answer=answer,
+            intro=f"It looks like you moved {name} to {self.service.display(folder)}. Should similar ones go "
+                  "there from now on?")
         if made:
             self.window.replan_review()
         return made

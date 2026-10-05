@@ -242,18 +242,23 @@ users labelled before, files that go with another file and topic members are not
   batches (27 files) are now settled and skipped"). It also suggests merging two labels that
   are surely the same ("Tax" into "Taxes": every file and rule follows), with "Merge them" and
   "Not now".
-- **Rules as it goes**: when the answers give SortZen the idea for a rule it hasn't suggested yet
-  in the session (a folder for a label, a name files share, §7.2b), the **Suggested rules**
-  window opens: each rule ticked, with why, how many files it places and Change…; "Make the
-  ticked rules" or "Not now". Rules made are used when the plan is made for Review.
+- **Rules as it goes**: rules are suggested a few at a time, never all at once. When Step 3
+  starts, the **Suggested rules** window offers at most three from the folders as they are
+  ("To start with, SortZen noticed these patterns in your folders"). After that, only the
+  answers just given bring suggestions, at most three, each about a file just labelled ("You
+  just labelled “Harbor trip.avi”. Should files like it go to the same place from now on?",
+  with "AVI files go to Videos/Movies?"): a folder for the label just given, or a rule for the
+  names or type of the files just labelled, to the folder the plan sends them to. Each rule
+  is ticked, with why, how many files it places and Change…; "Make the ticked rules" or "Not
+  now". Rules made are used when the plan is made for Review.
 - The footer shows the files left, the agreement meter ("SortZen matched your choice in 46 of
   your last 50") and how many batches SortZen settled by itself.
 
 After the last batch the wizard closes, the plan is made again with everything learned, and
 the **Review** tab opens with the other tabs closed (they open again from View › Tabs or
-"+ Open a tab"). Nothing has moved yet, except the copies in Step 2. The Suggested rules window
-then shows every rule SortZen would make from the session (when there is one); when Step 1 asked
-for the AI's help, it asks the AI as well, after showing the cost.
+"+ Open a tab"). Nothing has moved yet, except the copies in Step 2. When Step 1 asked for the
+AI's help, the Suggested rules window then asks the AI for rules from a summary of the session,
+after showing the cost.
 
 **Review**: the whole plan on one screen. The title says what moves ("412 files and 9 folders go
 into 23 folders"); everything SortZen is less sure of (below the "Move without asking" level) is
@@ -274,9 +279,11 @@ marked "check", and "Show only what to check" leaves only those and the folders 
   in the chosen folder ("Report", "Report (2)", "Report-1.2"), together into one new folder users
   name ("Report (old versions)"); the window lists them with tick boxes.
 - After files or folders are dragged (or put together), the Suggested rules window opens when
-  that gives SortZen the idea for a new rule ("Names containing “Tide Log” go to Programs").
-  **Suggest rules…** shows every rule SortZen would make from the session at any time, with
-  "Ask the AI too…". Rules made there make the plan again at once, with the session kept.
+  that gives SortZen the idea for a new rule about them, sending them where they were dragged:
+  "It looks like you moved “Harbor trip.avi” to Videos/Movies. Should similar ones go there from
+  now on?", with up to three rules ("AVI files go to Videos/Movies?"). **Suggest rules…** shows
+  every rule SortZen would make from the session, three to a screen, with "Ask the AI too…".
+  Rules made there make the plan again at once, with the session kept.
 - Right: the selected file's labels, when it was downloaded or added, its type, size, title and first
   words, why it goes there (and how sure SortZen is when it is marked "check") and a note box; for
   a folder, its rules with Change…, Remove and "Add a rule…". **Rules…** lists every rule; changing
@@ -393,12 +400,16 @@ this a rule?" and the Review tab's folder box).
   and "Names containing “HarborMap”" both go to Programs). Two words side by side ("Tide Log") and
   run-together names ("HarborMap", taken whole) come before single words; common words such as
   "setup", "windows" or "version" are never a rule on their own;
+- for videos, music and e-books, their type ("AVI files", or "Videos" when several endings went
+  there), even from one file, when other files of that type go there too or the plan already
+  sends them there. Documents, pictures, programs and zip files never get a rule by type alone;
 - never a rule that takes a name users sent to another folder, or a file SortZen is at least 90%
   sure belongs elsewhere (a folder SortZen only plans to make doesn't count); a rule that places
   no other file today is suggested only when three or more names share it (it places files to
   come); names a rule already sends there are left out.
-The window lists each rule ticked, with why, how many files it places now, where it comes from
-(SortZen or the AI) and Change… (the rule window). "Make the ticked rules" makes them; a changed
+The window shows three rules to a screen ("More rules ›" and "‹ Back" for the rest; ticks on
+every screen count), each ticked, with why, how many files it places now, "from the AI" for the
+AI's, and Change… (the rule window). "Make the ticked rules" makes them; a changed
 rule is made in place of the suggestion. "Not now" closes it (the same rules aren't suggested again
 while the session is open) and "Don't suggest the unticked rules again" turns those down for good.
 One Undo takes back everything the window did.
@@ -408,7 +419,7 @@ existing rules look wrong. The summary holds names only (long numbers removed): 
 files and folders, the folders made, the names of files deleted, the labels most files in each
 folder have, the folders, and the rules as described. Never what is inside files. The cost is
 shown first and counts towards the spending cap. The AI's rules are added to the list, marked "from
-AI"; folders and labels must be ones users have (a new folder inside one is fine). Rules the AI
+the AI"; folders and labels must be ones users have (a new folder inside one is fine). Rules the AI
 doubts are listed with its reason and "Remove the rule …" tick boxes, unticked.
 
 ### 4. Files that go with another file
