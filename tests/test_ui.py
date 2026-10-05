@@ -587,7 +587,8 @@ class MainWindowTest(unittest.TestCase):
         self.window.make_plan()
         self.assertTrue(wait_until(self.app, lambda: self.window.plan is not None and not self.service.jobs.busy))
         opened = []
-        with mock.patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()) or True):
+        with mock.patch.object(QDesktopServices, "openUrl", lambda url: opened.append(url.toLocalFile()) or True), \
+                mock.patch("sortzen.ui.opening.sys.platform", "linux"):    # not Windows' own opening, on any PC
             def double_click(view, item):
                 view.itemDoubleClicked.emit(item, 0)
                 return os.path.normcase(os.path.normpath(opened[-1])) if opened else None
