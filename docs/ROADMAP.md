@@ -85,7 +85,7 @@ moves files after the plan is confirmed.
 | 42 | Labels renamed, merged and deleted from anywhere; every column resizable | **Done** |
 | 43 | Review on one screen; after a move, and when a session is opened again, Review shows everything where it is now | **Done** |
 | 44 | Rules suggested during the session: several per folder, the Suggested rules window in the wizard and Review, the AI's rule advice | **Done** |
-| 45 | **Alpha 0.8 build** | Not started |
+| 45 | **Alpha 0.8 build** | **Done** |
 
 ## After the alpha
 1. Renaming screen (SPEC §12).

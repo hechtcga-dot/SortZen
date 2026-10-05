@@ -759,6 +759,9 @@ and when):
 - **0.7**: everything in 0.6, plus quicker clicks (learning in the background), right-click Open,
   Open containing folder and Delete everywhere, clues to recognise files, folders dragged and put
   together in Review (§7.1a), and rules with several conditions (§7.2b).
+- **0.8**: everything in 0.7, plus Review on one screen that stays open after a move (§7.1a),
+  labels renamed, merged and deleted from anywhere, folders that follow name rules, and rules
+  suggested during the session by SortZen and the AI (§7.2b).
 - Not in the alpha: renaming files (§12), the in-app updater (§13), a privacy option that sends a
   random sample of words, new folders more than one level deep (questions can still choose
   deeper ones), permanently deleting queued files from inside SortZen, reading scanned
