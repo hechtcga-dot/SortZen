@@ -1107,3 +1107,26 @@ class RuleEditorTest(CatalogTest):
             self.service.build_rule(budget)                                      # nothing in common: no rule
         with self.assertRaises(FolderError):
             self.service.build_rule(budget, text="two words", whole_word=True)
+
+
+class RenameAndDeleteLabelsTest(CatalogTest):
+    def test_rename_carries_files_rules_and_guesses_merges_on_a_taken_name_and_delete_takes_rules(self):
+        from sortzen.engine.rules import Rule
+
+        cake, budget = str(self.downloads / "Plum cake recipe.txt"), str(self.downloads / "Budget 2026.txt")
+        for name in ("Recipe", "Baking", "Budget"):
+            self.service.add_label(name)
+        self.service.make_plan()
+        self.assertEqual(self.service.label_guesses(cake)[0][0], "Recipe")       # SortZen's own guess
+        self.service.set_file_labels([budget], ["Budget"])
+        self.service.add_rule(Rule("", str(self.sorted / "Recipes"), label="Recipe"))
+        self.assertEqual(self.service.label_counts()["Budget"][0], 1)                # yours; SortZen guesses more
+        self.assertEqual(self.service.rename_label("Recipe", "Recipes"), "Recipes")
+        self.assertEqual(self.service.label_guesses(cake)[0][0], "Recipes")      # no need to guess again
+        self.assertEqual(self.service.rules()[0].label, "Recipes")
+        self.assertEqual(self.service.rename_label("Recipes", "baking"), "Baking")   # a taken name: one label
+        self.assertEqual(self.service.labels(), ["Baking", "Budget"])
+        self.assertEqual(self.service.rules()[0].label, "Baking")
+        self.assertEqual(self.service.remove_label("Baking"), 1)                    # its rule goes too
+        self.assertEqual((self.service.labels(), self.service.rules()), (["Budget"], []))
+        self.assertEqual(self.service.labels_of(cake), [])

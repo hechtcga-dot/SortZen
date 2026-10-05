@@ -86,7 +86,9 @@ def show_in_folder(path: str | None) -> bool:
     path = os.path.normpath(path)
     _report(f"Opening the folder “{_name(os.path.dirname(path))}”…")
     if sys.platform.startswith("win"):
-        _in_background(lambda: subprocess.Popen(["explorer", f"/select,{path}"]), path)
+        # Explorer reads /select,"C:\...\file" only as written here: a list of arguments would put the quotes
+        # round the whole switch, and Explorer would open Documents instead
+        _in_background(lambda: subprocess.Popen(f'explorer /select,"{path}"'), path)
     else:
         QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
     return True

@@ -615,22 +615,68 @@ class AppService:
         known = self.labels()
         self._save_label_data(names=[n for n in names if n in known] + [n for n in known if n not in names])
 
-    def rename_label(self, old: str, new: str) -> None:
+    def rename_label(self, old: str, new: str) -> str:
+        """A label gets another name on every file, AI answer and rule. When a label of that name exists
+        already, the two become one (``merge_label``). Returns the name now used."""
         new = " ".join((new or "").split())
-        if not new or any(x.lower() == new.lower() and x != old for x in self.labels()):
-            raise FolderError(f"There is already a label “{new}”." if new else "Type a name for the label.")
+        if not new:
+            raise FolderError("Type a name for the label.")
+        existing = next((x for x in self.labels() if x.lower() == new.lower() and x != old), None)
+        if existing:
+            self.merge_label(old, existing)
+            return existing
         swap = lambda v: [new if x == old else x for x in v]                       # noqa: E731
         self._save_label_data(names=swap(self.labels()),
                               files={k: swap(v) for k, v in self.users_labels().items()},
                               ai={k: [[new if a == old else a, b] for a, b in v] for k, v in self.ai_labels().items()})
-        self._guesses = {}
+        self.settings.set("rules", [dict(r, label=new) if r.get("label") == old else r
+                                    for r in self.settings.get("rules") or []])
+        self._swap_guesses(old, new)
+        return new
 
-    def remove_label(self, name: str) -> None:
-        """Forget a label, on every file."""
+    def remove_label(self, name: str) -> int:
+        """Forget a label on every file and AI answer; rules that need it go too. Returns how many rules went."""
         self._save_label_data(names=[x for x in self.labels() if x != name],
                               files={k: [x for x in v if x != name] for k, v in self.users_labels().items()},
                               ai={k: [x for x in v if x[0] != name] for k, v in self.ai_labels().items()})
-        self._guesses = {}
+        rules = list(self.settings.get("rules") or [])
+        kept = [r for r in rules if r.get("label") != name]
+        if len(kept) != len(rules):
+            self.settings.set("rules", kept)
+        self._swap_guesses(name, None)
+        return len(rules) - len(kept)
+
+    def _swap_guesses(self, old: str, new: str | None) -> None:
+        """SortZen's own guesses follow a renamed, merged or deleted label (no need to guess again)."""
+        found = {}
+        for key, guesses in self._guesses.items():
+            best: dict[str, tuple[int, str]] = {}
+            for label, percent, why in guesses:
+                label = new if label == old else label
+                if label is not None and percent > best.get(label, (-1, ""))[0]:
+                    best[label] = (percent, why)
+            found[key] = sorted(((a, p, w) for a, (p, w) in best.items()), key=lambda g: -g[1])
+        self._guesses = found
+
+    def label_counts(self) -> dict[str, tuple[int, int]]:
+        """For each label: (files users gave it, files SortZen or the AI gave it at 50% or more)."""
+        counts = {name: [0, 0] for name in self.labels()}
+        mine, ai = self._label_index()
+        for labels in mine.values():
+            for label in labels:
+                if label in counts:
+                    counts[label][0] += 1
+        for key, answers in ai.items():
+            if key not in mine:
+                for label, percent in answers:
+                    if label in counts and percent >= 50:
+                        counts[label][1] += 1
+        for key, guesses in self._guesses.items():
+            if key not in mine and key not in ai:
+                for label, percent, _ in guesses:
+                    if label in counts and percent >= 50:
+                        counts[label][1] += 1
+        return {k: (v[0], v[1]) for k, v in counts.items()}
 
     def _label_index(self) -> tuple[dict, dict]:
         """Users' and the AI's labels by path key, worked out again only when the settings change."""
@@ -707,7 +753,7 @@ class AppService:
                               files={k: swap(v) for k, v in self.users_labels().items()}, ai=ai)
         self.settings.set("rules", [dict(r, label=keep) if r.get("label") == drop else r
                                     for r in self.settings.get("rules") or []])
-        self._guesses = {}
+        self._swap_guesses(drop, keep)
 
     def label_ideas(self, limit: int = 12) -> list[str]:
         """Labels to start with: the names of the folders in the destination folders (two levels down) that

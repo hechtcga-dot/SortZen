@@ -53,7 +53,7 @@ def _label(text: str = "", name: str = "", wrap: bool = True) -> QLabel:
 def _link(text: str, slot) -> QPushButton:
     button = QPushButton(text, objectName="link")
     button.setCursor(Qt.CursorShape.PointingHandCursor)
-    button.clicked.connect(slot)
+    button.clicked.connect(lambda *_: slot())          # never Qt's "checked" as the slot's first value
     return button
 
 
@@ -68,6 +68,12 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout]:
     body.setSpacing(8)
     col.addLayout(body)
     return frame, body
+
+
+def label_menu_on(widget, name: str, window) -> None:
+    """Right-clicking a label chip offers Rename, Delete and Manage labels."""
+    widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+    widget.customContextMenuRequested.connect(lambda pos: window.label_menu(name, widget, pos))
 
 
 def describe_facts(f) -> str:
@@ -309,6 +315,8 @@ class ChoosePage(QWidget):
         _clear(self.chips)
         for name in self.service.labels():
             chip = QLabel(name, objectName="labelChip")
+            chip.setToolTip("Right-click to rename or delete this label")
+            label_menu_on(chip, name, self.wizard.window)
             self.chips.addWidget(chip)
         for idea in self.service.label_ideas():
             button = QPushButton(f"+ {idea}", objectName="smallChip")
@@ -318,6 +326,8 @@ class ChoosePage(QWidget):
         new = QPushButton("+ New label", objectName="newChip")
         new.clicked.connect(lambda: self._add_label(None))
         self.chips.addWidget(new)
+        if self.service.labels():
+            self.chips.addWidget(_link("Manage labels…", self.wizard.window.manage_labels))
 
     def _add_label(self, name: str | None) -> None:
         if name is None:
@@ -706,20 +716,46 @@ class CatalogPage(QWidget):
         for label in [*[x for x, _ in self.batch.labels], *[x for x in self.chosen if x not in guessed]]:
             text = f"{label} · {guessed[label]}%" if label in guessed else label
             chip = QPushButton(text, objectName="chip", checkable=True, checked=label in self.chosen)
-            chip.setToolTip("Click to take this label off" if label in self.chosen else "Click to give this label")
+            chip.setToolTip(("Click to take this label off" if label in self.chosen else "Click to give this label")
+                            + ". Right-click to rename or delete it.")
+            if label in self.service.labels():
+                label_menu_on(chip, label, self.wizard.window)
             chip.toggled.connect(lambda on, x=label: self._choose(x, on))
             self.suggested.addWidget(chip)
         for label in self.service.labels():
             if label in guessed or label in self.chosen:
                 continue
             chip = QPushButton(label, objectName="smallChip")
+            chip.setToolTip("Click to give this label. Right-click to rename or delete it.")
             chip.clicked.connect(lambda _=False, x=label: self._choose(x, True))
+            label_menu_on(chip, label, self.wizard.window)
             self.others.addWidget(chip)
         new = QPushButton("+ New label", objectName="newChip")
         new.clicked.connect(self._new_label)
         self.others.addWidget(new)
+        if self.service.labels():
+            self.others.addWidget(_link("Manage labels…", self.wizard.window.manage_labels))
         self.others_text.setText("Or pick one:" if no_guess and not self.chosen else
                                  "Click a label to take it off. Add another:")
+
+    def labels_changed(self, renamed: dict) -> None:
+        """A label was renamed (old -> new) or deleted (old -> None): the batch on screen follows."""
+        if self.batch is None:
+            return
+        chosen = []
+        for label in self.chosen:
+            label = renamed.get(label, label)
+            if label and label not in chosen:
+                chosen.append(label)
+        self.chosen = chosen
+        merged: dict[str, int] = {}
+        for label, percent in self.batch.labels:
+            label = renamed.get(label, label)
+            if label:
+                merged[label] = max(merged.get(label, 0), percent)
+        self.batch.labels = sorted(merged.items(), key=lambda lp: -lp[1])
+        self._fill_labels()
+        self._update()
 
     def _choose(self, label: str, on: bool) -> None:
         if on and label not in self.chosen:
@@ -1059,6 +1095,17 @@ class SessionWizard(QDialog):
                 self.catalog.show_batch()
             else:
                 self.catalog.refresh_counts()
+
+    def labels_changed(self, renamed: dict) -> None:
+        """Labels were renamed or deleted elsewhere: the step on screen shows them as they are now."""
+        if self.stack.currentWidget() is self.choose:
+            self.choose._fill_chips()
+        elif self.stack.currentWidget() is self.catalog:
+            self.catalog.labels_changed(renamed)
+            if self.flow is not None and self.flow.batches:
+                for b in self.flow.batches[1:]:             # the rest follow too, until SortZen learns again
+                    b.labels = [(renamed.get(a, a), p) for a, p in b.labels if renamed.get(a, a)]
+                self.start_learning()
 
     def notice(self, text: str) -> None:
         """A short message under the steps, such as “Opening …”; it goes after a few seconds."""

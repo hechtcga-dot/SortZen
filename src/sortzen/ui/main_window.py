@@ -270,9 +270,9 @@ class MainWindow(QMainWindow):
         links = QHBoxLayout()
         links.addWidget(QLabel("Prefer the tabs?", objectName="muted"))
         for text, slot in (("Open the Folders tab", lambda: self.show_tab(self.folders_page)),
-                           ("Open a saved profile…", self.load_profile)):
+                           ("Open a saved profile…", lambda: self.load_profile())):
             link = QPushButton(text, objectName="link")
-            link.clicked.connect(slot)
+            link.clicked.connect(lambda _=False, s=slot: s())
             links.addWidget(link)
         links.addStretch(1)
         col.addLayout(links)
@@ -365,7 +365,7 @@ class MainWindow(QMainWindow):
 
     def _actions(self) -> None:
         def action(text, slot, shortcut=None, tip=""):
-            a = QAction(text, self, triggered=slot)
+            a = QAction(text, self, triggered=lambda *_: slot())    # never Qt's "checked" as the slot's first value
             if shortcut:
                 a.setShortcut(QKeySequence(shortcut))
             if tip:
@@ -422,6 +422,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.settings_action)
         plan_menu = self.menuBar().addMenu("&Plan")
         plan_menu.addAction(self.wizard_action)
+        plan_menu.addAction(action("Manage labels…", self.manage_labels,
+                                   tip="Rename, delete or put together labels, and change their order"))
         plan_menu.addAction(self.plan_action)
         self.ai_action = action("Ask AI about unsure files…", self.ask_ai,
                                 tip="Ask an AI service about the files SortZen couldn't place by itself")
@@ -1287,7 +1289,7 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------------- labels and similar files
     def _label_change(self, text: str, change) -> bool:
         """Make a change to labels or similar files that Undo puts back; the plan shows it at once."""
-        before = self.service.settings_snapshot()
+        before, guesses = self.service.settings_snapshot(), self.service._guesses
         try:
             change()
         except ValueError as exc:
@@ -1296,7 +1298,10 @@ class MainWindow(QMainWindow):
 
         def undo():
             self.service.restore_settings(before)
+            self.service._guesses = guesses
             self._show_labels()
+            if self.wizard is not None:
+                self.wizard.labels_changed({})
         self._push_undo(text, undo)
         self._show_labels()
         return True
@@ -1329,21 +1334,88 @@ class MainWindow(QMainWindow):
 
     def edit_label(self, name: str, action: str, value: str | None = None) -> None:
         if action == "rename":
-            if value is None:
-                value, ok = QInputDialog.getText(self, "Rename label", f"New name for “{name}”:", text=name)
-                if not ok or not value.strip():
-                    return
-            self._label_change(f"Rename label {name}", lambda: self.service.rename_label(name, value))
-        elif action in ("up", "down"):
+            self.rename_label(name, value)
+            return
+        if action == "remove":
+            self.delete_label(name)
+            return
+        if action in ("up", "down"):
             order = self.service.labels()
             i = order.index(name)
             j = max(0, i - 1) if action == "up" else min(len(order) - 1, i + 1)
             order[i], order[j] = order[j], order[i]
             self._label_change("Change label order", lambda: self.service.set_label_order(order))
-        elif action == "remove":
-            self._label_change(f"Remove label {name}", lambda: self.service.remove_label(name))
+        self._labels_changed({})
+
+    def rename_label(self, name: str, new: str | None = None, merge: bool = False) -> str | None:
+        """Give a label another name everywhere (files, AI answers, rules). Typing the name of another label
+        makes the two one label. Undo puts it back."""
+        if new is None:
+            new, ok = QInputDialog.getText(self, "Rename label", f"New name for the label “{name}”:", text=name)
+            if not ok or not new.strip() or new.strip() == name:
+                return None
+        other = next((x for x in self.service.labels() if x.lower() == " ".join(new.split()).lower() and x != name),
+                     None)
+        if other and not merge and QMessageBox.question(
+                self, "Rename label", f"There is already a label “{other}”. Make “{name}” and “{other}” one label, "
+                f"“{other}”?\n\nEvery file and rule with “{name}” gets “{other}”. Edit › Undo puts it back.") \
+                != QMessageBox.StandardButton.Yes:
+            return None
+        result = {}
+        if not self._label_change(f"Rename label {name}",
+                                  lambda: result.setdefault("name", self.service.rename_label(name, new))):
+            return None
+        self._labels_changed({name: result["name"]})
+        self._report(f"“{name}” is now “{result['name']}” on every file and rule.")
+        return result["name"]
+
+    def delete_label(self, name: str, confirm: bool = True) -> bool:
+        """Delete a label: it comes off every file, and rules that need it go too. Undo puts it back."""
+        mine, guessed = self.service.label_counts().get(name, (0, 0))
+        rules = sum(1 for r in self.service.rules() if r.label == name)
+        if confirm:
+            parts = [f"{mine:,} file{'s' if mine != 1 else ''} you labelled"] if mine else []
+            if guessed:
+                parts.append(f"{guessed:,} file{'s' if guessed != 1 else ''} SortZen or the AI labelled")
+            text = f"Delete the label “{name}”?\n\n" + (f"It comes off {' and '.join(parts)}. " if parts else "")
+            if rules:
+                text += f"{rules} rule{'s' if rules != 1 else ''} that need{'s' if rules == 1 else ''} it " \
+                        f"{'is' if rules == 1 else 'are'} deleted too. "
+            text += "No file moves. Edit › Undo puts it back."
+            if QMessageBox.question(self, "Delete label", text) != QMessageBox.StandardButton.Yes:
+                return False
+        if not self._label_change(f"Delete label {name}", lambda: self.service.remove_label(name)):
+            return False
+        self._labels_changed({name: None})
+        self._report(f"The label “{name}” is deleted.")
+        return True
+
+    def manage_labels(self) -> None:
+        """Every label with how many files have it: rename, delete, put two together, change their order."""
+        from .dialogs import LabelsDialog
+
+        LabelsDialog(self.wizard if self.wizard is not None and self.wizard.isVisible() else self, self).exec()
+
+    def label_menu(self, name: str, widget, pos) -> None:
+        """Right-click on a label anywhere: rename it, delete it, or manage all labels."""
+        self.label_actions(name).exec(widget.mapToGlobal(pos))
+
+    def label_actions(self, name: str) -> QMenu:
+        menu = QMenu(self)
+        menu.addAction(f"Rename “{name}”…", lambda: self.rename_label(name))
+        menu.addAction(f"Delete “{name}”…", lambda: self.delete_label(name))
+        menu.addSeparator()
+        menu.addAction("Manage labels…", lambda: self.manage_labels())
+        return menu
+
+    def _labels_changed(self, renamed: dict) -> None:
+        """Every screen showing labels follows a renamed (old -> new) or deleted (old -> None) label."""
         self.to_place_page._fill_labels()
         self.to_place_page.refresh_rows()
+        if self.wizard is not None:
+            self.wizard.labels_changed(renamed)
+        if self.review_page.flow is not None:
+            self.review_page._show_details()
 
     def pair_files(self, paths: list, kind: str, other: str | None = None) -> None:
         """Say files are similar to, or different from, another file. It changes percentages, never moves."""

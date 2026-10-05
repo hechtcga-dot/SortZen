@@ -875,6 +875,88 @@ class MainWindowTest(unittest.TestCase):
         self.window.undo()
         self.assertNotIn(os.path.normcase(str(downloads / "old tools")), self.window.flow.moving_folders())
 
+    def test_labels_renamed_deleted_and_managed_from_anywhere(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QInputDialog, QMenu, QMessageBox
+
+        from sortzen.ui.dialogs import LabelsDialog
+
+        for name in ("Taxes", "Tax", "Work"):
+            self.service.add_label(name)
+        file = str(Path(self.dir.name) / "T4 slip.pdf")
+        self.service.set_file_labels([file], ["Tax", "Work"])
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.assertEqual(self.window.rename_label("Work", "Job"), "Job")
+            self.assertEqual(self.window.rename_label("Tax", "taxes"), "Taxes")       # one label with the other
+            self.assertEqual(self.service.labels_of(file), ["Taxes", "Job"])
+            self.assertTrue(self.window.delete_label("Job"))
+        self.assertEqual(self.service.labels(), ["Taxes"])
+        self.window.undo()                                                       # Undo puts it back
+        self.assertEqual(self.service.labels_of(file), ["Taxes", "Job"])
+
+        shown = [a.text() for a in self.window.label_actions("Taxes").actions() if a.text()]
+        self.assertEqual(shown, ["Rename “Taxes”…", "Delete “Taxes”…", "Manage labels…"])
+
+        dialog = LabelsDialog(self.window, self.window)
+        self.assertIn("Taxes    ·  1 labelled by you", dialog.list.item(0).text())
+        dialog.list.setCurrentRow(1)
+        with mock.patch.object(QInputDialog, "getItem", return_value=("Taxes", True)):
+            dialog._merge()                                                      # Job put into Taxes
+        self.assertEqual(self.service.labels(), ["Taxes"])
+        self.assertEqual(dialog.list.count(), 1)
+
+    def test_review_new_folder_button_asks_for_a_name_and_columns_can_be_widened(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QHeaderView, QInputDialog, QTreeView
+
+        from sortzen.engine.planner import TIDY
+
+        downloads = Path(self.dir.name) / "Downloads"
+        (downloads / "old tools").mkdir(parents=True)
+        (downloads / "old tools" / "notes.txt").write_text("notes")
+        (downloads / "Lemon tart recipe.txt").write_text("lemon tart recipe sugar")
+        recipes = Path(self.dir.name) / "Sorted" / "Recipes"
+        recipes.mkdir(parents=True)
+        for name in ("Apple pie recipe.txt", "Plum cake recipe.txt"):
+            (recipes / name).write_text("recipe sugar flour")
+        self.service.add_source(str(downloads), TIDY)
+        self.service.add_destination(str(recipes.parent))
+        self.window.flow = self.service.new_session("New folders")
+        self.window._after_plan = "review"
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and not self.service.jobs.busy))
+        review = self.window.review_page
+        review.tree.clearSelection()
+        review.items[os.path.normcase(str(downloads))].setSelected(True)
+        with mock.patch.object(QInputDialog, "getText", return_value=("Old versions", True)) as asked:
+            review.new_button.click()                                        # the button asks for the name
+        asked.assert_called_once()
+        self.assertIn(os.path.normcase(str(downloads / "Old versions")), review.items)
+
+        for view in [review.tree, *self.window.findChildren(QTreeView)]:     # every column can be widened
+            if view.header().count() > 1:
+                self.assertFalse(view.isHeaderHidden(), view.objectName() or type(view).__name__)
+                for column in range(view.header().count()):
+                    self.assertEqual(view.header().sectionResizeMode(column), QHeaderView.ResizeMode.Interactive)
+
+    def test_open_containing_folder_asks_explorer_to_select_the_file(self):
+        from unittest import mock
+
+        from sortzen.ui import opening
+
+        file = Path(self.dir.name) / "My Downloads" / "Lakeview lease 2024.docx"
+        file.parent.mkdir()
+        file.write_text("lease")
+        with mock.patch("sortzen.ui.opening.sys.platform", "win32"), \
+                mock.patch("sortzen.ui.opening.subprocess.Popen") as popen, \
+                mock.patch("sortzen.ui.opening.threading.Thread",
+                           lambda target, daemon: mock.Mock(start=target)):
+            self.assertTrue(opening.show_in_folder(str(file)))
+        popen.assert_called_once_with(f'explorer /select,"{os.path.normpath(str(file))}"')
+
     def test_right_click_open_containing_folder_and_delete_everywhere(self):
         from unittest import mock
 

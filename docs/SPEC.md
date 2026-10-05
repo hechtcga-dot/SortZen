@@ -46,7 +46,8 @@ decision; when the code and this file disagree, this file wins until it is chang
   sessions; "Show this screen when SortZen opens" turns it off.
 - Every tab can be closed, and opened again from View › Tabs or "+ Open a tab" beside the
   tabs.
-- Text is selectable; no wasted space; nothing is cut off or overlapping.
+- Text is selectable; no wasted space; nothing is cut off or overlapping. Every list with more
+  than one column has headings, and every column can be made wider or narrower by dragging.
 - Wording is plain and says what will happen; new features carry a short hint underneath.
 - Tick boxes and toggles respond instantly and save in the background.
 - Examples and test data use made-up names only.
@@ -277,6 +278,14 @@ still be changed.
   folders?"), new folders, names already taken, and the copies already in "To delete";
   nothing moves before it. Files in skipped batches stay where they are. Every move is
   logged and Undo puts it back. The session is then "Moved" on the start screen.
+
+**Labels can be renamed and deleted anywhere they show**: right-click a label (in the wizard,
+Review or the Labels tab) for Rename…, Delete… and Manage labels…; Plan › Manage labels… lists
+every label with how many files users gave it and how many SortZen or the AI gave it, with New,
+Rename, Put into another (two labels become one), Delete and Move up / down (priority). Renaming
+changes every file, AI answer, rule and guess; giving a label the name of another one makes them
+one label, after asking. Deleting asks first, takes the label off every file and deletes the rules
+that need it. No file moves, and Edit › Undo puts it back.
 
 ### 2. Labels: the label list, then only what SortZen isn't sure about
 The **Labels** tab (View › Tabs, Ctrl+L) works without a session.

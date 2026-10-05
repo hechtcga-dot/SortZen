@@ -20,7 +20,7 @@ from ..engine.planner import TIDY
 from .catalog_page import CategoryTree, paths_mime
 from .opening import open_on_double_click
 from ..services.file_facts import day
-from .session_wizard import _clear, _label, _link, describe_facts
+from .session_wizard import _clear, _label, _link, describe_facts, label_menu_on
 from .to_place_page import FlowLayout
 
 PATH = Qt.ItemDataRole.UserRole
@@ -37,8 +37,9 @@ class ReviewTree(CategoryTree):
     def __init__(self):
         super().__init__()
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.setHeaderHidden(True)
-        self.setColumnCount(2)
+        self.setHeaderLabels(["Folders and files", "Details"])
+        self.header().setSectionsMovable(False)
+        self.header().setToolTip("Drag the line between the headings to make a column wider")
 
     def mimeData(self, items):                  # files and folders (the folders added themselves stay put)
         return paths_mime([i.data(0, PATH) for i in items if i.parent() is not None])
@@ -63,6 +64,7 @@ class ReviewPage(QWidget):
         self.flow = None
         self.items: dict[str, QTreeWidgetItem] = {}
         self._choices: list[str] = []
+        self._widened = False
         col = QVBoxLayout(self)
         col.setContentsMargins(20, 14, 20, 0)
         col.setSpacing(10)
@@ -77,7 +79,7 @@ class ReviewPage(QWidget):
         self.new_button = QPushButton("New folder")
         self.new_button.setToolTip("Make a folder in the plan, inside the selected folder; it is made on disk when "
                                    "files move into it")
-        self.new_button.clicked.connect(self.new_folder)
+        self.new_button.clicked.connect(lambda: self.new_folder())
         head.addWidget(self.new_button, 0, Qt.AlignmentFlag.AlignTop)
         self.group_button = QPushButton("Too many folders?")
         self.group_button.setToolTip("Put the selected folders (or the look-alike folders in the selected folder) "
@@ -151,7 +153,7 @@ class ReviewPage(QWidget):
         self.rules = QVBoxLayout()
         self.rules.setSpacing(4)
         rcol.addLayout(self.rules)
-        rcol.addWidget(_link("Add a rule…", self.add_rule))
+        rcol.addWidget(_link("Add a rule…", lambda: self.add_rule()))
         right.addWidget(self.rules_box)
         right.addStretch(1)
         body.addLayout(right, 100)
@@ -287,7 +289,10 @@ class ReviewPage(QWidget):
                 while above is not None:
                     above.setExpanded(True)
                     above = above.parent()
-        self.tree.resizeColumnToContents(0)
+        if not self._widened:                       # once; after that the width users chose stays
+            self.tree.resizeColumnToContents(0)
+            self.tree.setColumnWidth(0, min(max(self.tree.columnWidth(0) + 24, 280), 520))
+            self._widened = True
         first = next((i for i in self.tree.findItems("*", Qt.MatchFlag.MatchWildcard | Qt.MatchFlag.MatchRecursive)
                       if i.data(0, KIND) in ("file", "kept")), None)
         if first is not None:
@@ -360,7 +365,7 @@ class ReviewPage(QWidget):
             if len(folders) <= 1 and self.flow.look_alike([f for f in self._children(folder) if os.path.isdir(f)]):
                 menu.addAction("Too many folders in here? Put look-alike folders together…",
                                lambda: self.too_many_folders([folder]))
-            menu.addAction("New folder here…", self.new_folder)
+            menu.addAction("New folder here…", lambda: self.new_folder())
             remove = menu.addAction("Delete this folder from the plan", self.delete_folder)
             remove.setEnabled(not os.path.isdir(folder))
             add_file_actions(menu, [folder], self.window.open_folder, delete=False)
@@ -404,7 +409,10 @@ class ReviewPage(QWidget):
             self.details_caption.setText("SELECTED FILE" if len(items) == 1 else f"{len(items)} SELECTED")
             self.details_name.setText(os.path.basename(path))
             for label in self.service.labels_of(path):
-                self.chips.addWidget(QLabel(label, objectName="labelChip"))
+                chip = QLabel(label, objectName="labelChip")
+                chip.setToolTip("Right-click to rename or delete this label")
+                label_menu_on(chip, label, self.window)
+                self.chips.addWidget(chip)
             where = self.service.display(s.destination) + (" (new)" if s.new_folder else "") if s else ""
             reasons = "; ".join(r.text for r in (s.reasons if s else []) if r.supports)
             self.details_why.setText(f"Goes to {where}: {reasons}." if reasons else f"Goes to {where}.")

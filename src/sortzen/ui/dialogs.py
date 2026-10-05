@@ -474,3 +474,86 @@ class GroupFoldersDialog(QDialog):
             QMessageBox.information(self, self.windowTitle(), "Tick the folders and type a name for the new folder.")
             return
         super().accept()
+
+
+class LabelsDialog(QDialog):
+    """Every label, the most important first, with how many files have it: rename, delete, put two labels
+    together, make a new one, or change the order. Changes happen at once and Edit › Undo puts them back."""
+
+    def __init__(self, parent, window):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QHBoxLayout
+
+        self.window, self.service = window, window.service
+        self.setWindowTitle("Manage labels")
+        self.resize(560, 480)
+        col = QVBoxLayout(self)
+        col.addWidget(_hint("The top label counts most when SortZen weighs labels. Renaming or deleting a label "
+                            "changes every file and rule that has it; no file moves. Edit › Undo puts it back."))
+        self.list = QListWidget()
+        self.list.itemDoubleClicked.connect(lambda _: self._rename())
+        col.addWidget(self.list, 1)
+        row = QHBoxLayout()
+        for text, slot in (("New label…", self._new), ("Rename…", self._rename), ("Put into another…", self._merge),
+                           ("Delete…", self._delete), ("Move up", lambda: self._move(-1)),
+                           ("Move down", lambda: self._move(1))):
+            button = QPushButton(text)
+            button.clicked.connect(slot)
+            row.addWidget(button)
+        col.addLayout(row)
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        box.rejected.connect(self.reject)
+        col.addWidget(box)
+        self.fill()
+
+    def fill(self, select: str | None = None) -> None:
+        counts = self.service.label_counts()
+        current = select or self.selected()
+        self.list.clear()
+        for name in self.service.labels():
+            mine, guessed = counts.get(name, (0, 0))
+            item = QListWidgetItem(f"{name}    ·  {mine:,} labelled by you  ·  {guessed:,} by SortZen or the AI")
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.list.addItem(item)
+            if name == current:
+                self.list.setCurrentItem(item)
+        if not self.list.count():
+            self.list.addItem("No labels yet. Click “New label…” to make one.")
+            self.list.item(0).setFlags(Qt.ItemFlag.NoItemFlags)
+
+    def selected(self) -> str | None:
+        item = self.list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _new(self) -> None:
+        name, ok = QInputDialog.getText(self, "New label", "Name of the label (for example Work, Taxes or "
+                                        "Photo session):")
+        if ok and name.strip():
+            self.window.new_label([], name)
+            self.fill(" ".join(name.split()))
+
+    def _rename(self) -> None:
+        name = self.selected()
+        if name:
+            self.fill(self.window.rename_label(name) or name)
+
+    def _delete(self) -> None:
+        name = self.selected()
+        if name and self.window.delete_label(name):
+            self.fill()
+
+    def _merge(self) -> None:
+        name = self.selected()
+        others = [x for x in self.service.labels() if x != name]
+        if not name or not others:
+            return
+        into, ok = QInputDialog.getItem(self, "Put into another label", f"Every file and rule with “{name}” gets:",
+                                        others, 0, False)
+        if ok and into:
+            self.fill(self.window.rename_label(name, into, merge=True) or into)
+
+    def _move(self, step: int) -> None:
+        name = self.selected()
+        if name:
+            self.window.edit_label(name, "up" if step < 0 else "down")
+            self.fill(name)
