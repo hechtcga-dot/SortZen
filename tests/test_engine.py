@@ -313,6 +313,23 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(suggest_rules(examples, "/s/Programs", others, rules, set()), [])   # made already
 
 
+    def test_rules_by_type_for_videos_music_and_books_only(self):
+        from sortzen.engine.rules import Rule, suggest_rules
+
+        others = [("/d/Lake day.avi", None, 0), ("/d/Notes.avi.txt", None, 0), ("/d/Old clip.mp4", None, 50)]
+        found = suggest_rules(["Harbor trip.avi"], "/s/Movies", others, [], set())
+        self.assertEqual([f.rule for f in found], [Rule("", "/s/Movies", ext=".avi")])   # one file is enough
+        self.assertEqual(found[0].matches, ["/d/Lake day.avi"])
+        self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", [], [], set()), [])   # places nothing
+        self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", others, [], set(), ["Pond.avi"]), [])
+        sure = [("/d/Lake day.avi", "/s/Family", 95)]
+        self.assertEqual(suggest_rules(["Harbor trip.avi"], "/s/Movies", sure, [], set()), [])
+        mixed = suggest_rules(["Harbor trip.avi", "Snow day.mp4"], "/s/Movies", others, [], set())
+        self.assertEqual(mixed[0].rule, Rule("", "/s/Movies", kind="video"))         # several endings: videos
+        self.assertEqual(suggest_rules(["Tax return.pdf"], "/s/Taxes", [("/d/Bill.pdf", None, 0)], [], set()),
+                         [])                                                         # never documents by type
+
+
 class ProgramsAndFamiliesTest(unittest.TestCase):
     """Versions and copies of one thing go into one folder; programs are never picked apart."""
 

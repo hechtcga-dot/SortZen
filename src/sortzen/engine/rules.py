@@ -244,36 +244,62 @@ def _name_parts(name: str) -> list[tuple[str, str]]:
     return list(dict.fromkeys(found))
 
 
+TYPE_KINDS = ("video", "audio", "ebook")      # kinds a rule by type alone may be suggested for
+
+
+def _type_parts(name: str) -> list[tuple[str, str]]:
+    """("ext", ".avi") for a video, music or e-book file: rules by type are suggested only for those kinds."""
+    ext = os.path.splitext(name)[1].lower()
+    return [("ext", ext)] if ext and kind_of(ext) in TYPE_KINDS else []
+
+
+def _candidate(how: str, text: str, destination: str) -> Rule:
+    if how == "word":
+        return Rule(text, destination)
+    if how == "ext":
+        return Rule("", destination, ext=text)
+    if how == "kind":
+        return Rule("", destination, kind=text)
+    return Rule("", destination, contains=text)
+
+
 def suggest_rules(examples: list[str], destination: str, others: list[tuple[str, str | None, int]],
                   rules: list[Rule], declined: set[str], elsewhere: list[str] = (), limit: int = 4
                   ) -> list[RuleSuggestion]:
     """Several rules for the files and folders users sent to ``destination`` (their names in ``examples``): one
     for each name part shared by two or more of them ("Tide Log" files, "Harbor Map" files), the part covering
-    the most first. A rule never takes a name users sent to another folder (``elsewhere``) or a file SortZen is
-    sure belongs elsewhere; one that places nothing more today is kept when three or more names share it. Names
-    a rule already sends there are left out."""
-    if len(examples) < MIN_EXAMPLES:
+    the most first; then, for videos, music and e-books, one for their type (".avi files", or "videos" when
+    there are several endings), even from one file when it places others too. A rule never takes a name users
+    sent to another folder (``elsewhere``) or a file SortZen is sure belongs elsewhere; one that places nothing
+    more today is kept when three or more names share it. Names a rule already sends there are left out."""
+    if not examples:
         return []
     known = {r.key for r in rules} | set(declined)
     here = [r for r in rules if os.path.normcase(r.destination) == os.path.normcase(destination)]
     left = [n for n in dict.fromkeys(examples) if not any(r.matches(n) for r in here)]   # a rule has them
     found: list[RuleSuggestion] = []
-    tried: set[str] = set()
+    tried: set[tuple[str, str]] = set()
     while left and len(found) < limit:
         best = None
         order, spelled = {}, {}                 # the first spelling met is kept ("HarborMap")
         for name in left:
-            for at, (how, text) in enumerate(_name_parts(name)):
+            for at, (how, text) in enumerate(_name_parts(name) + _type_parts(name)):
                 part = (how, text.lower())
                 spelled.setdefault(part, text)
                 order[part] = min(order.get(part, at), at)
+        exts = {low for how, low in order if how == "ext"}
+        kinds = {kind_of(e) for e in exts}
+        for kind in kinds:                      # several endings of one kind: the kind as a whole
+            if sum(1 for e in exts if kind_of(e) == kind) > 1:
+                order[("kind", kind)], spelled[("kind", kind)] = len(order), kind
         for how, low in order:
             text = spelled[(how, low)]
             if (how, low) in tried:
                 continue
-            rule = Rule(text, destination) if how == "word" else Rule("", destination, contains=text)
+            rule = _candidate(how, text, destination)
+            by_type = how in ("ext", "kind")
             count = sum(1 for n in left if rule.matches(n))
-            if count < MIN_EXAMPLES:
+            if count < (1 if by_type else MIN_EXAMPLES):
                 continue
             if rule.key in known or any(rule.matches(n) for n in elsewhere):
                 tried.add((how, low))
@@ -291,7 +317,8 @@ def suggest_rules(examples: list[str], destination: str, others: list[tuple[str,
             if harm or (not gain and count < MIN_EXAMPLES + 1):
                 tried.add((how, low))
                 continue
-            score = (count, len(gain), how == "contains", -order[(how, low)], len(text))
+            score = (not by_type, count, len(gain), how == "contains", how == "kind", -order[(how, low)],
+                     len(text))
             if best is None or score > best[0]:
                 best = (score, rule, gain)
         if best is None:
