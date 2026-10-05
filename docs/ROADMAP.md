@@ -70,6 +70,15 @@ moves files after the plan is confirmed.
 | 35 | Start screen, the wizard window (Choose, Duplicates, Catalog), the Review tab and the Move window; tabs from View | **Done** |
 | 36 | **Alpha 0.6 build** | **Done** |
 
+### Alpha 0.7
+| # | Phase | Status |
+|---|-------|--------|
+| 37 | Quicker clicks: learning in the background, clues kept per file, labels looked up by file, opening in the background | **Done** |
+| 38 | Right-click Open, Open containing folder and Delete everywhere; file clues (downloaded date, site, size, title, first words) | **Done** |
+| 39 | Review: folders dragged and moved as they are; "Too many folders?" | **Done** |
+| 40 | Engine and window: rules with several conditions, a folder per year or month, names, on and off, preview | **Done** |
+| 41 | **Alpha 0.7 build** | **Done** |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is

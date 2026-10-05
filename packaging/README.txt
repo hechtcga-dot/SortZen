@@ -1,4 +1,4 @@
-SortZen 0.6 - README
+SortZen 0.7 - README
 ====================
 
 SortZen sorts messy folders, such as Downloads or a cloud drive, into the right folders.
@@ -9,11 +9,11 @@ Every move can be undone.
 
 Installing
 ----------
-1. Run SortZen-Setup-0.6.0.exe. No administrator rights are needed; SortZen installs for
+1. Run SortZen-Setup-0.7.0.exe. No administrator rights are needed; SortZen installs for
    your Windows account only (in %LOCALAPPDATA%\Programs\SortZen). Installing over an
    earlier version keeps your settings, answers and choices.
-2. SortZen isn't code-signed yet. If your browser blocks SortZen-Setup-0.6.0.exe, download
-   SortZen-Setup-0.6.0.zip instead, open it and run the setup file inside (in Chrome you can
+2. SortZen isn't code-signed yet. If your browser blocks SortZen-Setup-0.7.0.exe, download
+   SortZen-Setup-0.7.0.zip instead, open it and run the setup file inside (in Chrome you can
    also open the downloads list and choose "Keep"). Windows may then show "Windows
    protected your PC": click "More info", then "Run anyway". This happens once per download.
 
@@ -55,9 +55,15 @@ Using it
    batch" keeps that batch's plan. Nothing moves yet.
 6. After the last batch, the Move window shows every destination, new folders and names
    already taken. Click "Move" to move the files; "Back to Review" changes more first.
-7. Ctrl+Z undoes your last change, including a move. Edit > "Undo a move..." puts back any
+7. Rules (Edit > Rules...): files that have something in common go to a folder you choose. A rule
+   can combine a label, text in the name, a kind of file, an ending and the folder files are in,
+   put files in a folder for each year or month, have a name, and be switched off. While you
+   make one, SortZen shows which files it would place.
+8. Ctrl+Z undoes your last change, including a move. Edit > "Undo a move..." puts back any
    earlier move, even days later.
-8. Prefer working without the wizard? Every tab (Folders, Labels, Cataloguing, Plan,
+9. Anywhere files are listed: double-click opens a file; right-click offers Open, Open containing
+   folder and Delete (to the "To delete" folder; Ctrl+Z puts it back).
+10. Prefer working without the wizard? Every tab (Folders, Labels, Cataloguing, Plan,
    Copies) opens from View > Tabs or "+ Open a tab" beside the tabs. The Plan tab can ask an
    AI service about unsure files and export the plan to Excel.
 
@@ -77,8 +83,25 @@ Your privacy
   uninstall, SortZen asks whether to remove them and your saved API keys too.
 
 
-What's new in 0.6
+What's new in 0.7
 -----------------
+- Much quicker: after each batch the next one shows at once while SortZen learns in the
+  background; Back is instant; files open without waiting.
+- Right-click any file or folder for Open, Open containing folder and Delete; Review has a
+  Delete button.
+- Recognise files at a glance: when each was downloaded, its size, folder and the website it
+  came from, plus its type, title, pages and first words.
+- Review: drag folders onto other folders; "Too many folders?" puts look-alike folders (such as
+  old versions of a program) together into one folder you name. Folders that move show where
+  they go.
+- Rules you can shape: several conditions, a folder for each year or month, names, on and off,
+  and a preview of the files a rule places (Edit > Rules...). Suggested rules can be changed
+  before they are made.
+- Fixes: a rule with nothing to match now says it needs a condition; the wizard's step names
+  are never cut off; no pause after the plan is made.
+
+Also in 0.6
+-----------
 - Organizing sessions: a wizard in three steps (Choose, Duplicates, Catalog), then the
   Review tab and one Move window at the end. Sessions have names, are saved as you go and
   can be carried on from the start screen.
@@ -93,30 +116,6 @@ What's new in 0.6
 - Double-clicking a file or folder in any list opens it.
 - Fixes: old suggestion cards disappear at once; the move result window shows every renamed
   file; the Folders tab shows how each folder is sorted in full.
-
-Also in 0.5
------------
-- Cataloguing wizard (Start cataloguing, Ctrl+L): labels first, then only the files SortZen
-  isn't sure about, in groups one answer settles. Labels can come from SortZen on this PC
-  or from the AI for a sample of files (SortZen labels the rest from it, so it costs much
-  less). A meter shows how often SortZen's guess matches yours; each "Catalog again"
-  round leaves fewer files.
-- Labels: several per file, in order of importance. SortZen learns which folders your
-  labels belong in and suggests rules such as "Files labelled Taxes go to Documents/Taxes".
-  Select several files and give a label to all of them, or take one away from whichever
-  of them have it.
-- Cataloguing tab (was Catalog): see where every file will go, drag files to the right
-  folder to change the plan, and write a note on a file ("this one is for the 2023
-  audit"). Files already in a folder can be dragged too, also from Windows Explorer, and
-  folders can be added by dropping them there.
-- Similar / different: say a file is like another file, or not, and SortZen becomes more
-  or less sure of its folder. Nothing moves because of it.
-- Files that belong together stay together: subtitles, .nfo files and posters go with
-  their movie, cue sheets with their album, .xmp sidecars with their photo, and a folder
-  holding one movie is kept whole.
-- Delete: right-click, the Delete button or the Delete key moves files into a "To delete"
-  folder at once (it asks first until you tick "Don't ask again"). Nothing is really
-  deleted until you delete that folder, and Ctrl+Z puts them back.
 
 Programs and models included: the meaning model is potion-base-8M by Minish (MIT licence);
 scanned PDF pages are drawn with pypdfium2 (PDFium, BSD/Apache licences).
