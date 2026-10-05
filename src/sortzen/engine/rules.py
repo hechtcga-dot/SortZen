@@ -235,12 +235,12 @@ def _name_parts(name: str) -> list[tuple[str, str]]:
     for i, raw in enumerate(raws):
         parts = [p for p in words(raw) if len(p) >= 3] if len(raw) >= 3 else []
         if len(parts) > 1:
-            found.append(("contains", raw.lower()))
+            found.append(("contains", raw))
         elif parts and parts[0] not in GENERIC:
             found.append(("word", parts[0]))
             after = raws[i + 1] if i + 1 < len(raws) else ""
             if after.isalpha() and len(after) >= 3 and words(after) and words(after)[0] not in GENERIC:
-                found.append(("contains", f"{raw} {after}".lower()))
+                found.append(("contains", f"{raw} {after}"))
     return list(dict.fromkeys(found))
 
 
@@ -261,19 +261,22 @@ def suggest_rules(examples: list[str], destination: str, others: list[tuple[str,
     tried: set[str] = set()
     while left and len(found) < limit:
         best = None
-        order = {}
+        order, spelled = {}, {}                 # the first spelling met is kept ("HarborMap")
         for name in left:
-            for at, part in enumerate(_name_parts(name)):
+            for at, (how, text) in enumerate(_name_parts(name)):
+                part = (how, text.lower())
+                spelled.setdefault(part, text)
                 order[part] = min(order.get(part, at), at)
-        for how, text in order:
-            if (how, text) in tried:
+        for how, low in order:
+            text = spelled[(how, low)]
+            if (how, low) in tried:
                 continue
             rule = Rule(text, destination) if how == "word" else Rule("", destination, contains=text)
             count = sum(1 for n in left if rule.matches(n))
             if count < MIN_EXAMPLES:
                 continue
             if rule.key in known or any(rule.matches(n) for n in elsewhere):
-                tried.add((how, text))
+                tried.add((how, low))
                 continue
             gain, harm = [], 0
             for path, current, percent in others:
@@ -286,9 +289,9 @@ def suggest_rules(examples: list[str], destination: str, others: list[tuple[str,
                     break
                 gain.append(path)
             if harm or (not gain and count < MIN_EXAMPLES + 1):
-                tried.add((how, text))
+                tried.add((how, low))
                 continue
-            score = (count, len(gain), how == "contains", -order[(how, text)], len(text))
+            score = (count, len(gain), how == "contains", -order[(how, low)], len(text))
             if best is None or score > best[0]:
                 best = (score, rule, gain)
         if best is None:

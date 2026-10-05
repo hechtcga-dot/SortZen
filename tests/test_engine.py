@@ -303,12 +303,12 @@ class RulesTest(unittest.TestCase):
                   ("/d/Harbor walk.jpg", "/s/Photos", 95), ("/d/setup-printer.exe", "/s/Drivers", 95)]
         found = suggest_rules(examples, "/s/Programs", others, [], set(), elsewhere=["Tide pool notes.txt"])
         rules = [f.rule for f in found]
-        self.assertEqual(rules[0], Rule("", "/s/Programs", contains="harbormap"))   # run-together name: whole
+        self.assertEqual(rules[0], Rule("", "/s/Programs", contains="HarborMap"))   # run-together name: whole
         self.assertEqual(found[0].examples, 3)
         self.assertEqual(found[0].matches, ["/d/HarborMap-1.7.exe"])
-        self.assertEqual(rules[1], Rule("", "/s/Programs", contains="tide log"))   # the two words side by side
+        self.assertEqual(rules[1], Rule("", "/s/Programs", contains="Tide Log"))   # the two words side by side
         self.assertEqual(suggest_rules(examples[3:6], "/s/Programs", [], [], set(), ["Tide pool notes.txt"]
-                                       )[0].rule.contains, "tide log")  # not "tide": a name sent elsewhere has it
+                                       )[0].rule.contains, "Tide Log")  # not "tide": a name sent elsewhere has it
         self.assertEqual(len(rules), 2)                              # no rule for "setup" or one name alone
         self.assertEqual(suggest_rules(examples, "/s/Programs", others, rules, set()), [])   # made already
 
