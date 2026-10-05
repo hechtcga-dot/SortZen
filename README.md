@@ -9,5 +9,14 @@ place by itself.
 - Nothing moves until the review screen is confirmed, and every run can be undone.
 - Privacy settings control exactly what, if anything, is sent to an AI service.
 
-Status: planning. See `docs/SPEC.md` for what SortZen does and `docs/ROADMAP.md` for the
-build plan.
+Status: alpha in development. See `docs/SPEC.md` for what SortZen does and
+`docs/ROADMAP.md` for the build plan.
+
+## Run from source
+```bash
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+python packaging/launcher.py
+```
+
+Fonts: IBM Plex and Fraunces, under the SIL Open Font License (see `src/sortzen/ui/fonts`).

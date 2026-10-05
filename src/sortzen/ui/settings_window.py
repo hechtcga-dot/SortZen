@@ -1,0 +1,204 @@
+"""Settings: General, AI, Privacy and Advanced. Changes are saved when OK is pressed."""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox,
+    QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+)
+
+from .ai_widgets import AIServiceBox, PrivacyListsBox, PrivacyModeBox, hint
+
+OPTION_TEXT = {
+    "meaning": ("Match files by meaning",
+                "A small model on this PC compares what files are about with what is in each folder, so "
+                "“pay stub” can find “Payroll”. Nothing is sent anywhere. Meaning alone counts for at most 65%."),
+    "read_scans": ("Read text in scans and pictures of documents",
+                   "Uses the text recognition built into Windows, on this PC: nothing is sent anywhere. Scanned "
+                   "PDFs and pictures that aren't camera photos (screenshots, scans) are read once and remembered."),
+    "ask_before_delete": ("Ask before moving files to “To delete”",
+                          "Deleting moves files into a “To delete” folder inside the folder you added; nothing is "
+                          "deleted until you delete that folder yourself, and Edit › Undo puts them back."),
+    "gentle": ("Be gentle with my computer", "SortZen works at the lowest priority with short rests, so other "
+                                             "programs stay quick and the fan stays quiet. Plans take a little longer."),
+    "stop_reading_learned": ("Stop reading left-out folders once SortZen has learned enough from them",
+                             "Unticked folders with plenty of files already read are then read by name only, "
+                             "unless many of their files are new."),
+    "read_google_drive": ("Read file contents on Google Drive",
+                          "Google Drive for desktop may download each file to read it, which is slow and uses "
+                          "data. When off, files there are sorted by name."),
+}
+
+
+def _page(*widgets) -> QScrollArea:
+    inner = QWidget()
+    col = QVBoxLayout(inner)
+    col.setContentsMargins(16, 14, 16, 14)
+    col.setSpacing(8)
+    for w in widgets:
+        col.addWidget(w)
+    col.addStretch(1)
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setWidget(inner)
+    return area
+
+
+class SettingsWindow(QDialog):
+    def __init__(self, parent, service, tab: str = "General"):
+        super().__init__(parent)
+        self.service = service
+        self.setWindowTitle("Settings")
+        self.resize(640, 620)
+        col = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        col.addWidget(self.tabs, 1)
+
+        general = QWidget()
+        g = QVBoxLayout(general)
+        g.setContentsMargins(0, 0, 0, 0)
+        level = QHBoxLayout()
+        level.addWidget(QLabel("Move without asking when at least"))
+        self.level = QSpinBox(minimum=50, maximum=100, suffix="% sure", value=service.autonomy())
+        level.addWidget(self.level)
+        level.addStretch(1)
+        g.addLayout(level)
+        g.addWidget(hint("Suggestions at or above this go to Ready, ticked. Nothing moves until you confirm."))
+        self.ask_all = QCheckBox("Ask me about everything", checked=service.ask_everything())
+        g.addWidget(self.ask_all)
+        g.addWidget(hint("Nothing goes to Ready: every file waits in Review for you."))
+        self.options = {}
+        for name in ("meaning", "read_scans", "ask_before_delete", "gentle"):
+            g.addWidget(self._option(name))
+        self.tabs.addTab(_page(general), "General")
+
+        self.ai_box = AIServiceBox(service)
+        self.tabs.addTab(_page(self.ai_box), "AI")
+
+        self.privacy_mode = PrivacyModeBox(service)
+        self.privacy_lists = PrivacyListsBox(service)
+        forget = QPushButton("Forget remembered AI answers")
+        forget.setToolTip("The next time you ask, every unsure file is asked about again (and paid for)")
+        forget.clicked.connect(self._forget_answers)
+        row = QHBoxLayout()
+        row.addWidget(forget)
+        row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        self.tabs.addTab(_page(self.privacy_mode, self.privacy_lists, holder), "Privacy")
+
+        rules = QWidget()
+        r = QVBoxLayout(rules)
+        r.setContentsMargins(0, 0, 0, 0)
+        r.addWidget(hint("Rules place every matching file at 100%: files with a label, text in their name, a kind of "
+                         "file or from a folder go to the folder you choose, by year or month if you like. SortZen "
+                         "suggests rules from your choices. Untick a rule to switch it off. Rules with more conditions "
+                         "come first; files you place yourself keep your choice."))
+        self.plan = getattr(parent, "plan", None)
+        self.rules = QListWidget()
+        self.rules.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.rules.setWordWrap(True)
+        for rule in service.rules():
+            self._rule_item(rule)
+        r.addWidget(self.rules, 1)
+        row = QHBoxLayout()
+        add_rule = QPushButton("Add a rule…")
+        add_rule.clicked.connect(self._add_rule)
+        row.addWidget(add_rule)
+        change_rule = QPushButton("Change…")
+        change_rule.setToolTip("Change what the selected rule matches, where its files go, its name, or switch it off")
+        change_rule.clicked.connect(self._change_rule)
+        row.addWidget(change_rule)
+        self.rules.itemDoubleClicked.connect(lambda _: self._change_rule())
+        remove_rule = QPushButton("Remove")
+        remove_rule.clicked.connect(lambda: [self.rules.takeItem(self.rules.row(i)) for i in self.rules.selectedItems()])
+        row.addWidget(remove_rule)
+        row.addStretch(1)
+        r.addLayout(row)
+        self.tabs.addTab(_page(rules), "Rules")
+
+        advanced = QWidget()
+        a = QVBoxLayout(advanced)
+        a.setContentsMargins(0, 0, 0, 0)
+        for name in ("stop_reading_learned", "read_google_drive"):
+            a.addWidget(self._option(name))
+        self.tabs.addTab(_page(advanced), "Advanced")
+
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        col.addWidget(box)
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == tab:
+                self.tabs.setCurrentIndex(i)
+
+    def _rule_item(self, rule, item: QListWidgetItem | None = None) -> QListWidgetItem:
+        from dataclasses import replace
+
+        item = item or QListWidgetItem()
+        if item.listWidget() is None:
+            self.rules.addItem(item)
+        item.setText(self.service.describe_rule(replace(rule, on=True)))
+        item.setData(Qt.ItemDataRole.UserRole, rule)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if rule.on else Qt.CheckState.Unchecked)
+        item.setToolTip("Ticked: the rule is on. Double-click to change it.")
+        return item
+
+    def _rules_shown(self) -> list:
+        from dataclasses import replace
+
+        found = []
+        for i in range(self.rules.count()):
+            item = self.rules.item(i)
+            rule = item.data(Qt.ItemDataRole.UserRole)
+            if rule is not None:
+                found.append(replace(rule, on=item.checkState() == Qt.CheckState.Checked))
+        return found
+
+    def _add_rule(self) -> None:
+        from .dialogs import RuleDialog
+
+        dialog = RuleDialog(self, self.service, None, self.plan, "Add a rule")
+        if dialog.exec() and dialog.chosen is not None:
+            self._rule_item(dialog.chosen)
+
+    def _change_rule(self) -> None:
+        from dataclasses import replace
+
+        from .dialogs import RuleDialog
+
+        item = self.rules.currentItem()
+        rule = item.data(Qt.ItemDataRole.UserRole) if item else None
+        if rule is None:
+            return
+        rule = replace(rule, on=item.checkState() == Qt.CheckState.Checked)
+        dialog = RuleDialog(self, self.service, rule, self.plan)
+        if dialog.exec() and dialog.chosen is not None:
+            self._rule_item(dialog.chosen, item)
+
+    def _option(self, name: str) -> QWidget:
+        title, text = OPTION_TEXT[name]
+        holder = QWidget()
+        col = QVBoxLayout(holder)
+        col.setContentsMargins(0, 4, 0, 4)
+        box = QCheckBox(title, checked=self.service.option(name))
+        self.options[name] = box
+        col.addWidget(box)
+        col.addWidget(hint(text))
+        return holder
+
+    def _forget_answers(self) -> None:
+        if QMessageBox.question(self, "Settings", "Forget every remembered AI answer?") == QMessageBox.StandardButton.Yes:
+            self.service.forget_ai_answers()
+
+    def accept(self) -> None:
+        self.service.set_autonomy(self.level.value())
+        self.service.set_ask_everything(self.ask_all.isChecked())
+        for name, box in self.options.items():
+            self.service.set_option(name, box.isChecked())
+        self.ai_box.apply()
+        self.privacy_mode.apply()
+        self.privacy_lists.apply()
+        self.service.restore_rules(self._rules_shown())
+        super().accept()

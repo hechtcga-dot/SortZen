@@ -49,8 +49,11 @@ jobs:
           pip install wheel
           pip install --force-reinstall --no-deps --no-cache-dir --no-binary pyinstaller "pyinstaller>=6,<7"
 
+      - name: Meaning model
+        run: python packaging/get_meaning_model.py
+
       - name: Run tests
-        run: python -m unittest discover -s tests -t . -v
+        run: python -X faulthandler -m unittest discover -s tests -t . -v
 
       - name: Build icon
         run: python packaging/make_icon.py
@@ -107,6 +110,14 @@ jobs:
           for ($i = 0; $i -lt 60 -and (Test-Path (Join-Path $app "SortZen.exe")); $i++) { Start-Sleep 1 }
           if (Test-Path (Join-Path $app "SortZen.exe")) { throw "Program files were not removed" }
 
+      - name: Zip the installer (browsers that block unsigned programs let a zip through)
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\SortZen-Setup-*.exe | Select-Object -First 1
+          $zip = Join-Path dist ($setup.BaseName + ".zip")
+          Compress-Archive -Path $setup.FullName, dist\README.txt -DestinationPath $zip -Force
+          Get-Item $zip | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
       - uses: actions/upload-artifact@v4
         with:
           name: SortZen-windows
@@ -124,10 +135,13 @@ jobs:
           name: SortZen ${{ github.event.inputs.release_tag || github.ref_name }}
           prerelease: true
           body: |
-            Alpha, plan only: SortZen shows what it would do and moves nothing.
+            Alpha test build. SortZen shows its plan first and moves files only after you confirm; every move can be undone.
+            README.txt lists what's new in this version.
             Download SortZen-Setup-*.exe below and run it (no administrator rights needed).
+            If your browser blocks the .exe, download SortZen-Setup-*.zip instead, open it and run the setup file inside.
             Windows may show "Windows protected your PC": click "More info", then "Run anyway".
             README.txt explains how to use it.
           files: |
             dist/SortZen-Setup-*.exe
+            dist/SortZen-Setup-*.zip
             dist/README.txt

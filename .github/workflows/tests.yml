@@ -1,0 +1,39 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -r requirements.txt
+      - name: Meaning model
+        run: python packaging/get_meaning_model.py
+      - name: Keep the meaning model
+        uses: actions/upload-artifact@v4
+        with:
+          name: meaning-model
+          path: src/sortzen/meaning/model
+          retention-days: 30
+      - name: Tests
+        run: python -X faulthandler -m unittest discover -s tests -t . -v
+      - name: Meaning score
+        continue-on-error: true
+        run: python -m tests.meaning_score
+      - name: Self-test
+        run: python packaging/launcher.py --self-test=self_test.json
+      - name: Self-test report
+        if: always()
+        run: if exist self_test.json type self_test.json
+        shell: cmd

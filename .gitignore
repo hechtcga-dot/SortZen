@@ -11,3 +11,4 @@ dist/
 .env
 *API_KEY*
 *.key
+src/sortzen/meaning/model/
