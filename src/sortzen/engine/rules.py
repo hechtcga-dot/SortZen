@@ -5,6 +5,7 @@
 - A rule is suggested when users send two or more files to the same folder and their names
   share a word: only when the rule would also place other files in the plan, never moves a
   file SortZen is already sure belongs elsewhere, and was not turned down before.
+- For a session, several rules can be suggested for one folder, one for each name users' files share.
 """
 from __future__ import annotations
 
@@ -218,6 +219,85 @@ def suggest_rule(examples: list[str], destination: str, others: list[tuple[str, 
         return None
     covered, _, _, rule, gain = max(candidates, key=lambda c: (c[0], c[1], c[2]))
     return RuleSuggestion(rule, covered, gain)
+
+
+GENERIC = {"setup", "install", "installer", "window", "windows", "win", "portable", "release", "version", "final",
+           "copy", "download", "update", "new", "old", "latest", "beta", "alpha", "main", "master", "file",
+           "document", "draft", "scan", "image", "photo", "img", "dsc", "screenshot", "untitled", "readme", "note"}
+
+
+def _name_parts(name: str) -> list[tuple[str, str]]:
+    """Ways a rule can pick out a name, in the order they come in it: ("contains", text) for two words side by
+    side ("tide log") or a run-together name ("harbormap", whole, so "harbor" alone isn't taken for it), and
+    ("word", w) for a word. Common words such as "setup" or "windows" are left out."""
+    found = []
+    raws = re.findall(r"[A-Za-z]{2,}|\S", stem_of(name))
+    for i, raw in enumerate(raws):
+        parts = [p for p in words(raw) if len(p) >= 3] if len(raw) >= 3 else []
+        if len(parts) > 1:
+            found.append(("contains", raw.lower()))
+        elif parts and parts[0] not in GENERIC:
+            found.append(("word", parts[0]))
+            after = raws[i + 1] if i + 1 < len(raws) else ""
+            if after.isalpha() and len(after) >= 3 and words(after) and words(after)[0] not in GENERIC:
+                found.append(("contains", f"{raw} {after}".lower()))
+    return list(dict.fromkeys(found))
+
+
+def suggest_rules(examples: list[str], destination: str, others: list[tuple[str, str | None, int]],
+                  rules: list[Rule], declined: set[str], elsewhere: list[str] = (), limit: int = 4
+                  ) -> list[RuleSuggestion]:
+    """Several rules for the files and folders users sent to ``destination`` (their names in ``examples``): one
+    for each name part shared by two or more of them ("Tide Log" files, "Harbor Map" files), the part covering
+    the most first. A rule never takes a name users sent to another folder (``elsewhere``) or a file SortZen is
+    sure belongs elsewhere; one that places nothing more today is kept when three or more names share it. Names
+    a rule already sends there are left out."""
+    if len(examples) < MIN_EXAMPLES:
+        return []
+    known = {r.key for r in rules} | set(declined)
+    here = [r for r in rules if os.path.normcase(r.destination) == os.path.normcase(destination)]
+    left = [n for n in dict.fromkeys(examples) if not any(r.matches(n) for r in here)]   # a rule has them
+    found: list[RuleSuggestion] = []
+    tried: set[str] = set()
+    while left and len(found) < limit:
+        best = None
+        order = {}
+        for name in left:
+            for at, part in enumerate(_name_parts(name)):
+                order[part] = min(order.get(part, at), at)
+        for how, text in order:
+            if (how, text) in tried:
+                continue
+            rule = Rule(text, destination) if how == "word" else Rule("", destination, contains=text)
+            count = sum(1 for n in left if rule.matches(n))
+            if count < MIN_EXAMPLES:
+                continue
+            if rule.key in known or any(rule.matches(n) for n in elsewhere):
+                tried.add((how, text))
+                continue
+            gain, harm = [], 0
+            for path, current, percent in others:
+                if not rule.matches(os.path.basename(path)):
+                    continue
+                if current and os.path.normcase(current) == os.path.normcase(destination):
+                    continue
+                if current and percent >= SURE_ELSEWHERE:
+                    harm += 1
+                    break
+                gain.append(path)
+            if harm or (not gain and count < MIN_EXAMPLES + 1):
+                tried.add((how, text))
+                continue
+            score = (count, len(gain), how == "contains", -order[(how, text)], len(text))
+            if best is None or score > best[0]:
+                best = (score, rule, gain)
+        if best is None:
+            break
+        _, rule, gain = best
+        covered = [n for n in left if rule.matches(n)]
+        found.append(RuleSuggestion(rule, len(covered), gain))
+        left = [n for n in left if n not in covered]
+    return found
 
 
 def _swap(path: str | None, old: str, new: str) -> str | None:

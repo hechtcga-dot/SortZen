@@ -294,6 +294,25 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(narrower.rule, Rule("invoice", "/s/Invoices", ".pdf"))      # avoids the sure picture
 
 
+    def test_several_rules_for_one_folder(self):
+        from sortzen.engine.rules import Rule, suggest_rules
+
+        examples = ["HarborMap-1.6-setup.exe", "HarborMap_1.5.zip", "harbormap-main", "Tide Log-windows",
+                    "Tide Log notes.txt", "Tide Log-1.2.msi", "Weather sketch.exe"]
+        others = [("/d/HarborMap-1.7.exe", None, 0), ("/d/Tide Log-1.3.msi", "/s/Downloads old", 40),
+                  ("/d/Harbor walk.jpg", "/s/Photos", 95), ("/d/setup-printer.exe", "/s/Drivers", 95)]
+        found = suggest_rules(examples, "/s/Programs", others, [], set(), elsewhere=["Tide pool notes.txt"])
+        rules = [f.rule for f in found]
+        self.assertEqual(rules[0], Rule("", "/s/Programs", contains="harbormap"))   # run-together name: whole
+        self.assertEqual(found[0].examples, 3)
+        self.assertEqual(found[0].matches, ["/d/HarborMap-1.7.exe"])
+        self.assertEqual(rules[1], Rule("", "/s/Programs", contains="tide log"))   # the two words side by side
+        self.assertEqual(suggest_rules(examples[3:6], "/s/Programs", [], [], set(), ["Tide pool notes.txt"]
+                                       )[0].rule.contains, "tide log")  # not "tide": a name sent elsewhere has it
+        self.assertEqual(len(rules), 2)                              # no rule for "setup" or one name alone
+        self.assertEqual(suggest_rules(examples, "/s/Programs", others, rules, set()), [])   # made already
+
+
 class ProgramsAndFamiliesTest(unittest.TestCase):
     """Versions and copies of one thing go into one folder; programs are never picked apart."""
 
