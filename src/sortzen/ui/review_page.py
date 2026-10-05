@@ -1,22 +1,26 @@
-"""The Review tab: the session's plan, batch by batch, surest first, before anything moves.
+"""The Review tab: the whole plan on one screen, before anything moves and again after.
 
-A batch is the files that carry the same labels, shown in a clean tree of the folders they go to
-(folders still to be made are marked NEW). Dragging files, or a new folder, onto another folder
-changes the plan and SortZen learns from it. The box on the right shows the selected file's
-labels, why it goes there and a note, or the selected folder's rules. Confirm keeps the batch's
-plan and goes to the next; after the last batch the Move window shows everything that will move.
+One tree of the folders files go to (folders still to be made are marked NEW): the files and
+folders coming, the files already there (grey), and the ones SortZen is less sure of marked
+"check" ("Show only what to check" leaves only those). Dragging files or folders onto another
+folder changes the plan and SortZen learns from it. The box on the right shows the selected
+file's labels, why it goes there and a note, or the selected folder's rules; Rules… lists them
+all. Move shows everything that will move; after a move the screen comes back with everything
+where it is now, to change more and move again.
 """
 from __future__ import annotations
 
 import os
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
+    QAbstractItemView, QCheckBox, QFrame, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..engine.planner import TIDY
+from . import theme
 from .catalog_page import CategoryTree, paths_mime
 from .opening import open_on_double_click
 from ..services.file_facts import day
@@ -81,6 +85,11 @@ class ReviewPage(QWidget):
                                    "files move into it")
         self.new_button.clicked.connect(lambda: self.new_folder())
         head.addWidget(self.new_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.rules_button = QPushButton("Rules…")
+        self.rules_button.setToolTip("Every rule: what it matches and where its files go. Change, switch off or "
+                                     "remove them; the plan is made again with them")
+        self.rules_button.clicked.connect(lambda: self.show_rules())
+        head.addWidget(self.rules_button, 0, Qt.AlignmentFlag.AlignTop)
         self.group_button = QPushButton("Too many folders?")
         self.group_button.setToolTip("Put the selected folders (or the look-alike folders in the selected folder) "
                                      "together into one new folder, such as “Old versions”")
@@ -162,118 +171,117 @@ class ReviewPage(QWidget):
         footer = QFrame(objectName="footer")
         row = QHBoxLayout(footer)
         row.setContentsMargins(0, 12, 0, 12)
-        self.previous_button = QPushButton("Previous batch")
-        self.previous_button.clicked.connect(lambda: self.show_batch(self.flow.review_index() - 1))
-        row.addWidget(self.previous_button)
+        self.only_check = QCheckBox("Show only what to check")
+        self.only_check.setToolTip("Only the files and folders SortZen is less sure of, and the folders they go to")
+        self.only_check.toggled.connect(lambda _: self.refresh_plan())
+        row.addWidget(self.only_check)
+        self.show_there = QCheckBox("Show files already there", checked=True)
+        self.show_there.setToolTip("List the files already in each folder too (grey), not only the ones coming")
+        self.show_there.toggled.connect(lambda _: self.refresh_plan())
+        row.addWidget(self.show_there)
         self.footer_text = QLabel(objectName="hint")
         self.footer_text.setWordWrap(True)
         row.addWidget(self.footer_text, 1)
-        self.skip_button = QPushButton("Skip for now")
-        self.skip_button.clicked.connect(self.skip)
-        row.addWidget(self.skip_button)
-        self.confirm_button = QPushButton("Confirm and next batch", objectName="primary")
-        self.confirm_button.clicked.connect(self.confirm)
-        row.addWidget(self.confirm_button)
+        self.move_button = QPushButton("Move…", objectName="primary")
+        self.move_button.clicked.connect(self.move)
+        row.addWidget(self.move_button)
         col.addWidget(footer)
         self._path = None
+        self._files_by_folder: dict[str, list] = {}
+        self._filled: set[str] = set()
+        self.tree.itemExpanded.connect(self._fill_folder)
 
-    # ---------------------------------------------------------------- batches
+    # ---------------------------------------------------------------- the whole plan, at once
     def set_flow(self, flow) -> None:
         self.flow = flow
         flow.start_review(flow.plan)
         self._choices = self.service.destination_choices(flow.plan)
-        self.show_batch(flow.review_index())
+        self.only_check.setChecked(False)
+        self.refresh_plan()
 
-    def current(self):
-        if self.flow is None or not self.flow.review:
-            return None
-        return self.flow.review[self.flow.review_index()]
-
-    def show_batch(self, index: int | None = None) -> None:
+    def refresh_plan(self) -> None:
+        """The plan as one tree: where everything goes, the files and folders to check marked."""
         if self.flow is None:
             return
-        if index is not None:
-            self.flow.show_review(index)
-        review = self.flow.review
-        r = self.current()
-        if r is None:
-            self.title.setText("Nothing to move")
-            self.subtitle.setText("The plan leaves every file where it is.")
-            self.tree.clear()
-            self.confirm_button.setText("Done")
-            return
-        i = self.flow.review_index()
-        name = r.batch.title.split(" · ")[0]
-        self.title.setText(f"Batch {i + 1} of {len(review)} · {name}")
-        n = len(r.batch.paths) or len(r.folders)
-        what = f"{n:,} file{'s' if n != 1 else ''}" if r.batch.paths else f"{n:,} folder{'s' if n != 1 else ''}"
-        if self.flow.is_reviewed(r) and r.sure:
-            self.subtitle.setText(f"SortZen is sure of these {what}: they need no check, but you can still change "
-                                  "where they go.")
-        elif self.flow.is_reviewed(r):
-            self.subtitle.setText(f"Confirmed. These {what} move when you confirm the last batch.")
-        elif r.batch.paths:
-            labels = "the same labels" if r.batch.labels else "no labels"
-            self.subtitle.setText(f"Surest first. These {what} carry {labels}; check where they go, then confirm.")
+        files, folders = self.flow.review_files(), self.flow.moving_folders()
+        unplaced, to_check = self.flow.unplaced_files(), self.flow.to_check()
+        places = {_key(s.destination) for s in files} | {_key(f.destination) for f in folders.values()}
+        what = [f"{len(files):,} file{'s' if len(files) != 1 else ''}"] if files else []
+        if folders:
+            what.append(f"{len(folders):,} folder{'s' if len(folders) != 1 else ''}")
+        moved = self.flow.session.moved
+        if what:
+            self.title.setText(f"{' and '.join(what)} go into {len(places):,} folder{'s' if len(places) != 1 else ''}")
         else:
-            self.subtitle.setText(f"These {what} move as they are; check where they go, then confirm.")
-        self._fill(r)
-        files = sum(len(x.batch.paths) for x in review)
-        self.footer_text.setText(f"Nothing moves until the last batch. Batches 1 to {len(review)} hold {files:,} "
-                                 "files.")
-        self.previous_button.setEnabled(i > 0)
-        last = i >= len(review) - 1
-        self.confirm_button.setText("Confirm and move…" if last else "Confirm and next batch")
-        self.skip_button.setText("Skip to the move…" if last else "Skip for now")
+            self.title.setText("Everything is in place" if moved else "Nothing to move")
+        if not what:
+            self.subtitle.setText((f"{moved:,} files moved in this session. " if moved else "") +
+                                  "Drag files or folders onto another folder to change anything, then Move again. "
+                                  "Edit › Undo a move puts a move back.")
+        elif to_check:
+            self.subtitle.setText(f"SortZen is sure of the rest; {to_check:,} {'is' if to_check == 1 else 'are'} "
+                                  "marked “check”: it is less sure where they go. Drag anything to change it. Nothing "
+                                  "moves until you click Move.")
+        else:
+            self.subtitle.setText("SortZen is sure of all of it. Drag anything to change it. Nothing moves until you "
+                                  "click Move.")
+        extra = f" · {len(unplaced):,} with no folder yet stay where they are" if unplaced else ""
+        self.footer_text.setText(f"{to_check:,} to check{extra}. Every move can be undone.")
+        self.only_check.setText(f"Show only what to check ({to_check:,})")
+        self.only_check.setEnabled(bool(to_check) or self.only_check.isChecked())
+        self.rules_button.setText(f"Rules ({len(self.service.rules()):,})…")
+        n = len(files) + len(folders)
+        self.move_button.setText(f"Move {n:,}…" if n else "Move…")
+        self.move_button.setEnabled(bool(n))
+        self._fill(files, folders, unplaced)
 
-    def _fill(self, r) -> None:
+    def _fill(self, files: list, moving: dict, unplaced: list) -> None:
+        expanded = {_key(i.data(0, PATH)) for i in self.items.values() if i.isExpanded()}
+        selected = [i.data(0, PATH) for i in self.tree.selectedItems()]
+        scroll = self.tree.verticalScrollBar().value()
+        first_time = not self.items
         self.tree.clear()
-        self.items = {}
-        plan = self.flow.plan
+        self.items, self._filled = {}, set()
+        only = self.only_check.isChecked()
+        unsure = self.flow.is_unsure
         planned = {_key(f) for f in self.flow.planned_folders()}
-        files = self.flow.files_in(r)
-        kept = [f for f in plan.folders if f.path in set(r.folders)]
-        moving = self.flow.moving_folders()             # shown where they go, not where they are
-        in_batch = {_key(f.path) for f in kept}
-        wanted = {_key(s.destination): 0 for s in files if s.destination}
+        self._files_by_folder = {}
         for s in files:
-            if s.destination:
-                wanted[_key(s.destination)] += 1
-        for f in kept:
-            wanted.setdefault(_key(f.destination), 0)
+            if not only or unsure(s):
+                self._files_by_folder.setdefault(_key(s.destination), []).append(s)
         roots = [*self.service.destination_folders(),
                  *[f["path"] for f in self.service.source_folders() if f["mode"] == TIDY]]
+
         def moves(key: str) -> bool:
             return any(key == m or key.startswith(m + os.sep) for m in moving)
 
-        folders = {_key(f): f for f in [*self._choices, *self.flow.planned_folders(), *[d for d in
-                   [s.destination for s in files] + [f.destination for f in moving.values()] if d]]
+        shown_moving = {k: f for k, f in moving.items() if not only or f.percent < self.flow.level()}
+        wanted = set(self._files_by_folder) | {_key(f.destination) for f in shown_moving.values()}
+        folders = {_key(f): f for f in [*self._choices, *self.flow.planned_folders(),
+                                        *[s.destination for s in files], *[f.destination for f in moving.values()]]
                    if not moves(_key(f))}
         for key in sorted(folders, key=lambda k: (k.count(os.sep), k)):
+            if only and not any(w == key or w.startswith(key + os.sep) for w in wanted):
+                continue
             self._folder_item(folders[key], planned, roots)
-        for key, count in wanted.items():
-            item = self.items.get(key)
-            if item is None:
-                continue
-            if count:
-                self._detail(item, f"· {count} file{'s' if count != 1 else ''}", key in planned)
-            parent = item
-            while parent is not None:
-                parent.setExpanded(True)
-                parent = parent.parent()
-        facts = self.service.file_facts([s.path for s in files])
-        for s in sorted(files, key=lambda s: os.path.basename(s.path).lower()):
-            parent = self.items.get(_key(s.destination)) if s.destination else None
-            if parent is None:
-                continue
-            item = QTreeWidgetItem(parent, [os.path.basename(s.path)])
-            item.setData(0, PATH, s.path)
-            item.setData(0, KIND, "file")
-            item.setToolTip(0, s.path)
-            added = day(facts[s.path].added)
-            item.setText(1, f"from {self.service.display(s.current_folder)}" + (f" · {added}" if added else ""))
-            item.setForeground(1, self.palette().placeholderText())
-        for key, f in sorted(moving.items(), key=lambda kv: os.path.basename(kv[1].path).lower()):
+        totals: dict[str, list[int]] = {}
+        for s in files:
+            counts = totals.setdefault(_key(s.destination), [0, 0])
+            counts[0] += 1
+            counts[1] += unsure(s)
+        self._in_place = self.flow.files_in_place() if self.show_there.isChecked() and not only else {}
+        for key, item in self.items.items():
+            count, check = totals.get(key, (0, 0))
+            there = len(self._in_place.get(key, []))
+            parts = [f"{count:,} coming" + (f" ({check:,} to check)" if check else "")] if count else []
+            if there:
+                parts.append(f"{there:,} there")
+            text = "· " + " · ".join(parts) if parts else ""
+            if text or key in planned:
+                self._detail(item, text, key in planned)
+            if self._files_by_folder.get(key) or there:
+                item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+        for key, f in sorted(shown_moving.items(), key=lambda kv: os.path.basename(kv[1].path).lower()):
             parent = self.items.get(_key(f.destination))
             if parent is None:
                 continue
@@ -281,25 +289,88 @@ class ReviewPage(QWidget):
             item.setData(0, PATH, f.path)
             item.setData(0, KIND, "kept")
             item.setToolTip(0, f"{f.path}\nMoves here as it is, with everything in it")
-            item.setText(1, f"moves here as it is · from {self.service.display(os.path.dirname(f.path))} · "
+            check = "check · " if f.percent < self.flow.level() else ""
+            item.setText(1, f"{check}moves here as it is · from {self.service.display(os.path.dirname(f.path))} · "
                             f"{f.files:,} file{'s' if f.files != 1 else ''}")
-            item.setForeground(1, self.palette().placeholderText())
-            if key in in_batch:
-                above = parent
-                while above is not None:
+            item.setForeground(1, QColor(theme.WARN_TEXT) if check else self.palette().placeholderText())
+        if unplaced and not only:
+            group = QTreeWidgetItem(self.tree, [f"No folder yet · {len(unplaced):,}"])
+            group.setData(0, KIND, "unplaced")
+            group.setText(1, "they stay where they are unless you drag them onto a folder")
+            group.setForeground(1, self.palette().placeholderText())
+            for s in sorted(unplaced, key=lambda s: os.path.basename(s.path).lower()):
+                self._file_item(group, s, unplaced=True)
+        for key, item in self.items.items():               # open what was open, and where there is something to check
+            count, check = totals.get(key, (0, 0))
+            if key in expanded or item.parent() is None or (check and (only or first_time)):
+                item.setExpanded(True)
+                above = item.parent()
+                while above is not None and (check or key in expanded):
                     above.setExpanded(True)
                     above = above.parent()
         if not self._widened:                       # once; after that the width users chose stays
             self.tree.resizeColumnToContents(0)
             self.tree.setColumnWidth(0, min(max(self.tree.columnWidth(0) + 24, 280), 520))
             self._widened = True
-        first = next((i for i in self.tree.findItems("*", Qt.MatchFlag.MatchWildcard | Qt.MatchFlag.MatchRecursive)
-                      if i.data(0, KIND) in ("file", "kept")), None)
-        if first is not None:
-            first.setSelected(True)
-            self.tree.setCurrentItem(first)
-            self.tree.scrollToItem(first)
+        self.tree.verticalScrollBar().setValue(scroll)
+        chosen = [self._find(p) for p in selected]
+        chosen = [i for i in chosen if i is not None]
+        for item in chosen:
+            item.setSelected(True)
+        if not chosen:
+            moving = {_key(s.path) for s in files}
+            first = next((i for i in self._all_items() if i.data(0, KIND) == "file"
+                          and _key(i.data(0, PATH)) in moving), None)
+            if first is not None:
+                first.setSelected(True)
+                self.tree.setCurrentItem(first)
         self._show_details()
+
+    def _fill_folder(self, item) -> None:
+        """A folder's files are listed when it is first opened, so a big plan shows at once."""
+        key = _key(item.data(0, PATH) or "")
+        if item.data(0, KIND) != "folder" or key in self._filled:
+            return
+        self._filled.add(key)
+        files = sorted(self._files_by_folder.get(key, []), key=lambda s: os.path.basename(s.path).lower())
+        there = sorted(getattr(self, "_in_place", {}).get(key, []), key=lambda p: os.path.basename(p).lower())
+        facts = self.service.file_facts([s.path for s in files] + there)
+        for s in files:
+            self._file_item(item, s, facts=facts)
+        for path in there:                      # already in this folder: grey
+            child = QTreeWidgetItem(item, [os.path.basename(path)])
+            child.setData(0, PATH, path)
+            child.setData(0, KIND, "file")
+            child.setToolTip(0, path)
+            added = day(facts[path].added)
+            child.setText(1, "already here" + (f" · {added}" if added else ""))
+            for column in (0, 1):
+                child.setForeground(column, self.palette().placeholderText())
+
+    def _file_item(self, parent, s, unplaced: bool = False, facts=None) -> QTreeWidgetItem:
+        item = QTreeWidgetItem(parent, [os.path.basename(s.path)])
+        item.setData(0, PATH, s.path)
+        item.setData(0, KIND, "file")
+        item.setToolTip(0, s.path)
+        facts = facts or self.service.file_facts([s.path])
+        added = day(facts[s.path].added)
+        where = f"from {self.service.display(s.current_folder)}" + (f" · {added}" if added else "")
+        check = not unplaced and self.flow.is_unsure(s)
+        item.setText(1, f"check · {s.percent}% sure · {where}" if check else where)
+        item.setForeground(1, QColor(theme.WARN_TEXT) if check else self.palette().placeholderText())
+        return item
+
+    def _all_items(self):
+        stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            item = stack.pop(0)
+            yield item
+            stack.extend(item.child(i) for i in range(item.childCount()))
+
+    def _find(self, path: str):
+        if _key(path) in self.items:
+            return self.items[_key(path)]
+        return next((i for i in self._all_items() if i.data(0, PATH) and _key(i.data(0, PATH)) == _key(path)), None)
 
     def _folder_item(self, folder: str, planned: set, roots: list[str]) -> QTreeWidgetItem | None:
         key = _key(folder)
@@ -370,18 +441,17 @@ class ReviewPage(QWidget):
             remove.setEnabled(not os.path.isdir(folder))
             add_file_actions(menu, [folder], self.window.open_folder, delete=False)
         else:
+            files = [p for p in self.selected_files() if self.flow.plan.for_path(p) is not None]
+            if files:
+                menu.addAction("Leave where it is" if len(files) == 1 else f"Leave these {len(files)} where they are",
+                               lambda: self.leave_here(files))
             add_file_actions(menu, self.selected_files(), self.window.open_folder)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
 
     def drop(self, paths: list[str]) -> None:
-        """Files that went to “To delete” leave the Review batches."""
-        if self.flow is None or not self.flow.review:
-            return
-        gone = {_key(p) for p in paths}
-        for r in self.flow.review:
-            r.batch.paths = [p for p in r.batch.paths if _key(p) not in gone]
-            r.folders = [p for p in r.folders if _key(p) not in gone]
-        self.show_batch()
+        """Files that went to “To delete” have left the plan already: the tree follows."""
+        if self.flow is not None:
+            self.refresh_plan()
 
     def _selected(self) -> list[QTreeWidgetItem]:
         return self.tree.selectedItems()
@@ -415,7 +485,14 @@ class ReviewPage(QWidget):
                 self.chips.addWidget(chip)
             where = self.service.display(s.destination) + (" (new)" if s.new_folder else "") if s else ""
             reasons = "; ".join(r.text for r in (s.reasons if s else []) if r.supports)
-            self.details_why.setText(f"Goes to {where}: {reasons}." if reasons else f"Goes to {where}.")
+            if s is None:
+                self.details_why.setText("Already in this folder. Drag it onto another folder to move it there.")
+            elif not s.destination:
+                self.details_why.setText("SortZen has no folder for it yet: it stays where it is unless you drag "
+                                         "it onto a folder.")
+            else:
+                sure = f" SortZen is {s.percent}% sure: check it." if self.flow.is_unsure(s) else ""
+                self.details_why.setText((f"Goes to {where}: {reasons}." if reasons else f"Goes to {where}.") + sure)
             self.details_facts.setText(describe_facts(self.service.file_facts([path])[path]))
             self.details_facts.show()
             self.note.setPlainText(self.service.file_note(path))
@@ -519,20 +596,20 @@ class ReviewPage(QWidget):
             for p in moved_folders:
                 new = self.flow.move_planned_folder(p, folder)
                 self.window._push_undo("Move a folder", lambda a=new, b=os.path.dirname(p):
-                                       (self.flow.move_planned_folder(a, b), self.show_batch()))
+                                       (self.flow.move_planned_folder(a, b), self.refresh_plan()))
         except ValueError as exc:
             QMessageBox.information(self, "Move a folder", str(exc))
         if files:
             before = self.flow.move_file(files, folder)
             self.window._push_undo("Change where files go", lambda: (self.flow.undo_move_file(before),
-                                                                     self.show_batch()))
+                                                                     self.refresh_plan()))
             self.window.statusBar().showMessage(
                 f"{len(files):,} file{'s' if len(files) != 1 else ''} now go to {self.service.display(folder)}. "
                 "SortZen learns from it.", 6000)
         if existing:
             self.move_folders(existing, folder)
             return
-        self.show_batch()
+        self.refresh_plan()
 
     def move_folders(self, folders: list[str], target: str) -> None:
         """Folders go, as they are, into another folder when the files move; SortZen remembers it."""
@@ -543,11 +620,11 @@ class ReviewPage(QWidget):
             return
         n = len(folders)
         self.window._push_undo("Move folders" if n > 1 else "Move a folder",
-                               lambda: (self.flow.undo_move_folders(undo), self.show_batch()))
+                               lambda: (self.flow.undo_move_folders(undo), self.refresh_plan()))
         self.window._report(f"{n:,} folder{'s' if n != 1 else ''} go{'es' if n == 1 else ''} into "
                             f"{self.service.display(target)} as {'they are' if n > 1 else 'it is'}. Nothing moves "
-                            "until you confirm the last batch.")
-        self.show_batch()
+                            "until you click Move.")
+        self.refresh_plan()
 
     def selected_folders(self) -> list[str]:
         """Existing folders chosen in the tree (not the folders added themselves)."""
@@ -583,10 +660,10 @@ class ReviewPage(QWidget):
         except ValueError as exc:
             QMessageBox.information(self, "Too many folders", str(exc))
             return
-        self.window._push_undo("Put folders together", lambda: (self.flow.undo_group_folders(undo), self.show_batch()))
+        self.window._push_undo("Put folders together", lambda: (self.flow.undo_group_folders(undo), self.refresh_plan()))
         self.window._report(f"{len(folders):,} folders go into “{os.path.basename(new)}” (new). Nothing moves until "
-                            "you confirm the last batch.")
-        self.show_batch()
+                            "you click Move.")
+        self.refresh_plan()
 
     def _children(self, folder: str) -> list[str]:
         """The folders in a folder: those in it now and those the plan moves into it."""
@@ -618,8 +695,8 @@ class ReviewPage(QWidget):
         except ValueError as exc:
             QMessageBox.information(self, "New folder", str(exc))
             return None
-        self.window._push_undo("New folder", lambda: (self.flow.session.new_folders.remove(folder), self.show_batch()))
-        self.show_batch()
+        self.window._push_undo("New folder", lambda: (self.flow.session.new_folders.remove(folder), self.refresh_plan()))
+        self.refresh_plan()
         item = self.items.get(_key(folder))
         if item is not None:
             self.tree.clearSelection()
@@ -636,26 +713,29 @@ class ReviewPage(QWidget):
         except ValueError as exc:
             QMessageBox.information(self, "Delete folder", str(exc))
             return
-        self.window._push_undo("Delete folder", lambda: (self.flow.undo_delete_folder(undo), self.show_batch()))
+        self.window._push_undo("Delete folder", lambda: (self.flow.undo_delete_folder(undo), self.refresh_plan()))
         self.window.statusBar().showMessage(f"“{os.path.basename(folder)}” deleted from the plan; its files go to "
                                             f"{self.service.display(os.path.dirname(folder))}.", 6000)
-        self.show_batch()
+        self.refresh_plan()
 
     # ---------------------------------------------------------------- footer
-    def confirm(self) -> None:
-        r = self.current()
-        if r is None:
-            return
+    def move(self) -> None:
         self._save_note()
-        if self.flow.confirm_review(r):
+        if self.flow is not None:
             self.window.session_move(self.flow)
-        else:
-            self.show_batch()
-        self.window.refresh_sessions()
 
-    def skip(self) -> None:
-        i = self.flow.review_index()
-        if i >= len(self.flow.review) - 1:
-            self.window.session_move(self.flow)
-        else:
-            self.show_batch(i + 1)
+    def show_rules(self) -> None:
+        """Every rule in one list (Edit › Rules…); changed rules make the plan again, with the session kept."""
+        before = [r.key for r in self.service.rules()] + [str(r.on) for r in self.service.rules()]
+        self.window.show_settings("Rules")
+        if [r.key for r in self.service.rules()] + [str(r.on) for r in self.service.rules()] != before:
+            self.window.replan_review()
+
+    def leave_here(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        undo = self.flow.leave_here(paths)
+        self.window._push_undo("Leave where it is", lambda: (self.flow.undo_leave_here(undo), self.refresh_plan()))
+        self.window._report(f"{len(paths):,} file{'s' if len(paths) != 1 else ''} stay where "
+                            f"{'they are' if len(paths) != 1 else 'it is'}. SortZen remembers it.")
+        self.refresh_plan()

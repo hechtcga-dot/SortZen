@@ -12,9 +12,9 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from ..engine.batches import Batch, catalog_batches, label_merge_suggestion, review_batches
+from ..engine.batches import Batch, catalog_batches, label_merge_suggestion
 from ..engine.duplicates import KEEP_RULES, choose_kept
-from ..engine.plan import KEEP_TOGETHER, STAYS, FolderSuggestion, Plan, Reason
+from ..engine.plan import KEEP_TOGETHER, STAYS, FolderSuggestion, Plan, Reason, Suggestion
 from ..engine.rules import rename_planned
 from ..repositories.file_index import path_key
 from ..repositories.sessions import CATALOG, DUPLICATES, MOVED, REVIEW, Session
@@ -23,7 +23,6 @@ from . import plan_view
 SETTLE = 85             # a batch this sure is settled by itself...
 SETTLE_CHECKS = 20      # ...once SortZen's guesses were checked this many times...
 SETTLE_AGREE = 0.9      # ...and matched users' choices this often
-FOLDERS_KEY = "folders kept together"
 
 
 @dataclass
@@ -33,13 +32,6 @@ class Learned:
     settled_files: int = 0
     merge: tuple[str, str] | None = None        # (label to merge, into this label)
     folder: object | None = None                # a LabelFolderSuggestion
-
-
-@dataclass
-class ReviewBatch:
-    batch: Batch
-    sure: bool = False              # every file at or above the autonomy level: confirmed without a check
-    folders: list[str] = field(default_factory=list)      # kept-together folders in this batch
 
 
 def _key(path: str) -> str:
@@ -53,7 +45,6 @@ class Flow:
         self.plan: Plan | None = None
         self.batches: list[Batch] = []
         self._history: list[tuple[dict, dict]] = []
-        self.review: list[ReviewBatch] = []
 
     def save(self) -> None:
         self.service.sessions.save(self.session)
@@ -220,7 +211,7 @@ class Flow:
         return bool(self._history)
 
     def back(self) -> bool:
-        """Undo the last batch's answer and show that batch again (at once: nothing is worked out again)."""
+        """Undo the latest answer and show that batch again (at once: nothing is worked out again)."""
         if not self._history:
             return False
         lists, settings, guesses, batches = self._history.pop()
@@ -415,7 +406,6 @@ class Flow:
     def finish_catalog(self) -> None:
         """Step 3 is done: the files still waiting go to Review as they are."""
         self.session.stage = REVIEW
-        self.session.review_batch = 0
         self.save()
 
     def agreement_text(self) -> str:
@@ -423,85 +413,100 @@ class Flow:
         return f"SortZen matched your choice in {agreed} of your last {total}" if total else ""
 
     # ---------------------------------------------------------------- Review
-    def start_review(self, plan: Plan) -> list[ReviewBatch]:
-        """The plan's moves from the folders being sorted, in batches by labels, surest first."""
+    def start_review(self, plan: Plan) -> None:
+        """Review shows the whole plan at once; folders users moved before are moved again."""
         self.plan = plan
+        self._placed = set()
         for folder, target in list(self.session.folder_moves.items()):
             if os.path.isdir(folder):
                 self._plan_folder_move(folder, target)
             else:
                 self.session.folder_moves.pop(folder)
-        records = self.service._records
-        level = 101 if self.service.ask_everything() else self.service.autonomy()
-        files = [s for s in plan.files if (records.get(s.path) is None or records[s.path].role == "source")
-                 and s.path not in plan.companions and not self.service.is_left_out(s.path)]
-        found = [ReviewBatch(b, sure=all(s.percent >= level for s in plan.files if s.path in set(b.paths)))
-                 for b in review_batches(files, self.service.labels_of, self.service.display)]
-        folders = [f for f in plan.folders if f.outcome == KEEP_TOGETHER and f.destination
-                   and _key(f.destination) != _key(os.path.dirname(f.path))]
-        if folders:
-            n = len(folders)
-            certainty = round(sum(f.percent for f in folders) / n)
-            batch = Batch(FOLDERS_KEY, f"Folders that move as they are · {n} folder{'s' if n != 1 else ''}", [],
-                          [], certainty, "", sorted({f.destination for f in folders}))
-            found.append(ReviewBatch(batch, sure=all(f.percent >= level for f in folders),
-                                     folders=[f.path for f in folders]))
-            found.sort(key=lambda r: -r.batch.certainty)
-        self.review = found
-        reviewed = {_key(p) for p in self.session.reviewed}
-        for r in found:                         # sure batches need no check
-            if r.sure:
-                for p in [*r.batch.paths, *r.folders]:
-                    if _key(p) not in reviewed:
-                        self.session.reviewed.append(p)
-                        reviewed.add(_key(p))
-        self.session.stage = REVIEW
-        self.session.review_batch = min(self.session.review_batch, max(0, len(found) - 1))
+        corrections = {path_key(p): d for p, d in self.service.corrections().items()}
+        planned = {_key(s.path) for s in plan.files}
+        for path, record in self.service._records.items():     # files in place users sent elsewhere
+            target = corrections.get(path_key(path))
+            if target and _key(path) not in planned and _key(target) != _key(os.path.dirname(path)):
+                self._plan_placed_file(path, target).reasons = [Reason(True, "You chose this folder")]
+        if self.session.stage != MOVED:
+            self.session.stage = REVIEW
         self.save()
+
+    def level(self) -> int:
+        """At or above this, SortZen is sure enough that a file needs no check."""
+        return 101 if self.service.ask_everything() else self.service.autonomy()
+
+    def _sources_files(self) -> list:
+        """The plan's files from the folders being sorted, and files already in place that users moved."""
+        if self.plan is None:
+            return []
+        records = self.service._records
+        return [s for s in self.plan.files
+                if (records.get(s.path) is None or records[s.path].role == "source" or _key(s.path) in self._placed)
+                and s.path not in self.plan.companions and not self.service.is_left_out(s.path)]
+
+    _placed: set = frozenset()
+
+    def _plan_placed_file(self, path: str, folder: str | None = None):
+        """A file already in its folder joins the plan (to go somewhere else users chose)."""
+        s = Suggestion(path, os.path.dirname(path), folder or os.path.dirname(path), 100)
+        self.plan.files.append(s)
+        self._placed = set(self._placed) | {_key(path)}
+        return s
+
+    def files_in_place(self) -> dict[str, list[str]]:
+        """Files already in the folders files go to (and the folders being tidied), by folder key; files the plan
+        moves away are left out."""
+        files = self.plan.files if self.plan else []
+        leaving = {_key(s.path) for s in files if s.destination and _key(s.destination) != _key(s.current_folder)}
+        unplaced = {_key(s.path) for s in files if not s.destination}
+        found: dict[str, list[str]] = {}
+        for path in self.service._records:
+            key = _key(path)
+            if key in leaving or key in unplaced or self.service.is_left_out(path):
+                continue
+            found.setdefault(_key(os.path.dirname(path)), []).append(path)
         return found
 
-    def review_index(self) -> int:
-        return self.session.review_batch
+    def review_files(self) -> list:
+        """The files the plan moves, from the folders being sorted."""
+        moving = list(self.moving_folders())
+        return [s for s in self._sources_files()
+                if s.destination and _key(s.destination) != _key(s.current_folder)
+                and not any(_key(s.path).startswith(m + os.sep) for m in moving)]     # those go with their folder
 
-    def show_review(self, index: int) -> None:
-        self.session.review_batch = max(0, min(index, len(self.review) - 1))
-        self.save()
+    def unplaced_files(self) -> list:
+        """Files SortZen has no folder for: they stay where they are unless users drag them somewhere."""
+        return [s for s in self._sources_files() if not s.destination]
 
-    def is_reviewed(self, r: ReviewBatch) -> bool:
-        reviewed = {_key(p) for p in self.session.reviewed}
-        members = [*r.batch.paths, *r.folders]
-        return bool(members) and all(_key(p) in reviewed for p in members)
+    def is_unsure(self, s) -> bool:
+        return s.percent < self.level()
 
-    def confirm_review(self, r: ReviewBatch) -> bool:
-        """Users checked this batch: its plan is kept (SortZen remembers each folder). Returns True when it
-        was the last batch."""
+    def to_check(self) -> int:
+        return sum(1 for s in self.review_files() if self.is_unsure(s)) + \
+            sum(1 for f in self.moving_folders().values() if f.percent < self.level())
+
+    def leave_here(self, paths: list[str]) -> dict:
+        """These files stay where they are (SortZen remembers it). Returns what Undo needs."""
         by_folder: dict[str, list[str]] = {}
-        for s in self.plan.files if self.plan else []:
-            if s.path in r.batch.paths and s.destination:
-                by_folder.setdefault(s.destination, []).append(s.path)
-        corrected = {path_key(p) for p in self.service.corrections()}
-        for folder, paths in by_folder.items():
-            paths = [p for p in paths if path_key(p) not in corrected]
-            if paths:
-                self.service.correct(paths, folder)
-        reviewed = {_key(p) for p in self.session.reviewed}
-        self.session.reviewed += [p for p in [*r.batch.paths, *r.folders] if _key(p) not in reviewed]
-        index = self.review.index(r)
-        last = index >= len(self.review) - 1
-        if not last:
-            self.session.review_batch = index + 1
-        self.save()
-        return last
+        for s in self.plan.files:
+            if s.path in set(paths):
+                by_folder.setdefault(s.current_folder, []).append(s.path)
+        return {"moves": [self.move_file(group, folder) for folder, group in by_folder.items()]}
 
-    def files_in(self, r: ReviewBatch) -> list:
-        wanted = set(r.batch.paths)
-        return [s for s in self.plan.files if s.path in wanted] if self.plan else []
+    def undo_leave_here(self, undo: dict) -> None:
+        for before in reversed(undo["moves"]):
+            self.undo_move_file(before)
 
     def move_file(self, paths: list[str], folder: str) -> dict:
         """Users dragged files to another folder in the plan; SortZen remembers it. Returns the choices before,
         for Undo."""
         paths = self.service.with_companions(self.plan, paths)
         keys = {_key(p) for p in paths}
+        planned = {_key(s.path) for s in self.plan.files}
+        for p in paths:                         # files already in place join the plan
+            if _key(p) not in planned and p in self.service._records:
+                self._plan_placed_file(p)
         guessed = {s.path: s.destination for s in self.plan.files if _key(s.path) in keys}
         previous = self.service.correct(paths, folder, guessed)
         before = {}
@@ -635,8 +640,7 @@ class Flow:
             why = self.can_move_folder(folder, target)
             if why:
                 raise ValueError(why)
-        undo = {"plan": [], "moves": dict(self.session.folder_moves), "answers": {},
-                "reviewed": list(self.session.reviewed)}
+        undo = {"plan": [], "moves": dict(self.session.folder_moves), "answers": {}}
         sources = [f["path"] for f in self.service.source_folders()]
         for folder in folders:
             f, before = self._plan_folder_move(folder, target)
@@ -646,8 +650,6 @@ class Flow:
                 key = folder_key(os.path.abspath(folder))
                 undo["answers"][key] = self.service.answers().get(key)
                 self.service.save_answers({key: target})
-            if _key(folder) not in {_key(p) for p in self.session.reviewed}:
-                self.session.reviewed.append(folder)      # users chose it: it moves with the rest
         self.save()
         return undo
 
@@ -655,7 +657,6 @@ class Flow:
         for f, (outcome, destination, percent, reasons) in undo["plan"]:
             f.outcome, f.destination, f.percent, f.reasons = outcome, destination, percent, reasons
         self.session.folder_moves = undo["moves"]
-        self.session.reviewed = undo["reviewed"]
         if undo["answers"]:
             self.service.save_answers(undo["answers"])
         self.save()
@@ -695,12 +696,13 @@ class Flow:
         return [r for r in self.service.rules() if _key(r.destination) == _key(folder)]
 
     def move_rows(self) -> list:
-        """The rows the Move window moves: every reviewed file (and the files that go with it) and folder."""
+        """What the Move window moves: every file the plan moves from the folders being sorted (with the files
+        that go with them) and every folder that moves as it is."""
         if self.plan is None:
             return []
-        reviewed = {_key(p) for p in self.session.reviewed}
-        companions = {_key(c) for c, main in self.plan.companions.items() if _key(main) in reviewed}
-        wanted = reviewed | companions
+        wanted = {_key(s.path) for s in self.review_files()}
+        wanted |= {_key(c) for c, main in self.plan.companions.items() if _key(main) in wanted}
+        wanted |= set(self.moving_folders())
         found = []
         for group in plan_view.rows(self.plan, 0).values():
             found += [r for r in group if r.moves and _key(r.path) in wanted]
@@ -713,16 +715,15 @@ class Flow:
 
     # ---------------------------------------------------------------- the start screen
     def status(self) -> str:
-        return describe(self.session, len(self.review) if self.review else 0)
+        return describe(self.session)
 
 
-def describe(session: Session, review_batches_total: int = 0) -> str:
-    """Where a session is, for the start screen: "Step 3 · 218 files left", "Review · batch 4 of 9"."""
+def describe(session: Session) -> str:
+    """Where a session is, for the start screen: "Step 3 Catalog · 218 files done", "Review: ready to move"."""
     if session.stage == MOVED:
-        return f"Moved · {session.moved:,} files"
+        return f"Moved · {session.moved:,} files · open it to look or change more"
     if session.stage == REVIEW:
-        total = f" of {review_batches_total}" if review_batches_total else ""
-        return f"Review · batch {session.review_batch + 1}{total}"
+        return "Review: ready to move"
     if session.stage == CATALOG:
         done = len(session.done) + len(session.settled) + len(session.to_review)
         return f"Step 3 Catalog · {done:,} files done"

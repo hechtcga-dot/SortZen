@@ -1069,7 +1069,7 @@ class MainWindowTest(unittest.TestCase):
         import shutil
         from unittest import mock
 
-        from sortzen.ui.review_page import KIND
+        from sortzen.ui.review_page import KIND, PATH
 
         root = Path(self.dir.name) / "folders"
         shutil.copytree(shared_test_folders() / "Downloads", root / "Downloads")
@@ -1140,10 +1140,14 @@ class MainWindowTest(unittest.TestCase):
 
         review = self.window.review_page
         flow = self.window.flow
-        i = next(i for i, r in enumerate(flow.review) if not flow.is_reviewed(r) and r.batch.paths)
-        review.show_batch(i)
-        path = flow.review[i].batch.paths[0]
+        self.assertIn(" go into ", review.title.text())                     # the whole plan on one screen
+        self.assertIn(f"Move {len(flow.review_files()) + len(flow.moving_folders()):,}", review.move_button.text())
         self.assertIn("SELECTED FILE", review.details_caption.text())
+        path = review.selected_files()[0]
+        review.only_check.setChecked(True)                                  # only what to check
+        shown = [i.data(0, PATH) for i in review._all_items() if i.data(0, KIND) == "file"]
+        self.assertTrue(all(flow.is_unsure(flow.plan.for_path(p)) for p in shown))
+        review.only_check.setChecked(False)
         review.tree.clearSelection()
         review.items[os.path.normcase(os.path.abspath(str(root / "Sorted")))].setSelected(True)
         new = review.new_folder("Jordan")
@@ -1156,16 +1160,25 @@ class MainWindowTest(unittest.TestCase):
         self.assertNotEqual(flow.plan.for_path(path).destination, new)
         self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy))      # the folder count after Undo
         with mock.patch("sortzen.ui.move_dialogs.ConfirmMoveDialog.exec", return_value=1):
-            while not self.service.jobs.busy and getattr(self.window, "result_dialog", None) is None:
-                review.confirm_button.click()
+            review.move_button.click()                                      # one Move for everything
         self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy
                                    and getattr(self.window, "result_dialog", None) is not None))
         moved = flow.session.moved
         self.assertGreater(moved, 0)
-        self.assertFalse(os.path.exists(path))                              # a confirmed file has moved
-        self.window.result_dialog.close()
-        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.start_page))
-        self.assertEqual(self.service.recent_sessions()[0][1], f"Moved · {moved:,} files")
+        self.assertFalse(os.path.exists(path))                              # it has moved
+        moved_plan = self.window.plan
+        self.window.result_dialog.close()                                   # back to the whole picture
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and self.window.plan is not moved_plan and not self.service.jobs.busy
+                                   and not self.window._plan_waiting))
+        self.assertTrue(self.service.recent_sessions()[0][1].startswith(f"Moved · {moved:,} files"))
+        self.assertIn("Rules (", review.rules_button.text())
+        self.window.show_tab(self.window.start_page)
+        before = self.window.plan
+        self.window.open_session(flow.session.file)                         # carrying on opens it again
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and self.window.plan is not before and not self.service.jobs.busy
+                                   and not self.window._plan_waiting))
 
 
 @unittest.skipIf(create_app is None, "PySide6 is not installed")

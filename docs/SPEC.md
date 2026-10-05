@@ -251,33 +251,36 @@ After the last batch the wizard closes, the plan is made again with everything l
 the **Review** tab opens with the other tabs closed (they open again from View › Tabs or
 "+ Open a tab"). Nothing has moved yet, except the copies in Step 2.
 
-**Review**: the files the plan moves, in batches of files with the same labels (split by folder
-when there are more than 60), surest first; folders that move as they are form their own
-batch. Batches at or above the "Move without asking" level are confirmed by SortZen and can
-still be changed.
-- Left: a clean folder tree of the folders files can go to, the batch's files under the folder
-  they go to, and folders still to be made marked NEW. Dragging files onto another folder
-  changes the plan and SortZen remembers it as users' choice; dragging a NEW folder moves it.
-  "New folder" makes a folder in the plan inside the selected one (made on disk when files
-  move into it); "Delete folder" deletes a folder still to be made, and its files go to the
-  folder it was in (folders that exist are deleted in Explorer).
+**Review**: the whole plan on one screen. The title says what moves ("412 files and 9 folders go
+into 23 folders"); everything SortZen is less sure of (below the "Move without asking" level) is
+marked "check", and "Show only what to check" leaves only those and the folders they go to.
+- Left: a clean folder tree of the folders files can go to. Each folder says how many files are
+  coming (and how many to check) and how many are already there; its files are listed when it is
+  opened: the ones coming, then the ones already there in grey ("Show files already there" hides
+  those). Folders still to be made are marked NEW; folders that move as they are show where they
+  go ("moves here as it is"), and the files inside them go with them. Files SortZen has no folder
+  for are listed under "No folder yet": they stay where they are unless dragged onto a folder.
+- Dragging files (also ones already in place) or folders onto another folder changes the plan
+  and SortZen remembers it as users' choice. Shift- or Ctrl-click chooses several. "New folder"
+  makes a folder in the plan inside the selected one (made on disk when files move into it);
+  "Delete folder" deletes a folder still to be made, and its files go to the folder it was in
+  (folders that exist are deleted in Explorer). Right-click › "Leave where it is" keeps files
+  where they are.
+- **Too many folders?** (button or right-click) puts the chosen folders, or the look-alike folders
+  in the chosen folder ("Report", "Report (2)", "Report-1.2"), together into one new folder users
+  name ("Report (old versions)"); the window lists them with tick boxes.
 - Right: the selected file's labels, when it was downloaded or added, its type, size, title and first
-  words, why it goes there and a note box; for a folder, its rules ("Files labelled Taxes go to
-  Documents/Taxes") with Change…, Remove and "Add a rule…".
-- Folders can be dragged onto another folder too (several at once with Shift- or Ctrl-click): they
-  move as they are when the files move, and SortZen remembers it with the session (and, for folders
-  in the folders being sorted, as their answer). Folders the plan moves are shown where they go
-  ("moves here as it is"). **Too many folders?** (button or right-click) puts the chosen folders, or
-  the look-alike folders in the chosen folder ("Report", "Report (2)", "Report-1.2"), together into
-  one new folder users name ("Report (old versions)"); the window lists them with tick boxes.
-- "Delete…" (button or right-click) moves the selected files into "To delete". Rules
-  are not shown in the tree.
-- "Confirm and next batch" keeps the batch's plan (SortZen remembers each file's folder) and
-  shows the next; "Previous batch"; "Skip for now". After the last batch the **Move window**
-  shows everything that will move ("All 9 batches reviewed. Move 412 files into 23
-  folders?"), new folders, names already taken, and the copies already in "To delete";
-  nothing moves before it. Files in skipped batches stay where they are. Every move is
-  logged and Undo puts it back. The session is then "Moved" on the start screen.
+  words, why it goes there (and how sure SortZen is when it is marked "check") and a note box; for
+  a folder, its rules with Change…, Remove and "Add a rule…". **Rules…** lists every rule; changing
+  them makes the plan again with the session kept.
+- "Delete…" (button or right-click) moves the selected files into "To delete".
+- **Move** shows everything that will move (the Move window): new folders, names already taken,
+  how many were marked "check", files with no folder that stay, and the copies already in "To
+  delete". Every move is logged and Undo puts it back.
+- After a move, Review comes back with the plan made again from where everything is now
+  ("Everything is in place" when nothing is left to move): users can look over the result, drag
+  anything elsewhere and Move again. Opening the session from the start screen ("Carry on a
+  session") opens this screen too, also after the files were moved.
 
 **Labels can be renamed and deleted anywhere they show**: right-click a label (in the wizard,
 Review or the Labels tab) for Rename…, Delete… and Manage labels…; Plan › Manage labels… lists

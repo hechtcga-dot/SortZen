@@ -36,8 +36,6 @@ class Session:
     answered: int = 0               # batches answered in Step 3
     batches_at_start: int = 0
     settled_batches: int = 0
-    review_batch: int = 0           # the Review batch shown last
-    reviewed: list = field(default_factory=list)        # files whose Review batch was confirmed
     new_folders: list = field(default_factory=list)     # folders made in Review, made on disk when files move in
     folder_moves: dict = field(default_factory=dict)    # folders users dragged in Review: folder -> where it goes
     moved: int = 0

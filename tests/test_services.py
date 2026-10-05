@@ -976,12 +976,12 @@ class SessionFlowTest(unittest.TestCase):
             self.assertTrue(all(p in flow.session.later for p in b.paths))
         flow.finish_catalog()
 
-        review = flow.start_review(self.service.make_plan())
-        self.assertTrue(review)
-        self.assertTrue(any(r.sure for r in review))
-        self.assertTrue(all(flow.is_reviewed(r) for r in review if r.sure))   # sure batches need no check
-        todo = next(r for r in review if not flow.is_reviewed(r) and r.batch.paths)
-        s = flow.files_in(todo)[0]
+        flow.start_review(self.service.make_plan())                           # the whole plan at once
+        files = flow.review_files()
+        self.assertTrue(files)
+        self.assertEqual(flow.to_check(), sum(1 for s in files if s.percent < self.service.autonomy())
+                         + sum(1 for f in flow.moving_folders().values() if f.percent < self.service.autonomy()))
+        s = files[0]
         new = flow.new_folder(str(self.base / "Sorted"), "Jordan")
         self.assertIn(new, flow.planned_folders())
         undo = flow.move_file([s.path], new)
@@ -994,16 +994,20 @@ class SessionFlowTest(unittest.TestCase):
         flow.undo_move_file(undo)
         with self.assertRaises(ValueError):
             flow.delete_folder(str(self.base / "Sorted"))                      # folders that exist: in Explorer
-        for r in review:
-            if not flow.is_reviewed(r):
-                last = flow.confirm_review(r)
-        self.assertTrue(last)
+        stay = files[1]
+        left = flow.leave_here([stay.path])                                    # this one stays where it is
+        self.assertNotIn(stay, flow.review_files())
+        self.assertEqual(self.service.recent_sessions()[0][1], "Review: ready to move")
+        moving = {os.path.normcase(r.path) for r in flow.move_rows()}
+        self.assertNotIn(os.path.normcase(stay.path), moving)
+        flow.undo_leave_here(left)
+        self.assertIn(stay, flow.review_files())
         rows = flow.move_rows()
         self.assertTrue(rows)
         result = self.service.move(flow.plan, rows)
         flow.moved(result)
         self.assertGreater(result.moved, 0)
-        self.assertEqual(self.service.recent_sessions()[0][1], f"Moved · {result.moved:,} files")
+        self.assertTrue(self.service.recent_sessions()[0][1].startswith(f"Moved · {result.moved:,} files"))
 
 
 class ChangeRuleTest(CatalogTest):

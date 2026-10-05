@@ -438,7 +438,7 @@ class GroupFoldersDialog(QDialog):
         self.resize(560, 460)
         col = QVBoxLayout(self)
         col.addWidget(_hint(f"These folders go, as they are, into one new folder in {display(where)}. Untick any "
-                            "that should stay where they are. Nothing moves until you confirm the last batch, and "
+                            "that should stay where they are. Nothing moves until you click Move, and "
                             "Undo puts it back."))
         self.list = QListWidget()
         for folder in folders:

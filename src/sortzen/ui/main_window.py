@@ -1051,7 +1051,7 @@ class MainWindow(QMainWindow):
 
     def open_session(self, file: str) -> None:
         """Carry on a saved session where it was left."""
-        from ..repositories.sessions import CATALOG, CHOOSE, DUPLICATES, MOVED
+        from ..repositories.sessions import CATALOG, CHOOSE, DUPLICATES
 
         if not self._free_for_job():
             return
@@ -1059,10 +1059,6 @@ class MainWindow(QMainWindow):
         if flow is None:
             QMessageBox.information(self, APP_NAME, "That session can't be read any more.")
             self.refresh_sessions()
-            return
-        if flow.session.stage == MOVED:
-            QMessageBox.information(self, APP_NAME, f"“{flow.session.name}” is finished: {flow.session.moved:,} files "
-                                    "were moved. Edit › Undo a move puts them back.")
             return
         if self.wizard is not None:
             self.wizard.close()
@@ -1080,6 +1076,13 @@ class MainWindow(QMainWindow):
             self.flow = flow
             self._after_plan = "review"
             self.make_plan()
+
+    def replan_review(self) -> None:
+        """Make the plan again from where everything is now and show the session's Review screen."""
+        if self.flow is None or not self._free_for_job():
+            return
+        self._after_plan = "review"
+        self.make_plan()
 
     def _session_step(self, step: str) -> None:
         if step == "choose":
@@ -1148,7 +1151,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"{result.moved:,} copies moved to “To delete”. Edit › Undo puts them back.", 8000)
 
     def session_move(self, flow) -> None:
-        """After the last Review batch: what will move, then the move itself."""
+        """From Review: everything that will move, then the move itself."""
         rows = flow.move_rows()
         if not rows:
             QMessageBox.information(self, APP_NAME, "Nothing to move: confirm a batch first, or the plan leaves "
@@ -1157,12 +1160,16 @@ class MainWindow(QMainWindow):
         if not self._free_for_job():
             return
         preview = self.service.move_preview(flow.plan, rows)
-        reviewed = sum(1 for r in flow.review if flow.is_reviewed(r))
-        heading = (f"All {len(flow.review)} batches reviewed. " if reviewed == len(flow.review) else
-                   f"{reviewed} of {len(flow.review)} batches confirmed; the rest stay where they are. ")
-        notes = [f"The {flow.session.copies_queued:,} copies from Step 2 are already in “To delete”."] \
-            if flow.session.copies_queued else []
-        dialog = ConfirmMoveDialog(self, preview, self.service.display, heading, notes, "Back to Review")
+        notes = []
+        check, unplaced = flow.to_check(), len(flow.unplaced_files())
+        if check:
+            notes.append(f"{check:,} of them {'was' if check == 1 else 'were'} marked “check” in Review; they move too "
+                         "(drag them elsewhere, or right-click › Leave where it is, to change that).")
+        if unplaced:
+            notes.append(f"{unplaced:,} file{'s' if unplaced != 1 else ''} with no folder yet stay where they are.")
+        if flow.session.copies_queued:
+            notes.append(f"The {flow.session.copies_queued:,} copies from Step 2 are already in “To delete”.")
+        dialog = ConfirmMoveDialog(self, preview, self.service.display, "", notes, "Back to Review")
         if not dialog.exec():
             return
         plan = flow.plan
@@ -1716,10 +1723,7 @@ class MainWindow(QMainWindow):
             return
         self.refresh_folders()
         if self.flow is not None and self.flow.session.stage == "moved":
-            self.flow = None                    # the session is done: back to the start screen
-            self.review_page.flow = None
-            self.tabs.removeTab(self.tabs.indexOf(self.review_page))
-            self.show_tab(self.start_page)
+            self.replan_review()                # back to the whole picture, where everything is now
             return
         if self.service.source_folders():
             self.make_plan()            # the plan is made again from where everything is now
