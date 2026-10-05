@@ -3,7 +3,6 @@
 - ``catalog_batches`` gathers the files being sorted into batches that one answer settles: the
   same kind of name, a shared word or files that look alike, then files SortZen would give the
   same labels and send to the same folder, then files with no clear label by kind.
-- ``review_batches`` gathers files by the labels they carry, and where they go, for checking.
 
 A batch's certainty is how sure SortZen is of its labels (and, less, of its folder); batches are
 ordered surest first so users clear the easy ones and SortZen learns before the hard ones.
@@ -100,34 +99,6 @@ def catalog_batches(suggestions: list, guesses: dict[str, list[tuple[str, int]]]
             batches.append(Batch(f"{key}#{i}", title + suffix, part, _labels(part, guesses),
                                  _certainty(part, guesses, sureness), why,
                                  sorted({by_path[p].destination for p in part if by_path[p].destination})))
-    batches.sort(key=lambda b: (-b.certainty, -len(b.paths), b.title.lower()))
-    return batches
-
-
-def review_batches(suggestions: list, labels_of, display=lambda p: p, max_size: int = 60) -> list[Batch]:
-    """The files the plan moves, by the labels they carry (then by folder when there are many), surest first."""
-    by_labels: dict[tuple, list] = defaultdict(list)
-    for s in suggestions:
-        if s.destination and os.path.normcase(s.destination) != os.path.normcase(s.current_folder):
-            by_labels[tuple(labels_of(s.path))].append(s)
-    batches = []
-    for labels, members in by_labels.items():
-        if len(members) > max_size:
-            by_folder: dict[str, list] = defaultdict(list)
-            for s in members:
-                by_folder[s.destination].append(s)
-            groups = list(by_folder.values())
-        else:
-            groups = [members]
-        name = " and ".join(labels) if labels else "No labels"
-        for group in groups:
-            for part in _chunks(sorted(group, key=lambda s: s.path.lower()), max_size):
-                folders = sorted({s.destination for s in part})
-                n = len(part)
-                title = f"{name} · {n} file{'s' if n != 1 else ''} → {len(folders)} folder{'s' if len(folders) != 1 else ''}"
-                certainty = round(sum(s.percent for s in part) / n)
-                batches.append(Batch(f"{'|'.join(labels)}|{folders[0]}|{part[0].path}", title, [s.path for s in part],
-                                     [(label, 100) for label in labels], certainty, "", folders))
     batches.sort(key=lambda b: (-b.certainty, -len(b.paths), b.title.lower()))
     return batches
 

@@ -727,17 +727,9 @@ class BatchesAndKeptCopiesTest(unittest.TestCase):
         self.assertEqual(batches[-1].certainty, 0)
         self.assertTrue(batches[-1].title.endswith("with no clear label"))
 
-    def test_review_batches_by_labels_and_merge_suggestion(self):
-        from sortzen.engine.batches import label_merge_suggestion, review_batches
-        from sortzen.engine.plan import Suggestion
+    def test_labels_that_are_surely_the_same(self):
+        from sortzen.engine.batches import label_merge_suggestion
 
-        files = [Suggestion("/d/a.pdf", "/d", "/s/Taxes", 95), Suggestion("/d/b.pdf", "/d", "/s/Taxes", 85),
-                 Suggestion("/d/c.jpg", "/d", "/s/Pictures", 60), Suggestion("/d/stays.txt", "/d", "/d", 90)]
-        labels = {"/d/a.pdf": ["Taxes", "Jordan"], "/d/b.pdf": ["Taxes", "Jordan"]}
-        batches = review_batches(files, lambda p: labels.get(p, []))
-        self.assertEqual([b.title for b in batches], ["Taxes and Jordan · 2 files → 1 folder",
-                                                     "No labels · 1 file → 1 folder"])
-        self.assertEqual(batches[0].certainty, 90)
         self.assertEqual(label_merge_suggestion(["Work", "Tax", "Taxes"]), ("Tax", "Taxes"))
         self.assertIsNone(label_merge_suggestion(["Work", "School"]))
 
