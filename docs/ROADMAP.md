@@ -79,6 +79,14 @@ moves files after the plan is confirmed.
 | 40 | Engine and window: rules with several conditions, a folder per year or month, names, on and off, preview | **Done** |
 | 41 | **Alpha 0.7 build** | **Done** |
 
+### Alpha 0.8
+| # | Phase | Status |
+|---|-------|--------|
+| 42 | Labels renamed, merged and deleted from anywhere; every column resizable | **Done** |
+| 43 | Review on one screen; after a move, and when a session is opened again, Review shows everything where it is now | **Done** |
+| 44 | Rules suggested during the session: several per folder, the Suggested rules window in the wizard and Review, the AI's rule advice | **Done** |
+| 45 | **Alpha 0.8 build** | Not started |
+
 ## After the alpha
 1. Renaming screen (SPEC §12).
 2. In-app updater (SPEC §13), and a download page friends can reach (the repository is

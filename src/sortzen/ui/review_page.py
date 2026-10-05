@@ -90,6 +90,11 @@ class ReviewPage(QWidget):
                                      "remove them; the plan is made again with them")
         self.rules_button.clicked.connect(lambda: self.show_rules())
         head.addWidget(self.rules_button, 0, Qt.AlignmentFlag.AlignTop)
+        self.suggest_button = QPushButton("Suggest rules…")
+        self.suggest_button.setToolTip("Rules SortZen would make from where you sent files and folders; the AI can "
+                                       "suggest more from a summary of this session")
+        self.suggest_button.clicked.connect(lambda *_: self.suggest_rules(asked=True))
+        head.addWidget(self.suggest_button, 0, Qt.AlignmentFlag.AlignTop)
         self.group_button = QPushButton("Too many folders?")
         self.group_button.setToolTip("Put the selected folders (or the look-alike folders in the selected folder) "
                                      "together into one new folder, such as “Old versions”")
@@ -610,6 +615,8 @@ class ReviewPage(QWidget):
             self.move_folders(existing, folder)
             return
         self.refresh_plan()
+        if files:
+            self.suggest_new_rules()
 
     def move_folders(self, folders: list[str], target: str) -> None:
         """Folders go, as they are, into another folder when the files move; SortZen remembers it."""
@@ -625,6 +632,7 @@ class ReviewPage(QWidget):
                             f"{self.service.display(target)} as {'they are' if n > 1 else 'it is'}. Nothing moves "
                             "until you click Move.")
         self.refresh_plan()
+        self.suggest_new_rules()
 
     def selected_folders(self) -> list[str]:
         """Existing folders chosen in the tree (not the folders added themselves)."""
@@ -664,6 +672,7 @@ class ReviewPage(QWidget):
         self.window._report(f"{len(folders):,} folders go into “{os.path.basename(new)}” (new). Nothing moves until "
                             "you click Move.")
         self.refresh_plan()
+        self.suggest_new_rules()
 
     def _children(self, folder: str) -> list[str]:
         """The folders in a folder: those in it now and those the plan moves into it."""
@@ -723,6 +732,41 @@ class ReviewPage(QWidget):
         self._save_note()
         if self.flow is not None:
             self.window.session_move(self.flow)
+
+    def suggest_rules(self, asked: bool = False, end_of_step: bool = False, answer=None) -> bool:
+        """Every rule SortZen would make from this session (and the AI's, on request); the plan is made again
+        with the rules made. At the end of Step 3 it shows only when there is something to suggest."""
+        if self.flow is None:
+            return False
+        ideas = self.flow.rule_ideas()
+        ai = self.service.ai_ready()
+        if not ideas and not (asked and ai) and not (end_of_step and ai and self.window._session_wants_ai):
+            if asked:
+                QMessageBox.information(self, "Suggest rules", "No new rule ideas yet. Drag files or folders onto "
+                                        "a folder, or use Rules… to add one. Choose an AI service in Edit › "
+                                        "Settings › AI to ask it as well.")
+            return False
+        intro = ("Step 3 is done. From what you did, SortZen suggests these rules. Tick the ones to make; the "
+                 "plan uses them at once.") if end_of_step else ""
+        made = self.window.suggest_rules(self.flow, ideas, intro=intro, answer=answer,
+                                         ai_now=end_of_step and self.window._session_wants_ai)
+        if made:
+            self.window.replan_review()
+        return made
+
+    def suggest_new_rules(self, answer=None) -> bool:
+        """After a drag: the rules it gives SortZen the idea of, if any are new."""
+        if self.flow is None:
+            return False
+        ideas = self.flow.new_ideas(self.flow.rule_ideas())
+        if not ideas:
+            return False
+        made = self.window.suggest_rules(self.flow, ideas, intro="From what you just did, SortZen suggests "
+                                         "these rules. Tick the ones to make; the plan uses them at once.",
+                                         answer=answer)
+        if made:
+            self.window.replan_review()
+        return made
 
     def show_rules(self) -> None:
         """Every rule in one list (Edit › Rules…); changed rules make the plan again, with the session kept."""

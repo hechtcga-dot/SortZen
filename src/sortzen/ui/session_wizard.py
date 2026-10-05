@@ -18,7 +18,7 @@ import time
 
 import threading
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout, QInputDialog, QLabel,
@@ -543,12 +543,8 @@ class CatalogPage(QWidget):
         self.banner_text = _label()
         brow.addWidget(self.banner_text, 1)
         self.banner_yes = QPushButton()
-        self.banner_change = QPushButton("Change it…")
-        self.banner_change.setToolTip("Choose another folder (or label) before making the rule")
-        self.banner_change.clicked.connect(self._change_rule)
         self.banner_no = QPushButton("Not now")
         brow.addWidget(self.banner_yes)
-        brow.addWidget(self.banner_change)
         brow.addWidget(self.banner_no)
         self.banner_yes.clicked.connect(lambda: self._banner_answer(True))
         self.banner_no.clicked.connect(lambda: self._banner_answer(False))
@@ -853,18 +849,33 @@ class CatalogPage(QWidget):
             parts.append(f"It also suggests merging the label “{drop}” into “{keep}”.")
             self.offer = ("merge", learned.merge)
             self.banner_yes.setText("Merge them")
-        elif learned.folder is not None:
-            parts.append(f"Suggestion: {learned.folder.title} ({learned.folder.why}).")
-            self.offer = ("folder", learned.folder)
-            self.banner_yes.setText("Make it a rule")
+        if learned.ideas:
+            QTimer.singleShot(0, lambda ideas=learned.ideas: self.offer_rules(ideas))
         if not parts:
             self.banner.hide()
             return
         self.banner_text.setText("<b>Learned from your last batch:</b> " + " ".join(parts))
         self.banner_yes.setVisible(self.offer is not None)
-        self.banner_change.setVisible(self.offer is not None and self.offer[0] == "folder")
         self.banner_no.setText("Not now" if self.offer else "OK")
         self.banner.show()
+
+    def offer_rules(self, ideas: list, answer=None) -> bool:
+        """New rule ideas from the last answers, in the Suggested rules window (each can be changed first)."""
+        from PySide6.QtWidgets import QApplication
+
+        flow = self.wizard.flow
+        ideas = flow.new_ideas(ideas) if flow is not None else []
+        if not ideas or not self.wizard.isVisible() or self.wizard.stack.currentWidget() is not self:
+            return False
+        if answer is None and QApplication.activeModalWidget() not in (None, self.wizard):
+            return False                        # another window is open: the ideas come back after next answer
+        made = self.wizard.window.suggest_rules(
+            flow, ideas, parent=self.wizard, answer=answer,
+            intro="Learned from your answers: SortZen suggests these rules. Tick the ones to make; they are used "
+                  "when the plan is made for Review.")
+        if made:
+            self.wizard.window.statusBar().showMessage("Rules made: used when the plan is made for Review.", 6000)
+        return made
 
     def _banner_answer(self, yes: bool) -> None:
         offer, self.offer = self.offer, None
@@ -879,32 +890,6 @@ class CatalogPage(QWidget):
                 self.wizard.window.statusBar().showMessage(f"“{what[0]}” merged into “{what[1]}”.", 6000)
             else:
                 self.wizard.flow.decline_merge(*what)
-        elif yes:
-            before = self.service.add_rule(what.rule)
-            self.wizard.window._push_undo("Make a rule", lambda: self.service.restore_rules(before))
-            self.wizard.window.statusBar().showMessage(f"{what.title}: used when the plan is made for Review.", 6000)
-        else:
-            self.service.decline_rule(what.rule)
-        self.show_batch()
-
-    def _change_rule(self) -> None:
-        """Make the suggested rule with another folder or label; the suggestion itself isn't offered again."""
-        from .dialogs import RuleDialog
-
-        if self.offer is None or self.offer[0] != "folder":
-            return
-        suggestion = self.offer[1]
-        dialog = RuleDialog(self, self.service, suggestion.rule, self.wizard.flow.plan, "Change the rule, then make it")
-        if not dialog.exec() or dialog.chosen is None:
-            return
-        self.offer = None
-        self.banner.hide()
-        before = self.service.settings_snapshot()
-        self.service.change_rule(suggestion.rule, dialog.chosen)
-        self.service.decline_rule(suggestion.rule)
-        self.wizard.window._push_undo("Make a rule", lambda: self.service.restore_settings(before))
-        self.wizard.window.statusBar().showMessage(
-            f"{self.service.describe_rule(dialog.chosen)}: used when the plan is made for Review.", 6000)
         self.show_batch()
 
     def skip(self) -> None:
@@ -1109,8 +1094,6 @@ class SessionWizard(QDialog):
 
     def notice(self, text: str) -> None:
         """A short message under the steps, such as “Opening …”; it goes after a few seconds."""
-        from PySide6.QtCore import QTimer
-
         self.notice_label.setText(text)
         self.notice_label.show()
         QTimer.singleShot(5000, lambda: self.notice_label.text() == text and self.notice_label.hide())

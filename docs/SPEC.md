@@ -240,16 +240,20 @@ users labelled before, files that go with another file and topic members are not
   screen stays as it is). Once SortZen's guesses matched users' choices in at least 90%
   of at least 20 checks, batches it is at least 85% sure of are settled by themselves ("3 more
   batches (27 files) are now settled and skipped"). It also suggests merging two labels that
-  are surely the same ("Tax" into "Taxes": every file and rule follows) and folders for labels
-  (§7.2b); each with a button and "Not now". A suggested rule can be changed before it is made
-  ("Change it…": another folder, picked or typed, a new one included, or another label); the
-  suggestion as it was isn't offered again.
+  are surely the same ("Tax" into "Taxes": every file and rule follows), with "Merge them" and
+  "Not now".
+- **Rules as it goes**: when the answers give SortZen the idea for a rule it hasn't suggested yet
+  in the session (a folder for a label, a name files share, §7.2b), the **Suggested rules**
+  window opens: each rule ticked, with why, how many files it places and Change…; "Make the
+  ticked rules" or "Not now". Rules made are used when the plan is made for Review.
 - The footer shows the files left, the agreement meter ("SortZen matched your choice in 46 of
   your last 50") and how many batches SortZen settled by itself.
 
 After the last batch the wizard closes, the plan is made again with everything learned, and
 the **Review** tab opens with the other tabs closed (they open again from View › Tabs or
-"+ Open a tab"). Nothing has moved yet, except the copies in Step 2.
+"+ Open a tab"). Nothing has moved yet, except the copies in Step 2. The Suggested rules window
+then shows every rule SortZen would make from the session (when there is one); when Step 1 asked
+for the AI's help, it asks the AI as well, after showing the cost.
 
 **Review**: the whole plan on one screen. The title says what moves ("412 files and 9 folders go
 into 23 folders"); everything SortZen is less sure of (below the "Move without asking" level) is
@@ -269,6 +273,10 @@ marked "check", and "Show only what to check" leaves only those and the folders 
 - **Too many folders?** (button or right-click) puts the chosen folders, or the look-alike folders
   in the chosen folder ("Report", "Report (2)", "Report-1.2"), together into one new folder users
   name ("Report (old versions)"); the window lists them with tick boxes.
+- After files or folders are dragged (or put together), the Suggested rules window opens when
+  that gives SortZen the idea for a new rule ("Names containing “Tide Log” go to Programs").
+  **Suggest rules…** shows every rule SortZen would make from the session at any time, with
+  "Ask the AI too…". Rules made there make the plan again at once, with the session kept.
 - Right: the selected file's labels, when it was downloaded or added, its type, size, title and first
   words, why it goes there (and how sure SortZen is when it is marked "check") and a note box; for
   a folder, its rules with Change…, Remove and "Add a rule…". **Rules…** lists every rule; changing
@@ -378,6 +386,31 @@ places. Rules are made, changed, switched off and removed in Edit › Rules… (
 changed or added from wherever they are suggested or shown (the wizard, the Cataloguing tab, "Make
 this a rule?" and the Review tab's folder box).
 
+**Suggested rules** in a session come from what users did:
+- a folder for a label (above);
+- the names in common among the files and folders users sent to one folder: one rule for each
+  thing two or more of them share, so one folder can get several ("Names containing “Tide Log”"
+  and "Names containing “HarborMap”" both go to Programs). Two words side by side ("Tide Log") and
+  run-together names ("HarborMap", taken whole) come before single words; common words such as
+  "setup", "windows" or "version" are never a rule on their own;
+- never a rule that takes a name users sent to another folder, or a file SortZen is at least 90%
+  sure belongs elsewhere (a folder SortZen only plans to make doesn't count); a rule that places
+  no other file today is suggested only when three or more names share it (it places files to
+  come); names a rule already sends there are left out.
+The window lists each rule ticked, with why, how many files it places now, where it comes from
+(SortZen or the AI) and Change… (the rule window). "Make the ticked rules" makes them; a changed
+rule is made in place of the suggestion. "Not now" closes it (the same rules aren't suggested again
+while the session is open) and "Don't suggest the unticked rules again" turns those down for good.
+One Undo takes back everything the window did.
+
+**Ask the AI too…** sends the AI a summary of the session and asks which rules to make and which
+existing rules look wrong. The summary holds names only (long numbers removed): where users sent
+files and folders, the folders made, the names of files deleted, the labels most files in each
+folder have, the folders, and the rules as described. Never what is inside files. The cost is
+shown first and counts towards the spending cap. The AI's rules are added to the list, marked "from
+AI"; folders and labels must be ones users have (a new folder inside one is fine). Rules the AI
+doubts are listed with its reason and "Remove the rule …" tick boxes, unticked.
+
 ### 4. Files that go with another file
 Subtitles (.srt, .sub, .idx, .ass, .ssa, .vtt, .smi), .nfo and .thm files go with the movie
 in their folder (the one whose name theirs begins with, or the only movie there; samples and
@@ -486,6 +519,8 @@ SortZen learns only from choices made inside SortZen. It does not watch Explorer
     twice, and they count in every later plan at no cost.
 - **House rules**: plain-English notes, e.g. "Resumes are personal even if they mention my
   employer", sent with every AI batch.
+- **Rule advice** in a session (§7.2b): a summary of what users did, names only, for rules to
+  make and doubts about existing ones; one request, its cost shown first.
 - An AI answer is one more piece of evidence, shown with its reasons:
   - When it agrees with SortZen, the percentage rises halfway towards 100 at most, scaled
     by how sure the AI was (never above 97%).

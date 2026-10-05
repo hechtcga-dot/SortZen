@@ -45,6 +45,14 @@ class MainWindowTest(unittest.TestCase):
         self.service.scanner.protected = []
         self.window = MainWindow(self.service)
         self.window.show()
+        from unittest import mock
+
+        from sortzen.ui.dialogs import SuggestedRulesDialog
+
+        self.rule_popups = []                   # the Suggested rules window never waits for a click in tests
+        patcher = mock.patch.object(SuggestedRulesDialog, "exec", lambda d: self.rule_popups.append(d) or 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         if self.service.jobs.current:
@@ -875,6 +883,89 @@ class MainWindowTest(unittest.TestCase):
         self.window.undo()
         self.assertNotIn(os.path.normcase(str(downloads / "old tools")), self.window.flow.moving_folders())
 
+    def test_rules_suggested_in_review_after_folders_are_dragged(self):
+        from unittest import mock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from sortzen.engine.planner import TIDY
+
+        base = Path(self.dir.name)
+        downloads, sorted_ = base / "Downloads", base / "Sorted"
+        for name in ("Tide Log-windows", "Tide Log-windows (1)", "Tide Log-windows (2)"):
+            (downloads / name).mkdir(parents=True)
+            (downloads / name / f"{name} readme.txt").write_text(f"notes {name}")
+        (sorted_ / "Programs").mkdir(parents=True)
+        (sorted_ / "Programs" / "Paint helper.txt").write_text("program")
+        self.service.add_source(str(downloads), TIDY)
+        self.service.add_destination(str(sorted_))
+        self.window.flow = self.service.new_session("Programs")
+        self.window._after_plan = "review"
+        self.window.make_plan()
+        self.assertTrue(wait_until(self.app, lambda: self.window.tabs.currentWidget() is self.window.review_page
+                                   and not self.service.jobs.busy))
+        review, programs = self.window.review_page, str(sorted_ / "Programs")
+        review.dropped([str(downloads / "Tide Log-windows"), str(downloads / "Tide Log-windows (1)")], programs)
+        popup = self.rule_popups[-1]                                         # the popup came up at once
+        self.assertIn("From what you just did", popup.intro.text())
+        texts = [r["text"].text() for r in popup.rows]
+        self.assertTrue(any("go to Sorted/Programs" in t and "1 more now" in t for t in texts), texts)
+        self.assertFalse(review.suggest_new_rules())                         # not again after “Not now”
+        self.assertTrue(popup.ai_button.isHidden())                         # no AI service chosen
+
+        def make_first(dialog):
+            for row in dialog.rows[1:]:
+                row["check"].setChecked(False)
+            self.assertEqual(dialog.make.text(), "Make 1 rule")
+            return 1
+
+        before = self.window.plan
+        self.assertTrue(review.suggest_rules(asked=True, answer=make_first))   # Suggest rules…: all of them
+        self.assertTrue(wait_until(self.app, lambda: self.window.plan is not before and not self.service.jobs.busy
+                                   and not self.window._plan_waiting and self.window.flow.plan is self.window.plan))
+        third = self.window.flow.moving_folders()[os.path.normcase(str(downloads / "Tide Log-windows (2)"))]
+        self.assertEqual((third.destination, third.percent), (programs, 100))  # the rule moves the third one
+        self.window.undo()
+        self.assertEqual(self.service.rules(), [])
+        with mock.patch.object(QMessageBox, "information") as told:
+            self.service.settings.set("declined_rules", [i.rule.key for i in self.window.flow.rule_ideas()])
+            self.assertFalse(review.suggest_rules(asked=True))
+        self.assertIn("No new rule ideas", told.call_args[0][2])
+
+        import json
+
+        from sortzen.ai.provider import AIProvider, AIResponse, TokenUsage
+
+        self.service.add_rule(self.service.build_rule(str(sorted_ / "Programs"), text="readme"))
+
+        class Advisor(AIProvider):
+            def generate_json(self, model, contents):
+                assert "Tide Log-windows -> Sorted/Programs" in contents[0]       # the summary of the session
+                return AIResponse(json.dumps({"rules": [{"name": "Tide Log", "contains": "Tide Log",
+                                                         "folder": "Sorted/Programs/Tide Log", "why": "versions"}],
+                                              "doubts": [{"rule": 1, "why": "readme files are not programs"}]}),
+                                  TokenUsage(10, 10, 20))
+
+        self.service.set_ai_value("ai_enabled", True)
+        self.service.save_api_key("test-key")
+
+        def ask_and_make(dialog):
+            self.assertFalse(dialog.ai_button.isHidden())
+            dialog.ask_ai()
+            self.assertTrue(wait_until(self.app, lambda: dialog.ai_button.isEnabled()))
+            self.assertIn("1 rule idea and 1 doubt", dialog.status.text())
+            self.assertIn("from AI", dialog.rows[-1]["text"].text())
+            dialog.doubt_rows[0][1].setChecked(True)                         # remove the doubted rule
+            self.assertEqual(dialog.make.text(), "Make 1 rule and remove 1")
+            return 1
+
+        with mock.patch.object(self.service, "provider", return_value=Advisor()), \
+                mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.assertTrue(review.suggest_rules(asked=True, answer=ask_and_make))
+        self.assertEqual([(r.contains, os.path.basename(r.destination)) for r in self.service.rules()],
+                         [("Tide Log", "Tide Log")])
+        self.assertTrue(wait_until(self.app, lambda: not self.service.jobs.busy and not self.window._plan_waiting))
+
     def test_labels_renamed_deleted_and_managed_from_anywhere(self):
         from unittest import mock
 
@@ -996,8 +1087,7 @@ class MainWindowTest(unittest.TestCase):
         from unittest import mock
 
         from sortzen.engine.rules import Rule
-        from sortzen.services.app_service import LabelFolderSuggestion
-        from sortzen.services.flow import Learned
+        from sortzen.services.flow import RuleIdea
         from sortzen.ui.dialogs import RuleDialog
 
         root = Path(self.dir.name) / "folders"
@@ -1030,7 +1120,7 @@ class MainWindowTest(unittest.TestCase):
         editor.accept()
         self.assertEqual((editor.chosen.contains, editor.chosen.kind, editor.chosen.by), ("receipt", "pdf", "year"))
 
-        self.window.plan_button.click()                                    # the banner in Step 3
+        self.window.plan_button.click()                                    # the popup in Step 3
         wizard = self.window.wizard
         wizard.choose.refresh()
         wizard.next_button.click()
@@ -1038,18 +1128,24 @@ class MainWindowTest(unittest.TestCase):
                                    and not self.service.jobs.busy))
         wizard.show_catalog()
         page = wizard.catalog
-        page._show_learned(Learned(folder=LabelFolderSuggestion(rule, "Files labelled “Programs” go to …", "why", 20)))
-        self.assertTrue(page.banner_change.isVisible())
+        idea = RuleIdea(rule, "You labelled 20 files “Programs”", 20)
+        shown = []
+
+        def changed_and_made(dialog_self):
+            shown.append(dialog_self)
+            with mock.patch.object(RuleDialog, "exec", chose):
+                dialog_self.change(dialog_self.rows[0])           # Change… in the popup
+            return 1
 
         def chose(dialog_self):
             dialog_self.chosen = dialog.chosen
             return 1
 
-        with mock.patch.object(RuleDialog, "exec", chose):
-            page.banner_change.click()
+        self.assertTrue(page.offer_rules([idea], answer=changed_and_made))
+        self.assertIn("(changed)", shown[0].rows[0]["text"].text())
         self.assertEqual([r.destination for r in self.service.rules()], [target])
         self.assertIn(rule.key, self.service.settings.get("declined_rules"))  # the suggestion isn't offered again
-        self.assertFalse(page.banner.isVisible())
+        self.assertFalse(page.offer_rules([idea], answer=changed_and_made))  # offered already
         self.window.undo()
         self.assertEqual(self.service.rules(), [])
         wizard.close()

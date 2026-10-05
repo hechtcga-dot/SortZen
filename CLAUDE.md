@@ -18,7 +18,7 @@ src/sortzen/
                        privacy.py (scrubbing, name-only rules, previews), costs.py (prices),
                        sorter.py (two passes in batches, spending cap), labeler.py (label list, labels for
                        a sample of files), catalog_review.py (AI review of
-                       the catalog)
+                       the catalog), rule_advisor.py (rules from a summary of a session)
   tasks/               typed job events, background job runner (cancel token = Stop Safely)
   scanning/            file kinds, readers (Word, PDF, Excel, PowerPoint, older Office files,
                        emails, RTF, OpenDocument, web pages, text, photos, zip, programs),

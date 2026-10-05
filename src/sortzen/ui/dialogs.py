@@ -557,3 +557,169 @@ class LabelsDialog(QDialog):
         if name:
             self.window.edit_label(name, "up" if step < 0 else "down")
             self.fill(name)
+
+
+class SuggestedRulesDialog(QDialog):
+    """Rules suggested from what users did, by SortZen or the AI: tick the ones to make, change one first, or ask
+    the AI for more. Rules the AI doubts can be removed. Nothing is made until “Make the ticked rules”."""
+
+    def __init__(self, parent, service, plan, ideas: list, doubts=(), ask_ai=None, intro: str = ""):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QProgressBar, QScrollArea
+
+        self.service, self.plan, self._ask_ai = service, plan, ask_ai
+        self.rows: list[dict] = []              # {"idea", "rule", "check", "text"}
+        self.doubt_rows: list[tuple] = []       # (rule, check)
+        self.setWindowTitle("Suggested rules")
+        self.resize(760, 520)
+        col = QVBoxLayout(self)
+        self.intro = QLabel(intro or "From what you did, SortZen suggests these rules. A rule sends matching files "
+                            "and folders to its folder in this plan and in later ones, at 100%.", objectName="muted")
+        self.intro.setWordWrap(True)
+        col.addWidget(self.intro)
+        scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.Shape.NoFrame)
+        holder = QWidget()
+        self.list = QVBoxLayout(holder)
+        self.list.setContentsMargins(0, 0, 0, 0)
+        self.list.setSpacing(8)
+        self.list.addStretch(1)
+        scroll.setWidget(holder)
+        col.addWidget(scroll, 1)
+        self.empty = _hint("No new rule ideas from what you did yet."
+                           + (" Ask the AI: it reads a summary of where you sent things." if ask_ai else ""))
+        col.addWidget(self.empty)
+        self.busy = QProgressBar(textVisible=False, maximum=0)
+        self.busy.setMaximumHeight(6)
+        self.busy.hide()
+        col.addWidget(self.busy)
+        self.status = _hint("")
+        self.status.hide()
+        col.addWidget(self.status)
+        self.never = QCheckBox("Don't suggest the unticked rules again")
+        col.addWidget(self.never)
+        col.addWidget(_hint("Nothing moves until you click Move. Every rule can be changed, switched off or removed "
+                            "later in Rules…, and Undo takes back what this window does."))
+        buttons = QHBoxLayout()
+        self.ai_button = QPushButton("Ask the AI too…")
+        self.ai_button.setToolTip("Send the AI a summary of what you did in this session (names only, as your "
+                                  "privacy settings allow) and ask which rules to make, or which rules look wrong")
+        self.ai_button.clicked.connect(lambda *_: self.ask_ai())
+        self.ai_button.setVisible(ask_ai is not None)
+        buttons.addWidget(self.ai_button)
+        buttons.addStretch(1)
+        self.not_now = QPushButton("Not now")
+        self.not_now.clicked.connect(lambda *_: self.reject())
+        buttons.addWidget(self.not_now)
+        self.make = QPushButton("Make the ticked rules", objectName="primary")
+        self.make.setDefault(True)
+        self.make.clicked.connect(lambda *_: self.accept())
+        buttons.addWidget(self.make)
+        col.addLayout(buttons)
+        self._QCheckBox, self._QFrame, self._QHBoxLayout = QCheckBox, QFrame, QHBoxLayout
+        self.add(ideas, doubts)
+
+    def add(self, ideas: list, doubts=()) -> None:
+        """Rows for more ideas (from the AI, say), and the existing rules it doubts."""
+        known = {r["rule"].key for r in self.rows}
+        for idea in ideas:
+            if idea.rule.key in known:
+                continue
+            known.add(idea.rule.key)
+            box = self._QFrame(objectName="card")
+            row = self._QHBoxLayout(box)
+            row.setContentsMargins(10, 8, 10, 8)
+            check = self._QCheckBox()
+            check.setChecked(True)
+            check.setAccessibleName("Make this rule")
+            check.toggled.connect(lambda *_: self._count())
+            row.addWidget(check, 0, Qt.AlignmentFlag.AlignTop)
+            text = QLabel(textFormat=Qt.TextFormat.RichText)
+            text.setWordWrap(True)
+            text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            row.addWidget(text, 1)
+            change = QPushButton("Change…")
+            change.setToolTip("Change the folder, the name it looks for or other conditions before making it")
+            row.addWidget(change, 0, Qt.AlignmentFlag.AlignTop)
+            entry = {"idea": idea, "rule": idea.rule, "check": check, "text": text}
+            change.clicked.connect(lambda *_, e=entry: self.change(e))
+            self.rows.append(entry)
+            self._show(entry)
+            self.list.insertWidget(self.list.count() - 1, box)
+        for rule, why in doubts:
+            if any(r.key == rule.key for r, _ in self.doubt_rows):
+                continue
+            check = self._QCheckBox(f"Remove the rule “{self.service.describe_rule(rule)}”")
+            check.setToolTip(why)
+            check.toggled.connect(lambda *_: self._count())
+            line = QWidget()
+            lcol = QVBoxLayout(line)
+            lcol.setContentsMargins(4, 0, 0, 0)
+            lcol.setSpacing(0)
+            lcol.addWidget(check)
+            lcol.addWidget(_hint(f"The AI doubts it: {why}" if why else "The AI doubts it."))
+            self.doubt_rows.append((rule, check))
+            self.list.insertWidget(self.list.count() - 1, line)
+        self.empty.setVisible(not self.rows and not self.doubt_rows)
+        self._count()
+
+    def _show(self, entry: dict) -> None:
+        import html
+
+        from .theme import MUTED
+
+        idea, rule = entry["idea"], entry["rule"]
+        changed = " (changed)" if rule.key != idea.rule.key else ""
+        places = (f"places {idea.places:,} more now" if idea.places else "for files to come") if not changed else \
+            f"places {len(self.service.rule_matches(rule, self.plan)) if self.plan is not None else 0:,} now"
+        entry["text"].setText(f"<b>{html.escape(self.service.describe_rule(rule))}</b>{changed}<br>"
+                              f"<span style='color:{MUTED}'>{html.escape(idea.why)} · {places} · "
+                              f"from {html.escape(idea.source)}</span>")
+
+    def change(self, entry: dict, chosen=None) -> None:
+        if chosen is None:
+            dialog = RuleDialog(self, self.service, entry["rule"], self.plan, "Change the rule, then make it")
+            if not dialog.exec() or dialog.chosen is None:
+                return
+            chosen = dialog.chosen
+        entry["rule"] = chosen
+        entry["check"].setChecked(True)
+        self._show(entry)
+
+    def _count(self) -> None:
+        n = sum(r["check"].isChecked() for r in self.rows)
+        gone = sum(c.isChecked() for _, c in self.doubt_rows)
+        if n:
+            self.make.setText(f"Make {n} rule{'s' if n != 1 else ''}" + (f" and remove {gone}" if gone else ""))
+        elif gone:
+            self.make.setText(f"Remove {gone} rule{'s' if gone != 1 else ''}")
+        else:
+            self.make.setText("Make the ticked rules")
+        self.make.setEnabled(bool(n or gone))
+        self.never.setVisible(bool(self.rows))
+
+    def ask_ai(self) -> None:
+        if self._ask_ai is not None and self.ai_button.isEnabled():
+            self._ask_ai(self)
+
+    def asking(self, text: str) -> None:
+        self.ai_button.setEnabled(False)
+        self.busy.show()
+        self.status.setText(text)
+        self.status.show()
+
+    def done_asking(self, text: str) -> None:
+        self.busy.hide()
+        self.status.setText(text)
+        self.ai_button.setEnabled(True)
+        self.ai_button.setText("Ask the AI again…")
+
+    def made(self) -> list[tuple]:
+        """(idea, rule as it is to be made) for each ticked row."""
+        return [(r["idea"], r["rule"]) for r in self.rows if r["check"].isChecked()]
+
+    def declined(self) -> list:
+        """The ideas not to suggest again: the unticked ones when users said so."""
+        return [r["idea"] for r in self.rows if not r["check"].isChecked()] if self.never.isChecked() else []
+
+    def removed(self) -> list:
+        return [rule for rule, check in self.doubt_rows if check.isChecked()]

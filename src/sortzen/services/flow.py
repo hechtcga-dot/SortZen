@@ -32,6 +32,7 @@ class Learned:
     settled_files: int = 0
     merge: tuple[str, str] | None = None        # (label to merge, into this label)
     folder: object | None = None                # a LabelFolderSuggestion
+    ideas: list = field(default_factory=list)   # RuleIdeas not offered yet in this session
 
 
 @dataclass
@@ -53,6 +54,7 @@ class Flow:
         self.plan: Plan | None = None
         self.batches: list[Batch] = []
         self._history: list[tuple[dict, dict]] = []
+        self.offered: set[str] = set()          # rules already suggested while the session is open
 
     def save(self) -> None:
         self.service.sessions.save(self.session)
@@ -362,11 +364,15 @@ class Flow:
             found = guess_labels(inputs["records"], inputs["names"], inputs["known"], inputs["notes"])
             guesses = {path_key(k): v for k, v in found.items()}
         inputs = dict(inputs, guesses=guesses)
-        folder = None
+        folder, ideas = None, []
         if self.plan is not None:
             folder = next(iter(self.service.label_folder_suggestions(self.plan, guesses)), None)
-        return {"guesses": guesses, "batches": self._form(inputs), "folder": folder, "epoch": inputs["epoch"],
-                "answered": inputs["answered"]}
+            try:
+                ideas = self.rule_ideas(guesses)
+            except RuntimeError:                # the window changed a setting meanwhile: next time
+                ideas = []
+        return {"guesses": guesses, "batches": self._form(inputs), "folder": folder, "ideas": ideas,
+                "epoch": inputs["epoch"], "answered": inputs["answered"]}
 
     def apply_learning(self, result: dict, keep: Batch | None = None) -> Learned | None:
         """Use what was learned; ``keep`` (the batch on screen) stays first, as it is. None when the
@@ -404,6 +410,7 @@ class Flow:
         if merge and f"{merge[0]}>{merge[1]}" not in declined:
             learned.merge = merge
         learned.folder = result["folder"]
+        learned.ideas = self.new_ideas(result.get("ideas", []))
         self.save()
         return learned
 
@@ -717,24 +724,26 @@ class Flow:
             found.setdefault(_key(target), []).append(os.path.basename(folder))
         return found
 
-    def rule_ideas(self) -> list:
-        """Rules SortZen would make from what users did: a folder for a label, and names in common among the
-        files and folders users sent to one folder. Rules made or turned down before are left out."""
-        from ..engine.rules import suggest_rule
+    def rule_ideas(self, guesses=None) -> list:
+        """Rules SortZen would make from what users did: a folder for a label, and the names in common among the
+        files and folders users sent to one folder (several rules for one folder when the names have several
+        things in common). Rules made or turned down before are left out."""
+        from ..engine.rules import suggest_rules
 
         if self.plan is None:
             return []
         known = {r.key for r in self.service.rules()} | set(self.service.settings.get("declined_rules") or [])
         ideas, seen = [], set()
 
-        def add(rule, why, places):
-            if rule.key not in known and rule.key not in seen and places:
+        def add(rule, why, places, always=False):
+            if rule.key not in known and rule.key not in seen and (places or always):
                 seen.add(rule.key)
                 ideas.append(RuleIdea(rule, why, places, "SortZen"))
 
-        for s in self.service.label_folder_suggestions(self.plan):
+        for s in self.service.label_folder_suggestions(self.plan, guesses):
             add(s.rule, s.why, s.files)
         corrected = {path_key(p) for p in self.service.corrections()} | {_key(f) for f in self.session.folder_moves}
+
         def sure(destination, percent):          # a folder SortZen only plans to make never stands in the way
             return percent if destination and os.path.isdir(destination) else min(percent, 89)
 
@@ -744,13 +753,19 @@ class Flow:
                    if _key(f.path) not in corrected]
         destinations = {_key(d): d for d in [*self.service.corrections().values(), *self.session.folder_moves.values()]
                         if d}
-        for key, names in self._users_choices().items():
-            found = suggest_rule(names, destinations.get(key, key), others, self.service.rules(), known | seen)
-            if found:
+        choices = self._users_choices()
+        rules = self.service.rules()
+        for key, names in choices.items():
+            elsewhere = [n for k, more in choices.items() if k != key for n in more]
+            for found in suggest_rules(names, destinations.get(key, key), others, rules, known | seen, elsewhere):
                 more = len(found.matches)
-                add(found.rule, f"You sent {found.examples} like this there; {more:,} more "
-                                f"would go too", more)
+                add(found.rule, f"You sent {found.examples} like this there", more, always=True)
         return sorted(ideas, key=lambda i: -i.places)
+
+    def new_ideas(self, ideas: list) -> list:
+        """The ideas not suggested yet while the session is open, nor made or turned down since."""
+        known = {r.key for r in self.service.rules()} | set(self.service.settings.get("declined_rules") or [])
+        return [i for i in ideas if i.rule.key not in self.offered and i.rule.key not in known]
 
     def session_summary(self) -> dict:
         """What users did, for the AI: names only (long numbers removed), folders as shown."""

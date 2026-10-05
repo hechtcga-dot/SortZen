@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import os
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFileDialog, QFrame, QInputDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
@@ -71,6 +71,9 @@ class MainWindow(QMainWindow):
         self.flow = None                            # the organizing session in the Review tab
         self._session_ai: list[str] = []            # AI steps still to run before Step 2
         self._session_reading = False               # the wizard waits for the plan (and the AI steps)
+        self._rules_dialog = None                   # the Suggested rules window, while it waits for the AI
+        self._rules_at_review = False               # Step 3 just ended: suggest rules once Review shows
+        self._session_wants_ai = False              # Step 1 asked for the AI's help
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(app_icon())
         self.resize(1200, 760)
@@ -652,6 +655,7 @@ class MainWindow(QMainWindow):
                 self.wizard.flow.drop([old for old, _ in result.moves])
                 self.wizard.catalog.show_batch()
             if self.flow is not None and self.review_page.flow is self.flow:
+                self.flow.note_deleted([old for old, _ in result.moves])
                 self.review_page.drop([old for old, _ in result.moves])
             self.statusBar().showMessage(f"{result.moved:,} moved to “To delete”. Edit › Undo puts them back.", 8000)
             return
@@ -1000,6 +1004,9 @@ class MainWindow(QMainWindow):
             self.review_page.set_flow(self.flow)
             self.only_tab(self.review_page)
             self.refresh_sessions()
+            if self._rules_at_review:
+                self._rules_at_review = False
+                QTimer.singleShot(0, lambda: self.review_page.suggest_rules(end_of_step=True))
             return
         if after == "ai-sample":
             self.ai_label_files("sample", then_plan=True)
@@ -1087,6 +1094,7 @@ class MainWindow(QMainWindow):
     def _session_step(self, step: str) -> None:
         if step == "choose":
             self._session_ai = []
+            self._session_wants_ai = self.wizard.choose.wants_ai()
             if self.wizard.choose.wants_ai():
                 self._session_ai = (["suggest"] if self.wizard.choose.ai_labels.isChecked() else []) + ["sample"]
             self._session_read()
@@ -1094,6 +1102,7 @@ class MainWindow(QMainWindow):
             self._session_queue()
         elif step == "catalog":
             self.flow = self.wizard.flow
+            self._rules_at_review = True
             self.wizard.close()
             self._after_plan = "review"
             self.make_plan()
@@ -1555,6 +1564,85 @@ class MainWindow(QMainWindow):
             self._push_undo("Make a rule", lambda: self.service.restore_rules(before))
             self.make_plan()
 
+    # ---------------------------------------------------------------- suggested rules (a session)
+    def suggest_rules(self, flow, ideas=None, parent=None, intro: str = "", ai_now: bool = False,
+                      answer=None) -> bool:
+        """The Suggested rules window: SortZen's ideas (all of them when ``ideas`` is None) with the AI's on
+        request. True when rules were made or removed. ``answer`` stands in for the window (tests)."""
+        from .dialogs import SuggestedRulesDialog
+
+        if ideas is None:
+            ideas = flow.rule_ideas()
+        flow.offered.update(i.rule.key for i in ideas)
+        ask = (lambda d: self.ask_ai_for_rules(flow, d)) if self.service.ai_ready() else None
+        dialog = SuggestedRulesDialog(parent or self, self.service, flow.plan, ideas, ask_ai=ask, intro=intro)
+        self._rules_dialog, self._rules_flow = dialog, flow
+        if answer is None:
+            if ai_now and ask is not None:
+                QTimer.singleShot(0, dialog.ask_ai)
+            ok = dialog.exec()
+        else:
+            ok = answer(dialog)
+        self._rules_dialog = None
+        if self.service.jobs.busy and self.service.jobs.current.name == "ai-rules":
+            self.service.stop_job()
+        if not ok:
+            return False
+        return self.make_suggested_rules(dialog.made(), dialog.declined(), dialog.removed())
+
+    def make_suggested_rules(self, made: list, declined: list = (), removed: list = ()) -> bool:
+        """Make the chosen rules (a changed one in place of the idea, which isn't suggested again), turn down
+        the others when asked, and remove the rules chosen; one Undo takes it all back."""
+        if not (made or declined or removed):
+            return False
+        before = self.service.settings_snapshot()
+        for idea, rule in made:
+            self.service.add_rule(rule)
+            if rule.key != idea.rule.key:
+                self.service.decline_rule(idea.rule)
+        for idea in declined:
+            self.service.decline_rule(idea.rule)
+        for rule in removed:
+            self.service.remove_rule(rule)
+        if made or removed:
+            self._push_undo("Make rules" if made else "Remove rules", lambda: self.service.restore_settings(before))
+            parts = [f"{len(made):,} rule{'s' if len(made) != 1 else ''} made" if made else "",
+                     f"{len(removed):,} removed" if removed else ""]
+            self.statusBar().showMessage(", ".join(p for p in parts if p) + ". Edit › Undo takes "
+                                         f"{'them' if len(made) + len(removed) > 1 else 'it'} back.", 8000)
+        return bool(made or removed)
+
+    def ask_ai_for_rules(self, flow, dialog) -> bool:
+        """Send the AI a summary of the session (names only) for rule ideas; they come into ``dialog``."""
+        if not self._free_for_job():
+            return False
+        estimate = flow.ai_rule_estimate()
+        if not self._ai_ok_in(dialog, "which rules to make from a summary of what you did in this session",
+                              estimate):
+            return False
+        dialog.asking(f"Asking {estimate['service']} for rules…")
+        self.run_job("ai-rules", lambda emit, token: flow.ai_rule_ideas(emit, token))
+        return True
+
+    def _ai_ok_in(self, parent, what: str, estimate: dict) -> bool:
+        money = "free: it runs on this PC" if estimate["local"] else f"about ${estimate['cost']:.4f}"
+        return QMessageBox.question(
+            parent, "Ask the AI", f"Ask {estimate['service']} {what}? {money}.\n\nSent: the names of the files "
+            "and folders you placed (long numbers removed), the folders they went to, the folders you made, the "
+            "names of the files you deleted, your labels and your rules. Never what is inside files. Spending "
+            "stops at your cap."
+        ) == QMessageBox.StandardButton.Yes
+
+    def _ai_rules_came(self, ideas: list, doubts: list) -> None:
+        dialog = self._rules_dialog
+        if dialog is None:
+            return
+        self._rules_flow.offered.update(i.rule.key for i in ideas)
+        dialog.add(ideas, doubts)
+        found = [f"{len(ideas):,} rule idea{'s' if len(ideas) != 1 else ''}" if ideas else "no new rules",
+                 f"{len(doubts):,} doubt{'s' if len(doubts) != 1 else ''} about your rules" if doubts else ""]
+        dialog.done_asking("The AI suggests " + " and ".join(f for f in found if f) + ".")
+
     def change_suggested_rule(self, rule, chosen=None) -> None:
         """Make a suggested rule with another folder, label or word; the suggestion isn't offered again."""
         if chosen is None:
@@ -1816,6 +1904,8 @@ class MainWindow(QMainWindow):
                 if self._session_reading:
                     self._after_plan = "session"
                 self.make_plan()
+            if event.name == "ai-rules":
+                self._ai_rules_came(*(event.result or ([], [])))
             if event.name == "session-queue":
                 self._session_queued(event.result)
             if event.name == "session-move":
@@ -1857,6 +1947,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Stopped: {event.message}")
             if event.name == "plan":
                 QMessageBox.warning(self, APP_NAME, f"The plan couldn't be made: {event.message}")
+            if event.name == "ai-rules" and self._rules_dialog is not None:
+                self._rules_dialog.done_asking(f"The AI couldn't be asked: {event.message}")
             if event.name in ("ai", "catalog-ai", "ai-list", "ai-labels"):
                 QMessageBox.warning(self, APP_NAME, f"The AI service couldn't be asked: {event.message}")
                 if event.name in ("ai-list", "ai-labels") and self._session_reading:
